@@ -47,8 +47,24 @@ export async function createBiomeColorLookup(mapPath) {
 }
 
 // TODO: Rename these to something less confusing
-export const [BIOME_BACKGROUND_COLORS, BIOME_COLOR_LOOKUP] = await createBiomeColorLookup('../data/biome_maps/biome_map_background.png');
-export const [TILE_OVERLAY_COLORS, TILE_FOREGROUND_COLORS] = await createBiomeColorLookup('../data/biome_maps/biome_map_foreground.png');
+export let BIOME_BACKGROUND_COLORS = {};
+export let BIOME_COLOR_LOOKUP = {};
+export let TILE_OVERLAY_COLORS = {};
+export let TILE_FOREGROUND_COLORS = {};
+
+// Populates the four BIOME_*/TILE_* exports from the biome-map PNGs. Browsers
+// auto-init below; Node callers must await this explicitly before any code
+// path that reads these tables.
+let _initPromise = null;
+export function initBiomeColors() {
+    return _initPromise ??= (async () => {
+        [BIOME_BACKGROUND_COLORS, BIOME_COLOR_LOOKUP] = await createBiomeColorLookup('../data/biome_maps/biome_map_background.png');
+        [TILE_OVERLAY_COLORS, TILE_FOREGROUND_COLORS] = await createBiomeColorLookup('../data/biome_maps/biome_map_foreground.png');
+    })();
+}
+if (typeof process === 'undefined' || !process?.versions?.node) {
+    await initBiomeColors();
+}
 
 // Non-Wang biomes whose tile overlays must ignore edge noise on both sides of a
 // border. Keep one-off map exceptions here rather than embedding them in
