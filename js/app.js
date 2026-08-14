@@ -14,6 +14,7 @@ import { findEyeMessages, renderEyeMessages } from './eye_messages.js';
 import { BIOME_COLOR_LOOKUP, createBiomeMapAlphaMask, createTileOverlays, createTileOverlaysCheap, createTileOverlaysExpanded } from './image_processing.js';
 import { COALMINE_ALT_SCENES } from './pixel_scene_config.js';
 import { debugBiomeEdgeNoise } from './edge_noise.js';
+import { drawBiomeBoundaryContour } from './biome_boundary.js';
 import { getPixelSceneCanvas, pixelSceneMipLevel, loadPixelSceneData, reloadPixelSceneCache, PIXEL_SCENE_DATA } from './pixel_scene_generation.js';
 import { addStaticPixelScenes } from './static_spawns.js';
 import { NollaPrng } from './nolla_prng.js';
@@ -467,6 +468,7 @@ export const app = {
 		document.getElementById('debug-original-biome-map').onchange = () => {this.saveSettings(); this.draw();};
 		document.getElementById('debug-small-pois').onchange = () => {this.saveSettings(); this.draw();};
 		document.getElementById('debug-unpainted-checkerboard').onchange = () => {this.saveSettings(); this.draw();};
+		document.getElementById('debug-biome-boundary-contour').onchange = () => {this.saveSettings(); this.draw();};
 		document.getElementById('debug-layer-timings').onchange = () => {this.saveSettings(); this.draw();};
 		document.getElementById('debug-pixel-scene-budget').onchange = () => {this.saveSettings(); this.draw();};
 		for (const layer of RENDER_LAYERS) {
@@ -2973,6 +2975,24 @@ export const app = {
 		}
 		if (prof) markLayer(prof, 'misc');
 
+		// Layer 8b
+		// Exact curve where the edge-noise'd biome resolver flips between two chunks'
+		// biomes, sampled per screen pixel instead of per 10px tile overlay cell. Drawn
+		// after the terrain layers so it reads as an overlay, but under the PoIs.
+		if (appSettings.biomeBoundaryContour) {
+			drawBiomeBoundaryContour(this.ctx, {
+				biomeData: this.biomeData,
+				isNGP: this.isNGP,
+				gameMode: this.gameMode,
+				useEdgeNoise: appSettings.enableEdgeNoise,
+				camZ: this.cam.z,
+				viewRect,
+				worldsInView: this.worldsInView,
+				worldOffsets,
+			});
+		}
+		if (prof) markLayer(prof, 'boundaryContour');
+
 		// Layer 9
 		// PoIs
 
@@ -3317,6 +3337,7 @@ export const app = {
 			renderLayers: readRenderLayersFromUI(),
 			debugLayerTimings: document.getElementById('debug-layer-timings').checked,
 			checkerboardUnpainted: document.getElementById('debug-unpainted-checkerboard').checked,
+			biomeBoundaryContour: document.getElementById('debug-biome-boundary-contour').checked,
 			pixelSceneBitmapBudgetMB: Number.parseInt(document.getElementById('debug-pixel-scene-budget').value),
 			enableEdgeNoise: document.getElementById('enable-edge-noise').checked,
 			blockEdgeSpawns: document.getElementById('debug-block-edge-spawns').checked,
@@ -3413,6 +3434,8 @@ export const app = {
 				document.getElementById('debug-layer-timings').checked = settings.debugLayerTimings || false;
 				document.getElementById('debug-unpainted-checkerboard').checked = settings.checkerboardUnpainted ?? true;
 				settings.checkerboardUnpainted = document.getElementById('debug-unpainted-checkerboard').checked;
+				document.getElementById('debug-biome-boundary-contour').checked = settings.biomeBoundaryContour ?? false;
+				settings.biomeBoundaryContour = document.getElementById('debug-biome-boundary-contour').checked;
 				document.getElementById('debug-pixel-scene-budget').value = settings.pixelSceneBitmapBudgetMB || 256;
 				document.getElementById('enable-edge-noise').checked = settings.enableEdgeNoise || false;
 				document.getElementById('debug-block-edge-spawns').checked = settings.blockEdgeSpawns || false;
