@@ -1,0 +1,193 @@
+#!/usr/bin/env node
+// Regenerates js/engine_resolve/engine_data.js — the committed data tables the
+// engine-faithful GL terrain resolver needs at runtime:
+//
+//   MATERIAL_NAMES_BY_ID     CellFactory load order (matlist), id -> name
+//   WANG_COLOR_TO_ID         materials.xml wang_color -> material id ('last' dupe
+//                            wins, validated against the game's lattice dump)
+//   WANG_PARAMS_BY_ID        wang_noise_percent / wang_curvature / wang_noise_type
+//   MATERIAL_FLAT_ABGR_BY_ID engine display color for textureless materials:
+//                            CellData+0x64 stores the XML color with R and B
+//                            swapped (the word is ABGR), which is what MAPDUMP
+//                            renders — so [r, g, b] here = XML [b, g, r]
+//   SPAWN_COLORS_BY_BIOME    biome-map color -> magic-pixel colors (per-biome
+//                            wang_scripts.csv + lua RegisterSpawnFunction set)
+//   BIOME_ENGINE             per biome-map color: runtime topology, band list
+//                            (material ids), topology-0 params, support flags
+//   PERM_CLASSIC / PERM_CUSTOM  the two 256-byte noise permutation tables
+//
+// Inputs live outside the repo: the RE workspace's generated band/topo0 tables
+// (scripts/ref_resolver/, gitignored) and the game's unpacked data. Regenerate
+// with:
+//   node tools/gen_engine_data.mjs \
+//     [--game /path/to/data.wak.unpacked] [--matlist /path/to/matlist.json]
+import fs from 'node:fs';
+import path from 'node:path';
+import url from 'node:url';
+
+const REPO = path.dirname(path.dirname(url.fileURLToPath(import.meta.url)));
+const RR = path.join(REPO, 'scripts', 'ref_resolver');
+
+const argv = process.argv.slice(2);
+const flag = (n, d) => { const i = argv.indexOf(n); return i >= 0 ? argv[i + 1] : d; };
+const GAME = flag('--game', process.env.NOITA_DATA ||
+    '/home/vitaminmoo/reverse/noita/noita_Jan_25_2025_15:55:41/data/data.wak.unpacked');
+const MATLIST = flag('--matlist',
+    process.env.MATLIST || '/tmp/claude-1000/-home-vitaminmoo-reverse-noita/1709ead7-4791-4244-90ea-e002fa371592/scratchpad/carve_truth/matlist.json');
+
+process.env.NOITA_DATA = GAME;
+const { BIOME_BANDS } = await import(url.pathToFileURL(path.join(RR, 'biome_bands.js')));
+const { BIOME_TOPO0 } = await import(url.pathToFileURL(path.join(RR, 'biome_topo0.js')));
+const { WANG_PARAMS } = await import(url.pathToFileURL(path.join(RR, 'matparams.js')));
+const { spawnColorsByBiomeColor } = await import(url.pathToFileURL(path.join(RR, 'spawn_colors.mjs')));
+
+// ---- material ids ----------------------------------------------------------
+const matlines = JSON.parse(fs.readFileSync(MATLIST, 'utf8')).lines;
+const idByName = new Map();
+let maxId = 0;
+for (const l of matlines) {
+    const m = /^mat id=(\d+) name=(\S+)/.exec(l.trim());
+    if (m) { idByName.set(m[2], +m[1]); maxId = Math.max(maxId, +m[1]); }
+}
+const namesById = new Array(maxId + 1).fill(null);
+for (const [n, i] of idByName) namesById[i] = n;
+
+// ---- wang colors + flat colors (materials.xml is authoritative for wang;
+// data/material_data.json for the parent-resolved Graphics color) -------------
+const xml = fs.readFileSync(path.join(GAME, 'materials.xml'), 'utf8');
+const wangByName = new Map();
+for (const t of xml.match(/<(CellData|CellDataChild)[^>]*>/g) || []) {
+    const n = /\bname="([^"]*)"/.exec(t);
+    const w = /\bwang_color="([^"]*)"/.exec(t);
+    if (n && w && !wangByName.has(n[1])) wangByName.set(n[1], parseInt(w[1], 16) & 0xffffff);
+}
+const colorToId = new Map();          // 'last' dupe mode, validated vs the dump
+for (const [name, id] of idByName) {
+    const c = wangByName.get(name);
+    if (c !== undefined) colorToId.set(c, id);
+}
+
+const matData = JSON.parse(fs.readFileSync(path.join(REPO, 'data', 'material_data.json'), 'utf8'));
+const colorByName = new Map();
+for (const m of matData) if (m.color) colorByName.set(m.name, m.color);
+const flat = new Array(maxId + 1).fill(0);
+for (const [name, id] of idByName) {
+    const hex = colorByName.get(name);
+    const v = hex ? parseInt(hex, 16) : (0xff000000 | (wangByName.get(name) ?? 0));
+    // engine word is ABGR: display R = XML B, display B = XML R
+    const r = v & 0xff, g = (v >> 8) & 0xff, b = (v >> 16) & 0xff;
+    flat[id] = (r << 16) | (g << 8) | b;
+}
+
+// ---- wang sampler params by id ---------------------------------------------
+const params = [];
+for (let id = 0; id <= maxId; id++) {
+    const p = (namesById[id] && WANG_PARAMS.get(namesById[id])) || { scale: 1.0, threshold: 0.5, type: 0 };
+    params.push([p.scale, p.threshold, p.type]);
+}
+
+// ---- per-biome engine table -------------------------------------------------
+const colors = [...new Set([...Object.keys(BIOME_BANDS), ...Object.keys(BIOME_TOPO0)].map(Number))]
+    .sort((a, b) => a - b);
+const biomes = [];
+for (const color of colors) {
+    const bands = BIOME_BANDS[color];
+    const t0 = BIOME_TOPO0[color];
+    if (!t0) continue;
+    const bandList = [];
+    let unsupportedBand = false;
+    for (const c of (bands ? bands.bands : [])) {
+        if (c.poly) { unsupportedBand = true; continue; }
+        if (c.rare && c.rare.fbm) { unsupportedBand = true; continue; }
+        const id = idByName.get(c.mat);
+        if (id === undefined) { unsupportedBand = true; continue; }
+        bandList.push({
+            mat: id, min: c.min, max: c.max,
+            limY: c.limitY || null,
+            addP: c.addPerlin || null,
+            rare: c.rare ? {
+                sx: c.rare.sx, sy: c.rare.sy, ox: c.rare.ox, oy: c.rare.oy,
+                perlin: c.rare.perlin, polka: c.rare.polka, boxed: c.rare.boxed,
+                plo: c.rare.plo, phi: c.rare.phi, prob: c.rare.prob,
+                rmin: c.rare.rmin, rmax: c.rare.rmax,
+            } : null,
+        });
+    }
+    // topology-0 support: the noise/edge/modifier variants the shader implements.
+    // noiseType 3 (SIN_CAPPED overworld carve) is unreachable when the 'empty'
+    // lake-mask modifier caps density at ~0.5 < the 0.85 carve gate.
+    const carveReachable = !(t0.modifier.kind === 'empty');
+    const topo0OK = t0.topo === 0
+        && (t0.noiseType === 0 || !carveReachable)
+        && (t0.edge === 0 || t0.edge === 1 || t0.edge === 3)
+        && t0.insideNoiseType === 5
+        && !t0.depthBlend
+        && (t0.modifier.kind === 'const' || t0.modifier.kind === 'empty' || t0.modifier.kind === 'none')
+        && !unsupportedBand;
+    const topo2OK = t0.topo === 2 && !unsupportedBand;
+    biomes.push({
+        color,
+        topo: t0.topo,
+        supported: t0.topo === 2 ? topo2OK : topo0OK,
+        noiseBiomeEdges: t0.noiseBiomeEdges,
+        setMin: bands ? bands.setMin : 0,
+        setMax: bands ? bands.setMax : 0,
+        bands: bandList,
+        t0: {
+            edge: t0.edge, startY: t0.startY, endY: t0.endY, freq: t0.freq,
+            low: t0.low, high: t0.high, slopeStartX: t0.slopeStartX, slopeDelta: t0.slopeDelta,
+            multGradient: t0.multGradient, multPerlin: t0.multPerlin,
+            insideAddValue: t0.insideAddValue,
+            insideScaleX: t0.insideScaleX, insideScaleY: t0.insideScaleY,
+            insideOffX: t0.insideOffX, insideOffY: t0.insideOffY,
+            insideFBM: t0.insideFBM, insideSquared: t0.insideSquared,
+            insideClamped: t0.insideClamped, insideScaled: t0.insideScaled,
+            insideScaleMin: t0.insideScaleMin, insideScaleMax: t0.insideScaleMax,
+            noiseType: t0.noiseType,
+            modKind: t0.modifier.kind, modValue: t0.modifier.value ?? 0,
+        },
+    });
+}
+
+// ---- spawn colors -----------------------------------------------------------
+const spawnByBiome = [];
+for (const [color, set] of spawnColorsByBiomeColor()) {
+    spawnByBiome.push([color, [...set].sort((a, b) => a - b)]);
+}
+spawnByBiome.sort((a, b) => a[0] - b[0]);
+
+// ---- permutation tables -----------------------------------------------------
+const carveSrc = fs.readFileSync(path.join(RR, 'carve_noise.js'), 'utf8');
+const perlinSrc = fs.readFileSync(path.join(RR, 'perlin_noise.js'), 'utf8');
+const grabPerm = (src, label) => {
+    const m = /const PERM = new Uint8Array\(\[([\s\S]*?)\]\)/.exec(src);
+    if (!m) throw new Error('no PERM table in ' + label);
+    const t = m[1].split(',').map(s => parseInt(s.trim(), 10)).filter(n => !Number.isNaN(n));
+    if (t.length !== 256) throw new Error(`${label}: ${t.length} entries`);
+    return t;
+};
+const permClassic = grabPerm(carveSrc, 'carve_noise.js');
+const permCustom = grabPerm(perlinSrc, 'perlin_noise.js');
+
+// ---- emit -------------------------------------------------------------------
+const out = `// GENERATED by tools/gen_engine_data.mjs — do not edit by hand.
+// Data tables for the engine-faithful GL terrain resolver. Sources: the game's
+// materials.xml / biome XML (via the RE workspace's generated band and topology
+// tables, validated bit-exact against live dumps) and the CellFactory material
+// id order captured from a live game (MATLIST).
+export const MATERIAL_NAMES_BY_ID = ${JSON.stringify(namesById)};
+export const WANG_COLOR_TO_ID = ${JSON.stringify([...colorToId.entries()])};
+export const WANG_PARAMS_BY_ID = ${JSON.stringify(params)};
+export const MATERIAL_FLAT_RGB_BY_ID = ${JSON.stringify(flat)};
+export const SPAWN_COLORS_BY_BIOME = ${JSON.stringify(spawnByBiome)};
+export const BIOME_ENGINE = ${JSON.stringify(biomes)};
+export const PERM_CLASSIC = ${JSON.stringify(permClassic)};
+export const PERM_CUSTOM = ${JSON.stringify(permCustom)};
+`;
+const dest = path.join(REPO, 'js', 'engine_resolve', 'engine_data.js');
+fs.mkdirSync(path.dirname(dest), { recursive: true });
+fs.writeFileSync(dest, out);
+console.log(`wrote ${dest}: ${namesById.length} materials, ${biomes.length} biomes ` +
+    `(${biomes.filter(b => b.supported && b.topo === 2).length} topo2 + ` +
+    `${biomes.filter(b => b.supported && b.topo === 0).length} topo0 supported), ` +
+    `${spawnByBiome.length} spawn sets, ${(out.length / 1024).toFixed(0)} KiB`);
