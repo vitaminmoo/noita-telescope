@@ -2204,6 +2204,8 @@ export const app = {
 		const viewBottom = this.cam.y + halfViewH;
 		const offscreen = (dx, dy, w, h) =>
 			dx + w < viewLeft || dx > viewRight || dy + h < viewTop || dy > viewBottom;
+		// Same rectangle in object form, for culls that live in other modules
+		const viewRect = { left: viewLeft, right: viewRight, top: viewTop, bottom: viewBottom };
 
 		// Precompute offsets by key
 		const worldOffsets = {};
@@ -2553,7 +2555,7 @@ export const app = {
 			}
 
 			// Stars
-			renderStars(this.ctx, this.seed, this.ngPlusCount, this.pw, this.pwVertical);
+			renderStars(this.ctx, this.seed, this.ngPlusCount, this.pw, this.pwVertical, viewRect);
 
 			// Echoing spire (so silly, why does this even exist? no one knows)
 			if (this.surfaceOverlayScenes) {

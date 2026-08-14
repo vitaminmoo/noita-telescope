@@ -55,6 +55,22 @@ for (let i = 0; i < 3; i++) {
 }
 
 
+// Stars are drawn in world coordinates, so nearly all of them land outside the visible
+// rectangle: the cluster field alone spans ~1.4M world pixels while even the widest
+// reachable view (MIN_CAM_Z) covers ~64k. `view` is drawNow()'s visible rect in the same
+// coordinate space the stars are drawn in; the helpers below reject a star only when its
+// bounding box cannot touch that rect, so what actually gets drawn is unchanged.
+// Passing no view (the default) disables culling entirely.
+const PLAIN_STAR_EXTENT = 39; // fillRect spans (x, y) .. (x+39, y+39)
+const VARIED_STAR_EXTENT = 12; // renderVariedStar reaches 9px out plus a 3px cell
+const STAR_CLUSTER_EXTENT = 39 * 7 + VARIED_STAR_EXTENT; // 13x13 grid at 39px spacing
+
+function starOffscreen(view, x, y, extent) {
+	if (!view) return false;
+	return x + extent < view.left || x - extent > view.right ||
+		y + extent < view.top || y - extent > view.bottom;
+}
+
 function renderVariedStar(ctx, x, y, v) {
 	const col = 15<<((v%3)*4); 
 	ctx.fillStyle = '#'+col.toString(16).padStart(3, '0').split("").reverse().join("");
@@ -74,22 +90,30 @@ function renderVariedStar(ctx, x, y, v) {
 }
 
 
-export function renderStarClusters(ctx, isNGP, pw, pwv) {
+export function renderStarClusters(ctx, isNGP, pw, pwv, view) {
 	if (isNGP) return;
 	const worldSize = 35840;
 	const xoff = worldSize/2 - worldSize*pw;
 	const yoff = 7168 - 24576*pwv;
 	for (let i = 0; i < m.length; i++) {
+		const cx = m[i].x + xoff;
+		const cy = m[i].y + yoff;
+		// Reject the whole 13x13 grid at once - this is where nearly all of the wasted
+		// per-frame fill calls used to come from
+		if (starOffscreen(view, cx, cy, STAR_CLUSTER_EXTENT)) continue;
 		for (let j = 0; j < starClusters[i].length; j++) {
 			const v = starClusters[i][j];
 			const dx = j%13 - 7;
 			const dy = floor(j/13) - 7;
-			renderVariedStar(ctx, 39*dx + m[i].x + xoff, 39*dy + m[i].y + yoff, v);
+			const x = 39*dx + cx;
+			const y = 39*dy + cy;
+			if (starOffscreen(view, x, y, VARIED_STAR_EXTENT)) continue;
+			renderVariedStar(ctx, x, y, v);
 		}
 	}
 }
 
-export function renderTwinklingStars(ctx, ws, isNGP, pw, pwv) {
+export function renderTwinklingStars(ctx, ws, isNGP, pw, pwv, view) {
 	if (isNGP) return;
 	const worldSize = 35840;
 	const xoff = worldSize/2 - worldSize*pw;
@@ -98,8 +122,13 @@ export function renderTwinklingStars(ctx, ws, isNGP, pw, pwv) {
 	// Use current time to seed the PRNG for twinkling effect
 	prng.Seed = floor(Date.now()/40) ^ ws ^ 0x5a5a5a5a;
 	for (let i = 0; i < 3; i++) {
+		// The PRNG has to be advanced the same way whether or not the star is drawn
 		if (prng.NextU()%128 === 0) {
-			renderVariedStar(ctx, e[i].x + xoff, e[i].y + yoff, prng.NextU());
+			const v = prng.NextU();
+			const x = e[i].x + xoff;
+			const y = e[i].y + yoff;
+			if (starOffscreen(view, x, y, VARIED_STAR_EXTENT)) continue;
+			renderVariedStar(ctx, x, y, v);
 		}
 	}
 }
@@ -149,7 +178,7 @@ export function generateStars(ws, ng) {
 
 
 
-export function renderStars(ctx, ws, ng, pw, pwv) {
+export function renderStars(ctx, ws, ng, pw, pwv, view) {
 	//const t0 = performance.now();
 	const worldSize = 512*(ng > 0 ? 64 : 70);
 	const xoff = worldSize/2 - worldSize*pw;
@@ -168,16 +197,18 @@ export function renderStars(ctx, ws, ng, pw, pwv) {
 	for (let i = 0; i < starPositions.length; i++) {
 		const { x, y } = starPositions[i];
 		if (x < minX || x > maxX || y < minY || y > maxY) continue; // Skip stars outside of bounds
+		if (starOffscreen(view, x + xoff, y + yoff, PLAIN_STAR_EXTENT)) continue;
 		ctx.fillRect(x + xoff + 13, y + yoff, 13, 39);
 		ctx.fillRect(x + xoff, y + yoff + 13, 39, 13);
 	}
 	for (let i = 0; i < variedStarPositions.length; i++) {
 		const { x, y, value } = variedStarPositions[i];
 		if (x < minX || x > maxX || y < minY || y > maxY) continue; // Skip stars outside of bounds
+		if (starOffscreen(view, x + xoff, y + yoff, VARIED_STAR_EXTENT)) continue;
 		renderVariedStar(ctx, x + xoff, y + yoff, value);
 	}
-	renderTwinklingStars(ctx, ws, ng > 0, pw, pwv);
-	renderStarClusters(ctx, ng > 0, pw, pwv);
+	renderTwinklingStars(ctx, ws, ng > 0, pw, pwv, view);
+	renderStarClusters(ctx, ng > 0, pw, pwv, view);
 	//const t1 = performance.now();
 	//console.log(`Rendered stars in ${t1 - t0} ms`);
 	// About 0.1 ms for 4096
