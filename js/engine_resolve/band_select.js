@@ -3,9 +3,13 @@
 //
 // The GL terrain shader already runs this (gl/shaders.js engBandSelect) for the
 // terrain it resolves. Pixel scenes are stamped by the 2D draw path instead, and
-// their white (density 1.0) pixels go through the very same chooser in game, so
-// this module answers it for them: "what material does this biome paint at
+// their gray/white (fully solid) pixels go through the very same chooser in game,
+// so this module answers it for them: "what material does this biome paint at
 // density d, at this exact world pixel".
+//
+// `d` is never the raw coverage: the engine runs coverage through
+// ComputeMaterialNoiseDensity first (material_noise.js, re-exported below), and
+// so must every caller here.
 //
 // It reads the committed BIOME_ENGINE tables (engine_resolve/engine_data.js),
 // i.e. the same band data the shader is fed, so the two renderers cannot
@@ -18,6 +22,10 @@
 //   PolkaCellHash_3Vec          @0x0086fe30
 import { BIOME_ENGINE, MATERIAL_NAMES_BY_ID } from './engine_data.js';
 import { ComputeMagicValueFromDoubles } from './simplex_noise.js';
+
+// Re-exported so a caller cannot pick up the chooser without the density term
+// that belongs in front of it.
+export { computeMaterialNoiseDensity } from './material_noise.js';
 
 const F = Math.fround;
 
@@ -122,28 +130,6 @@ export function selectComponentForCell(biome, worldX, worldY, density) {
 		if (!r.polka) return c.mat;
 		const k = F(rarePolkaTest(rx, ry, r.plo, r.phi, r.boxed, r.prob));
 		if (r.rmin < k && k <= r.rmax) return c.mat;
-	}
-	return -1;
-}
-
-/**
- * The material id this biome paints at `density` **everywhere**, or -1 when the
- * answer is position-dependent (or there is none).
- *
- * A pixel scene's white pixels are one density (1.0) over a whole 512x512 stamp.
- * For most biomes the first band that accepts that density carries no limit_y, no
- * added perlin and no rare gate, and no earlier band carries one either -- so the
- * chooser returns the same material for every pixel and the caller can hoist it
- * out of the loop. Only where a rare gate really can fire does the per-pixel walk
- * have to run.
- */
-export function constantComponentForDensity(biome, density) {
-	if (!biome) return -1;
-	if (!(biome.setMin <= density && density <= biome.setMax)) return -1;
-	for (const c of biome.bands) {
-		if (c.limY || c.addP || c.rare) return -1;  // position can change the answer
-		if (!(c.min <= density && density < c.max)) continue;
-		return c.mat;
 	}
 	return -1;
 }

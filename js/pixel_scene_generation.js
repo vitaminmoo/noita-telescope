@@ -986,11 +986,13 @@ export function texturePixelSceneForBiome(sceneName, sourceData, width, height, 
 	const bgColorG = (paint.bgColor >> 8) & 0xFF;
 	const bgColorB = paint.bgColor & 0xFF;
 
-	// The density class: one band walk for the whole stamp when no band in front
-	// of the answer is position-dependent, otherwise per pixel.
+	// The density class, resolved per pixel. A scene's gray pixels are fully solid
+	// coverage, but the engine never hands raw coverage to the band chooser: it
+	// runs it through ComputeMaterialNoiseDensity first, which warps the position
+	// by a value-noise field and adds a simplex term. That is why a uniformly
+	// white region comes out of the game as veins of several materials rather than
+	// one flat answer, and it is the same call the GL terrain under the scene makes.
 	const densityBiome = densityBiomeFor(bands, paint.targetBiome, paint.underlyingBiome);
-	const constDensityMat = densityBiome ? bands.constantComponentForDensity(densityBiome, 1.0) : -1;
-	const perPixelDensity = densityBiome && constDensityMat < 0;
 
 	// How one material paints: its atlas rect when it has a texture, else its flat
 	// display color (which is what the engine falls back to as well). Memoized --
@@ -1067,14 +1069,15 @@ export function texturePixelSceneForBiome(sceneName, sourceData, width, height, 
 		const wx = worldX + (p % width);
 		const wy = worldY + ((p / width) | 0);
 
-		// Density 1.0 through the biome's <MaterialComponent> bands for the gray
+		// Full coverage through the biome's <MaterialComponent> bands for the gray
 		// class; the wang color's own material for everything else. A band table
 		// that accepts nothing here falls back to the biome's fillMaterial rather
 		// than to air, so a table gap can never punch a hole in a room floor.
 		const { entry, flat } = (r === g && g === b && r > 0)
-			? densityRecipeFor(perPixelDensity
-				? bands.selectComponentForCell(densityBiome, wx, wy, 1.0)
-				: constDensityMat)
+			? densityRecipeFor(densityBiome
+				? bands.selectComponentForCell(densityBiome, wx, wy,
+					bands.computeMaterialNoiseDensity(wx, wy, 1.0))
+				: -1)
 			: wangRecipeFor((r << 16) | (g << 8) | b);
 
 		if (entry > 0) {
