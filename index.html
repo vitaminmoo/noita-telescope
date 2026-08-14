@@ -1213,6 +1213,18 @@
             <label class="debug-opt hidden" title="Exclude edge cases where edge noise changes the biome"><input type="checkbox" id="exclude-edge-cases" checked> Exclude Edge Cases</label>
             <label class="debug-opt hidden" title="Set extra rerolls for pathfinding debug (requires pathfinding requirement to be disabled)">Extra Rerolls (Pathfinding Debug)<input type="number" value="0" min="0" max="100" style="width: 60px;" id="debug-extra-rerolls" autocomplete="off"> </label>
             <label class="debug-opt hidden" title="Display RNG info (deprecated)"><input type="checkbox" id="debug-rng-info"> Display RNG Info (Deprecated)</label>
+            <label class="debug-opt" title="Draw a transparency checkerboard over chunks which no tile layer actually paints, so that the underlying biome map color is not mistaken for generated terrain."><input type="checkbox" id="debug-unpainted-checkerboard" checked> Checkerboard Unpainted Regions</label>
+            <label class="debug-opt" title="Measure how long each render layer takes and how many draw calls it makes, printed as a table to the developer console about once per second."><input type="checkbox" id="debug-layer-timings"> Log Render Layer Timings</label>
+            <div class="debug-opt" title="Show or hide individual render layers of the map, in draw order. Useful for diagnosing what is drawing (or costing) what.">Render Layers</div>
+            <label class="debug-opt" title="Biome map background colors (one image per world in view)."><input type="checkbox" id="debug-layer-biome-background" checked> &nbsp;&nbsp;Biome Background</label>
+            <label class="debug-opt" title="Hand-drawn surface and sky overlay art. Off by default because it is expensive and covers generated terrain."><input type="checkbox" id="debug-layer-custom-art"> &nbsp;&nbsp;Custom Art</label>
+            <label class="debug-opt" title="Weather, sky darkening, scales, suns/moons, stars and the echoing spire."><input type="checkbox" id="debug-layer-atmosphere" checked> &nbsp;&nbsp;Weather / Sky / Stars</label>
+            <label class="debug-opt" title="Biome map alpha mask which covers custom art where tiles are drawn."><input type="checkbox" id="debug-layer-alpha-mask" checked> &nbsp;&nbsp;Alpha Mask</label>
+            <label class="debug-opt" title="Generated wang tile regions (the actual terrain)."><input type="checkbox" id="debug-layer-tile-overlays" checked> &nbsp;&nbsp;Tile Overlays</label>
+            <label class="debug-opt" title="Pixel scenes, orb rooms and the cauldron room."><input type="checkbox" id="debug-layer-pixel-scenes" checked> &nbsp;&nbsp;Pixel Scenes</label>
+            <label class="debug-opt" title="Tile bound boxes and pathfinding paths (also need their own toggles above)."><input type="checkbox" id="debug-layer-debug-boxes" checked> &nbsp;&nbsp;Debug Boxes / Paths</label>
+            <label class="debug-opt" title="Wall messages and eye messages."><input type="checkbox" id="debug-layer-secrets" checked> &nbsp;&nbsp;Secrets</label>
+            <label class="debug-opt" title="Local search area, edge noise debug canvas and the zoom target pixel."><input type="checkbox" id="debug-layer-misc" checked> &nbsp;&nbsp;Misc</label>
         </div>
 
     </div>

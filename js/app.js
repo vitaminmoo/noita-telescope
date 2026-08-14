@@ -17,7 +17,7 @@ import { debugBiomeEdgeNoise } from './edge_noise.js';
 import { getPixelSceneCanvas, loadPixelSceneData, reloadPixelSceneCache, PIXEL_SCENE_DATA } from './pixel_scene_generation.js';
 import { addStaticPixelScenes } from './static_spawns.js';
 import { NollaPrng } from './nolla_prng.js';
-import { appSettings, updateSettings, updateSpellFlags, updateSpecialFlags } from './settings.js';
+import { appSettings, updateSettings, updateSpellFlags, updateSpecialFlags, RENDER_LAYERS, readRenderLayersFromUI } from './settings.js';
 import { syncWorldWorkerData, getOrGenerateWorld, syncSettingsToWorldWorker } from './world_manager.js';
 import { syncOverlayWorkerData, getOrGenerateOverlay, syncSettingsToOverlayWorker, recolorPixelScenes, invalidatePendingOverlays } from './overlay_manager.js';
 import { getBiomeModifiers, getStartingWeather } from './misc_generation.js';
@@ -54,6 +54,62 @@ function getPoiRadius(poi, zoom) {
 		radius *= 3.0; // Highlighted POIs are bigger
 	}
 	return radius * scaleFactor;
+}
+
+// ---------------------------------------------------------------------------
+// Per-layer render profiling (debug-layer-timings)
+//
+// drawNow() draws its layers in sequence, so a single "mark" call at the end of a
+// section is enough to attribute everything since the previous mark to that layer.
+// Draw calls are counted by shadowing the context methods with counting wrappers only
+// while profiling is on, so nothing is instrumented (and nothing costs anything) when
+// the debug flag is off.
+// ---------------------------------------------------------------------------
+const COUNTED_DRAW_OPS = ['fill', 'stroke', 'fillRect', 'strokeRect', 'fillText'];
+const drawCounter = { images: 0, ops: 0 };
+let countedCtx = null;
+
+function installDrawCounter(ctx) {
+	if (countedCtx === ctx) return;
+	removeDrawCounter();
+	const proto = Object.getPrototypeOf(ctx);
+	ctx.drawImage = function (...args) {
+		drawCounter.images++;
+		return proto.drawImage.apply(this, args);
+	};
+	for (const op of COUNTED_DRAW_OPS) {
+		ctx[op] = function (...args) {
+			drawCounter.ops++;
+			return proto[op].apply(this, args);
+		};
+	}
+	countedCtx = ctx;
+}
+
+function removeDrawCounter() {
+	if (!countedCtx) return;
+	delete countedCtx.drawImage;
+	for (const op of COUNTED_DRAW_OPS) delete countedCtx[op];
+	countedCtx = null;
+}
+
+// Closes the bucket opened by the previous mark (or by startLayerProfile) and adds its
+// time and draw counts to `key`. Calling the same key more than once per frame is fine,
+// the layer just accumulates (the misc layer is split across the frame).
+function markLayer(prof, key) {
+	if (!prof) return;
+	const now = performance.now();
+	let bucket = prof.buckets.get(key);
+	if (!bucket) {
+		bucket = { ms: 0, images: 0, ops: 0 };
+		prof.buckets.set(key, bucket);
+	}
+	bucket.ms += now - prof.t;
+	bucket.images += drawCounter.images - prof.images;
+	bucket.ops += drawCounter.ops - prof.ops;
+	prof.t = now;
+	prof.images = drawCounter.images;
+	prof.ops = drawCounter.ops;
 }
 
 
@@ -113,6 +169,15 @@ export const app = {
 	recolorOffscreenBuffer: null,
 	recolorOffscreenHeavenBuffer: null,
 	recolorOffscreenHellBuffer: null,
+
+	// Chunk-resolution mask of the world where no tile layer paints anything, plus the
+	// scratch canvas and pattern used to stamp a transparency checkerboard through it
+	unpaintedMask: null,
+	unpaintedChunkCount: 0,
+	checkerScratch: null,
+	checkerPattern: null,
+	// Per-layer render profiling state (see markLayer above)
+	layerProfile: null,
 
 	w: 0, h: 0, 
 	biomeData: null,
@@ -401,6 +466,11 @@ export const app = {
 		document.getElementById('debug-rng-info').onchange = () => {this.saveSettings(); this.draw();};
 		document.getElementById('debug-original-biome-map').onchange = () => {this.saveSettings(); this.draw();};
 		document.getElementById('debug-small-pois').onchange = () => {this.saveSettings(); this.draw();};
+		document.getElementById('debug-unpainted-checkerboard').onchange = () => {this.saveSettings(); this.draw();};
+		document.getElementById('debug-layer-timings').onchange = () => {this.saveSettings(); this.draw();};
+		for (const layer of RENDER_LAYERS) {
+			document.getElementById(layer.id).onchange = () => {this.saveSettings(); this.draw();};
+		}
 		for (const [inputId, outputId] of [
 			['debug-poi-scale', 'debug-poi-scale-value'],
 			['debug-highlight-poi-scale', 'debug-highlight-poi-scale-value'],
@@ -1466,6 +1536,8 @@ export const app = {
 		if (tiles) {
 			// Reset existing tile and spawn data since we're doing a full generation, and we don't want old data hanging around
 			this.tileLayers = null;
+			this.unpaintedMask = null;
+			this.unpaintedChunkCount = 0;
 			this.pixelScenesByPW = {};
 			this.poisByPW = {};
 			this.tileOverlaysByPW = {};
@@ -1574,6 +1646,8 @@ export const app = {
 			// Create recolored background (TODO: does this need to be done here?)
 			this.renderRecolorMap();
 			this.biomeMapAlphaMask = createBiomeMapAlphaMask(this.biomeData, getWorldSize(this.isNGP, this.gameMode), 48);
+			// Chunk coverage of the generated tile layers, for the unpainted-region checkerboard
+			this.buildUnpaintedMask();
 
 			// Prescan spawn functions for generated tiles, only needs to be done once per seed/NG+ combination, not every time PW or perks change
 			this.tileSpawns = prescanSpawnFunctions(this.tileLayers, this.isNGP, this.gameMode);
@@ -1948,12 +2022,168 @@ export const app = {
 		});
 	},
 
+	// Returns a profiling handle for this frame, or null when debug-layer-timings is off.
+	startLayerProfile() {
+		if (!appSettings.debugLayerTimings) {
+			removeDrawCounter();
+			this.layerProfile = null;
+			return null;
+		}
+		installDrawCounter(this.ctx);
+		if (!this.layerProfile) {
+			this.layerProfile = { buckets: new Map(), frames: 0, lastReport: performance.now(), t: 0, images: 0, ops: 0 };
+		}
+		const prof = this.layerProfile;
+		prof.t = performance.now();
+		prof.images = drawCounter.images;
+		prof.ops = drawCounter.ops;
+		return prof;
+	},
+
+	// Reports averages roughly once per second rather than every frame.
+	finishLayerProfile(prof) {
+		if (!prof) return;
+		prof.frames++;
+		const now = performance.now();
+		if (now - prof.lastReport < 1000) return;
+		const rows = {};
+		let totalMs = 0;
+		for (const [key, bucket] of prof.buckets) {
+			totalMs += bucket.ms;
+			rows[key] = {
+				'ms/frame': +(bucket.ms / prof.frames).toFixed(3),
+				'drawImage/frame': +(bucket.images / prof.frames).toFixed(1),
+				'other draws/frame': +(bucket.ops / prof.frames).toFixed(1),
+			};
+		}
+		rows['TOTAL'] = {
+			'ms/frame': +(totalMs / prof.frames).toFixed(3),
+			'drawImage/frame': +(drawCounter.images / prof.frames).toFixed(1),
+			'other draws/frame': +(drawCounter.ops / prof.frames).toFixed(1),
+		};
+		console.log(`[Render] ${prof.frames} frames in ${((now - prof.lastReport) / 1000).toFixed(2)}s at zoom ${this.cam.z.toFixed(4)} (PW ${this.pw}, ${this.pwVertical})`);
+		console.table(rows);
+		prof.buckets.clear();
+		prof.frames = 0;
+		prof.lastReport = now;
+		drawCounter.images = 0;
+		drawCounter.ops = 0;
+	},
+
+	// Builds the chunk-resolution "nothing paints here" mask from the generated tile
+	// layers. A chunk counts as covered when some layer actually paints into it: the
+	// region chunks in validChunks for generated layers, or the chunks the image spans
+	// for static ones (which are never masked). Everything else - fill-only biomes,
+	// biomes with no generator, empty map areas - is left uncovered so it can be
+	// checkerboarded instead of showing the raw biome map color.
+	buildUnpaintedMask() {
+		this.unpaintedMask = null;
+		this.unpaintedChunkCount = 0;
+		if (!this.tileLayers || !this.tileLayers.length || !this.w || !this.h) return;
+		const w = this.w, h = this.h;
+		const covered = new Uint8Array(w * h);
+		for (const layer of this.tileLayers) {
+			if (layer.validChunks) {
+				for (const chunkKey of layer.validChunks) {
+					const comma = chunkKey.indexOf(',');
+					const cx = parseInt(chunkKey.substring(0, comma));
+					const cy = parseInt(chunkKey.substring(comma + 1));
+					if (cx < 0 || cy < 0 || cx >= w || cy >= h) continue;
+					covered[cy * w + cx] = 1;
+				}
+			}
+			else {
+				const cx0 = layer.chunkBasePos ? layer.chunkBasePos.x : layer.minX;
+				const cy0 = layer.chunkBasePos ? layer.chunkBasePos.y : layer.minY;
+				const chunksW = Math.max(1, Math.ceil(layer.w / CHUNK_SIZE));
+				const chunksH = Math.max(1, Math.ceil(layer.h / CHUNK_SIZE));
+				for (let cy = Math.max(0, cy0); cy < Math.min(h, cy0 + chunksH); cy++) {
+					for (let cx = Math.max(0, cx0); cx < Math.min(w, cx0 + chunksW); cx++) {
+						covered[cy * w + cx] = 1;
+					}
+				}
+			}
+		}
+		const canvas = document.createElement('canvas');
+		canvas.width = w;
+		canvas.height = h;
+		const ctx = canvas.getContext('2d');
+		const imageData = ctx.createImageData(w, h);
+		for (let i = 0; i < w * h; i++) {
+			if (covered[i]) continue;
+			// Only the alpha matters, the pattern is composited in with source-in
+			imageData.data[i * 4 + 3] = 255;
+			this.unpaintedChunkCount++;
+		}
+		ctx.putImageData(imageData, 0, 0);
+		this.unpaintedMask = canvas;
+	},
+
+	getCheckerPattern(ctx) {
+		if (!this.checkerPattern) {
+			const square = 8;
+			const tile = document.createElement('canvas');
+			tile.width = square * 2;
+			tile.height = square * 2;
+			const tileCtx = tile.getContext('2d');
+			tileCtx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+			tileCtx.fillRect(0, 0, square, square);
+			tileCtx.fillRect(square, square, square, square);
+			tileCtx.fillStyle = 'rgba(204, 204, 204, 0.5)';
+			tileCtx.fillRect(square, 0, square, square);
+			tileCtx.fillRect(0, square, square, square);
+			this.checkerPattern = ctx.createPattern(tile, 'repeat');
+		}
+		return this.checkerPattern;
+	},
+
+	// Stamps the checkerboard over every uncovered chunk of every world in view. The mask
+	// is drawn through the camera transform (so it lines up with the biome background,
+	// per parallel world, in the vertical worlds too), but the checker squares themselves
+	// are filled in screen space so they stay 8px at any zoom.
+	drawUnpaintedCheckerboard(worldOffsets) {
+		if (!appSettings.checkerboardUnpainted) return;
+		if (!this.unpaintedMask || this.unpaintedChunkCount === 0) return;
+		const width = this.canvas.width, height = this.canvas.height;
+		if (!this.checkerScratch) this.checkerScratch = document.createElement('canvas');
+		const scratch = this.checkerScratch;
+		if (scratch.width !== width || scratch.height !== height) {
+			scratch.width = width;
+			scratch.height = height;
+			this.checkerPattern = null;
+		}
+		const sctx = scratch.getContext('2d');
+		sctx.setTransform(1, 0, 0, 1, 0, 0);
+		sctx.clearRect(0, 0, width, height);
+		sctx.imageSmoothingEnabled = false;
+		sctx.save();
+		this.setupCamera(sctx);
+		for (let worldKey of this.worldsInView) {
+			const { shiftX, shiftY } = worldOffsets[worldKey];
+			sctx.drawImage(this.unpaintedMask, shiftX, shiftY, this.w * 512, this.h * 512);
+		}
+		sctx.restore();
+		sctx.globalCompositeOperation = 'source-in';
+		sctx.fillStyle = this.getCheckerPattern(sctx);
+		sctx.fillRect(0, 0, width, height);
+		sctx.globalCompositeOperation = 'source-over';
+
+		this.ctx.save();
+		this.ctx.setTransform(1, 0, 0, 1, 0, 0);
+		this.ctx.drawImage(scratch, 0, 0);
+		this.ctx.restore();
+	},
+
 	drawNow() {
 		// Panning update: Render layers for each world in view, shifted by the appropriate amount based on the PW and camera position
 
 		// Don't draw unless things are actually loaded
 		if (!this.biomeData || !this.tileLayers) return;
-		//const t0 = performance.now();
+		// Per-layer visibility toggles and profiling, both driven by RENDER_LAYERS
+		// (js/settings.js). `prof` is null unless debug-layer-timings is on, so every
+		// markLayer() call below is a single null check when profiling is off.
+		const L = appSettings.renderLayers;
+		const prof = this.startLayerProfile();
 		this.ctx.fillStyle = '#050505';
 		this.ctx.fillRect(0,0,this.canvas.width,this.canvas.height);
 		if (!this.biomeData) return;
@@ -1986,367 +2216,376 @@ export const app = {
 
 		// Layer 1
 		// Background biome colors
-		for (let worldKey of this.worldsInView) {
-			const { pwX, pwY, shiftX, shiftY } = worldOffsets[worldKey];
-			if (document.getElementById('debug-original-biome-map').checked) {
-				if (pwY === 0) {
-					this.ctx.drawImage(this.offscreen, shiftX, shiftY, this.w * 512, this.h * 512);
-				}
-				else if (pwY > 0) {
-					this.ctx.drawImage(this.offscreenHell, shiftX, shiftY, this.w * 512, this.h * 512);
-				}
-				else {
-					this.ctx.drawImage(this.offscreenHeaven, shiftX, shiftY, this.w * 512, this.h * 512);
-				}
-			} else {
-				if (pwY === 0) {
-					this.ctx.drawImage(this.recolorOffscreen, shiftX, shiftY, this.w * 512, this.h * 512);
-				}
-				else if (pwY > 0) {
-					this.ctx.drawImage(this.recolorOffscreenHell, shiftX, shiftY, this.w * 512, this.h * 512);
-				}
-				else {
-					this.ctx.drawImage(this.recolorOffscreenHeaven, shiftX, shiftY, this.w * 512, this.h * 512);
+		if (L.biomeBackground) {
+			for (let worldKey of this.worldsInView) {
+				const { pwX, pwY, shiftX, shiftY } = worldOffsets[worldKey];
+				if (document.getElementById('debug-original-biome-map').checked) {
+					if (pwY === 0) {
+						this.ctx.drawImage(this.offscreen, shiftX, shiftY, this.w * 512, this.h * 512);
+					}
+					else if (pwY > 0) {
+						this.ctx.drawImage(this.offscreenHell, shiftX, shiftY, this.w * 512, this.h * 512);
+					}
+					else {
+						this.ctx.drawImage(this.offscreenHeaven, shiftX, shiftY, this.w * 512, this.h * 512);
+					}
+				} else {
+					if (pwY === 0) {
+						this.ctx.drawImage(this.recolorOffscreen, shiftX, shiftY, this.w * 512, this.h * 512);
+					}
+					else if (pwY > 0) {
+						this.ctx.drawImage(this.recolorOffscreenHell, shiftX, shiftY, this.w * 512, this.h * 512);
+					}
+					else {
+						this.ctx.drawImage(this.recolorOffscreenHeaven, shiftX, shiftY, this.w * 512, this.h * 512);
+					}
 				}
 			}
 		}
+		if (prof) markLayer(prof, 'biomeBackground');
 
 		// Layer 2
 		// Custom art background (and foreground in places without tiles)
-		for (let worldKey of this.worldsInView) {
-			const { pwX, pwY, shiftX, shiftY } = worldOffsets[worldKey];
-			if (pwY === 0) {
-				if (this.ngPlusCount === 0 && this.gameMode === 'normal') {
-					// TODO: Need the PW/NG+ versions of the overlay, for now disable
-					if (pwX === 0) {
-						if (this.surfaceOverlay) {
-							this.ctx.drawImage(this.surfaceOverlay, shiftX, shiftY, this.w * 512, this.h * 512);
-						}
-						// Hiisi shop
-						if (this.surfaceOverlayScenes && this.surfaceOverlayScenes['hiisi_hourglass_left'] && this.surfaceOverlayScenes['hiisi_hourglass_right']) {
-							if (this.hiisiHourglassPosition === 'left') {
-								this.ctx.drawImage(this.surfaceOverlayScenes['hiisi_hourglass_left'], shiftX + 30*512, shiftY + 24*512, 512, 576);
-							}
-							else if (this.hiisiHourglassPosition === 'right') {
-								this.ctx.drawImage(this.surfaceOverlayScenes['hiisi_hourglass_right'], shiftX + 38*512, shiftY + 24*512, 512, 576);
-							}
-						}
-					}
-					else {
-						if (this.surfaceOverlayPW) {
-							this.ctx.drawImage(this.surfaceOverlayPW, shiftX, shiftY, this.w * 512, this.h * 512);
-						}
-					}
-					// Extra overlay for just PW +/- 1
-					if (pwX === -1 || pwX === 1) {
-						if (this.surfaceOverlayPWAdditional) {
-							this.ctx.drawImage(this.surfaceOverlayPWAdditional, shiftX, shiftY, this.w * 512, this.h * 512);
-						}
-					}
-				}
-				else if (this.ngPlusCount === 0 && this.gameMode === 'nightmare') {
-					if (pwX === 0) {
-						if (this.surfaceOverlayNightmare) {
-							this.ctx.drawImage(this.surfaceOverlayNightmare, shiftX, shiftY, this.w * 512, this.h * 512);
-						}
-					}
-					else {
-						if (this.surfaceOverlayNightmarePW) {
-							this.ctx.drawImage(this.surfaceOverlayNightmarePW, shiftX, shiftY, this.w * 512, this.h * 512);
-						}
-					}
-				}
-				else {
-					if (this.ngPlusCount === 7 || this.ngPlusCount === 28) {
-						if (pwX === 0) {
-							if (this.surfaceOverlayNGP7) {
-								this.ctx.drawImage(this.surfaceOverlayNGP7, shiftX, shiftY, this.w * 512, this.h * 512);
-							}
-						}
-						else {
-							if (this.surfaceOverlayNGP7PW) {
-								this.ctx.drawImage(this.surfaceOverlayNGP7PW, shiftX, shiftY, this.w * 512, this.h * 512);
-							}
-						}
-					}
-					else if (this.ngPlusCount === 14) {
-						if (pwX === 0) {
-							if (this.surfaceOverlayNGP14) {
-								this.ctx.drawImage(this.surfaceOverlayNGP14, shiftX, shiftY, this.w * 512, this.h * 512);
-							}
-						}
-						else {
-							if (this.surfaceOverlayNGP14PW) {
-								this.ctx.drawImage(this.surfaceOverlayNGP14PW, shiftX, shiftY, this.w * 512, this.h * 512);
-							}
-						}
-					}
-					else if (this.ngPlusCount === 21) {
-						if (pwX === 0) {
-							if (this.surfaceOverlayNGP21) {
-								this.ctx.drawImage(this.surfaceOverlayNGP21, shiftX, shiftY, this.w * 512, this.h * 512);
-							}
-						}
-						else {
-							if (this.surfaceOverlayNGP21PW) {
-								this.ctx.drawImage(this.surfaceOverlayNGP21PW, shiftX, shiftY, this.w * 512, this.h * 512);
-							}
-						}
-					}
-					else {
-						if (pwX === 0) {
-							if (this.surfaceOverlayNGP) {
-								this.ctx.drawImage(this.surfaceOverlayNGP, shiftX, shiftY, this.w * 512, this.h * 512);
-							}
-						}
-						else {
-							if (this.surfaceOverlayNGPPW) {
-								this.ctx.drawImage(this.surfaceOverlayNGPPW, shiftX, shiftY, this.w * 512, this.h * 512);
-							}
-						}
-					}
-				}
-			}
-			else if (pwY < 0) {
-				if (this.ngPlusCount === 0 && this.gameMode === 'normal') {
-					if (pwX === 0) {
-						if (this.skyOverlay) {
-							this.ctx.drawImage(this.skyOverlay, shiftX, shiftY, this.w * 512, this.h * 512 + SKY_EXTRA_HEIGHT);
-						}
-					}
-					else {
-						if (this.skyOverlayPW) {
-							this.ctx.drawImage(this.skyOverlayPW, shiftX, shiftY, this.w * 512, this.h * 512 + SKY_EXTRA_HEIGHT);
-						}
-					}
-				}
-				else if (this.ngPlusCount === 0 && this.gameMode === 'nightmare') {
-					if (pwX === 0) {
-						if (this.skyOverlayNightmare) {
-							this.ctx.drawImage(this.skyOverlayNightmare, shiftX, shiftY, this.w * 512, this.h * 512 + SKY_EXTRA_HEIGHT);
-						}
-					}
-					else {
-						if (this.skyOverlayNightmarePW) {
-							this.ctx.drawImage(this.skyOverlayNightmarePW, shiftX, shiftY, this.w * 512, this.h * 512 + SKY_EXTRA_HEIGHT);
-						}
-					}
-				}
-				else {
-					if (this.ngPlusCount === 7 || this.ngPlusCount === 28) {
-						if (pwX === 0) {
-							if (this.skyOverlayNGP7) {
-								this.ctx.drawImage(this.skyOverlayNGP7, shiftX, shiftY, this.w * 512, this.h * 512 + SKY_EXTRA_HEIGHT);
-							}
-						}
-						else {
-							if (this.skyOverlayNGP7PW) {
-								this.ctx.drawImage(this.skyOverlayNGP7PW, shiftX, shiftY, this.w * 512, this.h * 512 + SKY_EXTRA_HEIGHT);
-							}
-						}
-					}
-					else if (this.ngPlusCount === 14) {
-						if (pwX === 0) {
-							if (this.skyOverlayNGP14) {
-								this.ctx.drawImage(this.skyOverlayNGP14, shiftX, shiftY, this.w * 512, this.h * 512 + SKY_EXTRA_HEIGHT);
-							}
-						}
-						else {
-							if (this.skyOverlayNGP14PW) {
-								this.ctx.drawImage(this.skyOverlayNGP14PW, shiftX, shiftY, this.w * 512, this.h * 512 + SKY_EXTRA_HEIGHT);
-							}
-						}
-					}
-					else if (this.ngPlusCount === 21) {
-						if (pwX === 0) {
-							if (this.skyOverlayNGP21) {
-								this.ctx.drawImage(this.skyOverlayNGP21, shiftX, shiftY, this.w * 512, this.h * 512 + SKY_EXTRA_HEIGHT);
-							}
-						}
-						else {
-							if (this.skyOverlayNGP21PW) {
-								this.ctx.drawImage(this.skyOverlayNGP21PW, shiftX, shiftY, this.w * 512, this.h * 512 + SKY_EXTRA_HEIGHT);
-							}
-						}
-					}
-					else {
-						if (pwX === 0) {
-							if (this.skyOverlayNGP) {
-								this.ctx.drawImage(this.skyOverlayNGP, shiftX, shiftY, this.w * 512, this.h * 512 + SKY_EXTRA_HEIGHT);
-							}
-						}
-						else {
-							if (this.skyOverlayNGPPW) {
-								this.ctx.drawImage(this.skyOverlayNGPPW, shiftX, shiftY, this.w * 512, this.h * 512 + SKY_EXTRA_HEIGHT);
-							}
-						}
-					}
-				}
-			}
-		}
-
-		// Weather overlays
-		if (document.getElementById('custom-art').checked && this.weatherOverlays) {
-			// Only applies to main world, check whether the main world is in view
-			if (this.worldsInView.has('0,0')) {
-				const { shiftX, shiftY } = worldOffsets['0,0'];
-				let weatherOverlay;
-				if (this.weather.type === 'rain' && this.weatherOverlays['rain']) {
-					weatherOverlay = this.weatherOverlays['rain'];
-				}
-				else if (this.weather.type === 'rain_heavy' && this.weatherOverlays['rain_heavy']) {
-					weatherOverlay = this.weatherOverlays['rain_heavy'];
-				}
-				else if (this.weather.type === 'snow' && this.weatherOverlays['snow']) {
-					weatherOverlay = this.weatherOverlays['snow'];
-				}
-				else if (this.weather.type === 'slush' && this.weatherOverlays['slush']) {
-					weatherOverlay = this.weatherOverlays['slush'];
-				}
-				else if (this.weather.type === 'blood' && this.weatherOverlays['blood']) {
-					weatherOverlay = this.weatherOverlays['blood'];
-				}
-				else if (this.weather.type === 'acid' && this.weatherOverlays['acid']) {
-					weatherOverlay = this.weatherOverlays['acid'];
-				}
-				else if (this.weather.type === 'slime' && this.weatherOverlays['slime']) {
-					weatherOverlay = this.weatherOverlays['slime'];
-				}
-				if (weatherOverlay) {
-					this.ctx.drawImage(weatherOverlay, shiftX + getWorldCenter(this.isNGP, this.gameMode) * 512 - 5*512, shiftY + 5*512 + 416, 283*32, 142*32);
-				}
-			}
-		}
-
-		// Darken sky with height
-		if (this.pwVertical < 0) {
-			const viewArea = this.getViewArea();
-			
-			// Calculate how dark the top and bottom of the CURRENT SCREEN should be
-			// Assuming higher up = more negative Y = darker
-			const maxWorldHeight = -24576 * 6; 
-			const bottomFactor = Math.min(Math.max(viewArea.bottom / maxWorldHeight, 0), 1);
-			const topFactor = Math.min(Math.max(viewArea.top / maxWorldHeight, 0), 1);
-
-			this.ctx.save(); // Save the camera transform
-
-			// Reset the context to target the physical screen pixels
-			this.ctx.resetTransform(); 
-			// Note: If you have an older setup that doesn't support resetTransform, 
-			// use this.ctx.setTransform(1, 0, 0, 1, 0, 0);
-
-			// Create a gradient from the physical top of the canvas (0) to the bottom (height)
-			const gradient = this.ctx.createLinearGradient(0, 0, 0, this.canvas.height);
-
-			// Top of the screen gets the topFactor, bottom gets the bottomFactor
-			// Scaled by 0.8 so it doesn't become 100% pitch black at the absolute top
-			gradient.addColorStop(0, `rgba(0, 0, 0, ${topFactor*0.75})`);
-			gradient.addColorStop(1, `rgba(0, 0, 0, ${bottomFactor*0.75})`);
-
-			this.ctx.fillStyle = gradient;
-			this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-
-			this.ctx.restore(); // Restore the camera transform for the rest of your rendering
-		}
-
-		// Scales
-		if (this.gameMode !== 'nightmare' && this.ngPlusCount === 0) {
-			const scaleOffsetX = 25*512;
-			const scaleOffsetY = -256;
+		if (L.customArt) {
 			for (let worldKey of this.worldsInView) {
 				const { pwX, pwY, shiftX, shiftY } = worldOffsets[worldKey];
 				if (pwY === 0) {
-					if (pwX === 0) {
-						// Scale variants based on sun/darksun gem unlocks
-						if (appSettings.sunGem && appSettings.darksunGem) {
-							if (this.surfaceOverlayScenes && this.surfaceOverlayScenes['scale_balanced']) {
-								this.ctx.drawImage(this.surfaceOverlayScenes['scale_balanced'], shiftX + getWorldCenter(this.isNGP, this.gameMode) * 512 + scaleOffsetX, shiftY + 14*512 + scaleOffsetY, 512, 512);
+					if (this.ngPlusCount === 0 && this.gameMode === 'normal') {
+						// TODO: Need the PW/NG+ versions of the overlay, for now disable
+						if (pwX === 0) {
+							if (this.surfaceOverlay) {
+								this.ctx.drawImage(this.surfaceOverlay, shiftX, shiftY, this.w * 512, this.h * 512);
 							}
-						}
-						else if (appSettings.sunGem) {
-							if (this.surfaceOverlayScenes && this.surfaceOverlayScenes['scale_light']) {
-								this.ctx.drawImage(this.surfaceOverlayScenes['scale_light'], shiftX + getWorldCenter(this.isNGP, this.gameMode) * 512 + scaleOffsetX, shiftY + 14*512 + scaleOffsetY, 512, 512);
-							}
-						}
-						else if (appSettings.darksunGem) {
-							if (this.surfaceOverlayScenes && this.surfaceOverlayScenes['scale_dark']) {
-								this.ctx.drawImage(this.surfaceOverlayScenes['scale_dark'], shiftX + getWorldCenter(this.isNGP, this.gameMode) * 512 + scaleOffsetX, shiftY + 14*512 + scaleOffsetY, 512, 512);
+							// Hiisi shop
+							if (this.surfaceOverlayScenes && this.surfaceOverlayScenes['hiisi_hourglass_left'] && this.surfaceOverlayScenes['hiisi_hourglass_right']) {
+								if (this.hiisiHourglassPosition === 'left') {
+									this.ctx.drawImage(this.surfaceOverlayScenes['hiisi_hourglass_left'], shiftX + 30*512, shiftY + 24*512, 512, 576);
+								}
+								else if (this.hiisiHourglassPosition === 'right') {
+									this.ctx.drawImage(this.surfaceOverlayScenes['hiisi_hourglass_right'], shiftX + 38*512, shiftY + 24*512, 512, 576);
+								}
 							}
 						}
 						else {
+							if (this.surfaceOverlayPW) {
+								this.ctx.drawImage(this.surfaceOverlayPW, shiftX, shiftY, this.w * 512, this.h * 512);
+							}
+						}
+						// Extra overlay for just PW +/- 1
+						if (pwX === -1 || pwX === 1) {
+							if (this.surfaceOverlayPWAdditional) {
+								this.ctx.drawImage(this.surfaceOverlayPWAdditional, shiftX, shiftY, this.w * 512, this.h * 512);
+							}
+						}
+					}
+					else if (this.ngPlusCount === 0 && this.gameMode === 'nightmare') {
+						if (pwX === 0) {
+							if (this.surfaceOverlayNightmare) {
+								this.ctx.drawImage(this.surfaceOverlayNightmare, shiftX, shiftY, this.w * 512, this.h * 512);
+							}
+						}
+						else {
+							if (this.surfaceOverlayNightmarePW) {
+								this.ctx.drawImage(this.surfaceOverlayNightmarePW, shiftX, shiftY, this.w * 512, this.h * 512);
+							}
+						}
+					}
+					else {
+						if (this.ngPlusCount === 7 || this.ngPlusCount === 28) {
+							if (pwX === 0) {
+								if (this.surfaceOverlayNGP7) {
+									this.ctx.drawImage(this.surfaceOverlayNGP7, shiftX, shiftY, this.w * 512, this.h * 512);
+								}
+							}
+							else {
+								if (this.surfaceOverlayNGP7PW) {
+									this.ctx.drawImage(this.surfaceOverlayNGP7PW, shiftX, shiftY, this.w * 512, this.h * 512);
+								}
+							}
+						}
+						else if (this.ngPlusCount === 14) {
+							if (pwX === 0) {
+								if (this.surfaceOverlayNGP14) {
+									this.ctx.drawImage(this.surfaceOverlayNGP14, shiftX, shiftY, this.w * 512, this.h * 512);
+								}
+							}
+							else {
+								if (this.surfaceOverlayNGP14PW) {
+									this.ctx.drawImage(this.surfaceOverlayNGP14PW, shiftX, shiftY, this.w * 512, this.h * 512);
+								}
+							}
+						}
+						else if (this.ngPlusCount === 21) {
+							if (pwX === 0) {
+								if (this.surfaceOverlayNGP21) {
+									this.ctx.drawImage(this.surfaceOverlayNGP21, shiftX, shiftY, this.w * 512, this.h * 512);
+								}
+							}
+							else {
+								if (this.surfaceOverlayNGP21PW) {
+									this.ctx.drawImage(this.surfaceOverlayNGP21PW, shiftX, shiftY, this.w * 512, this.h * 512);
+								}
+							}
+						}
+						else {
+							if (pwX === 0) {
+								if (this.surfaceOverlayNGP) {
+									this.ctx.drawImage(this.surfaceOverlayNGP, shiftX, shiftY, this.w * 512, this.h * 512);
+								}
+							}
+							else {
+								if (this.surfaceOverlayNGPPW) {
+									this.ctx.drawImage(this.surfaceOverlayNGPPW, shiftX, shiftY, this.w * 512, this.h * 512);
+								}
+							}
+						}
+					}
+				}
+				else if (pwY < 0) {
+					if (this.ngPlusCount === 0 && this.gameMode === 'normal') {
+						if (pwX === 0) {
+							if (this.skyOverlay) {
+								this.ctx.drawImage(this.skyOverlay, shiftX, shiftY, this.w * 512, this.h * 512 + SKY_EXTRA_HEIGHT);
+							}
+						}
+						else {
+							if (this.skyOverlayPW) {
+								this.ctx.drawImage(this.skyOverlayPW, shiftX, shiftY, this.w * 512, this.h * 512 + SKY_EXTRA_HEIGHT);
+							}
+						}
+					}
+					else if (this.ngPlusCount === 0 && this.gameMode === 'nightmare') {
+						if (pwX === 0) {
+							if (this.skyOverlayNightmare) {
+								this.ctx.drawImage(this.skyOverlayNightmare, shiftX, shiftY, this.w * 512, this.h * 512 + SKY_EXTRA_HEIGHT);
+							}
+						}
+						else {
+							if (this.skyOverlayNightmarePW) {
+								this.ctx.drawImage(this.skyOverlayNightmarePW, shiftX, shiftY, this.w * 512, this.h * 512 + SKY_EXTRA_HEIGHT);
+							}
+						}
+					}
+					else {
+						if (this.ngPlusCount === 7 || this.ngPlusCount === 28) {
+							if (pwX === 0) {
+								if (this.skyOverlayNGP7) {
+									this.ctx.drawImage(this.skyOverlayNGP7, shiftX, shiftY, this.w * 512, this.h * 512 + SKY_EXTRA_HEIGHT);
+								}
+							}
+							else {
+								if (this.skyOverlayNGP7PW) {
+									this.ctx.drawImage(this.skyOverlayNGP7PW, shiftX, shiftY, this.w * 512, this.h * 512 + SKY_EXTRA_HEIGHT);
+								}
+							}
+						}
+						else if (this.ngPlusCount === 14) {
+							if (pwX === 0) {
+								if (this.skyOverlayNGP14) {
+									this.ctx.drawImage(this.skyOverlayNGP14, shiftX, shiftY, this.w * 512, this.h * 512 + SKY_EXTRA_HEIGHT);
+								}
+							}
+							else {
+								if (this.skyOverlayNGP14PW) {
+									this.ctx.drawImage(this.skyOverlayNGP14PW, shiftX, shiftY, this.w * 512, this.h * 512 + SKY_EXTRA_HEIGHT);
+								}
+							}
+						}
+						else if (this.ngPlusCount === 21) {
+							if (pwX === 0) {
+								if (this.skyOverlayNGP21) {
+									this.ctx.drawImage(this.skyOverlayNGP21, shiftX, shiftY, this.w * 512, this.h * 512 + SKY_EXTRA_HEIGHT);
+								}
+							}
+							else {
+								if (this.skyOverlayNGP21PW) {
+									this.ctx.drawImage(this.skyOverlayNGP21PW, shiftX, shiftY, this.w * 512, this.h * 512 + SKY_EXTRA_HEIGHT);
+								}
+							}
+						}
+						else {
+							if (pwX === 0) {
+								if (this.skyOverlayNGP) {
+									this.ctx.drawImage(this.skyOverlayNGP, shiftX, shiftY, this.w * 512, this.h * 512 + SKY_EXTRA_HEIGHT);
+								}
+							}
+							else {
+								if (this.skyOverlayNGPPW) {
+									this.ctx.drawImage(this.skyOverlayNGPPW, shiftX, shiftY, this.w * 512, this.h * 512 + SKY_EXTRA_HEIGHT);
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		if (prof) markLayer(prof, 'customArt');
+
+		// Weather overlays
+		if (L.atmosphere) {
+			if (document.getElementById('custom-art').checked && this.weatherOverlays) {
+				// Only applies to main world, check whether the main world is in view
+				if (this.worldsInView.has('0,0')) {
+					const { shiftX, shiftY } = worldOffsets['0,0'];
+					let weatherOverlay;
+					if (this.weather.type === 'rain' && this.weatherOverlays['rain']) {
+						weatherOverlay = this.weatherOverlays['rain'];
+					}
+					else if (this.weather.type === 'rain_heavy' && this.weatherOverlays['rain_heavy']) {
+						weatherOverlay = this.weatherOverlays['rain_heavy'];
+					}
+					else if (this.weather.type === 'snow' && this.weatherOverlays['snow']) {
+						weatherOverlay = this.weatherOverlays['snow'];
+					}
+					else if (this.weather.type === 'slush' && this.weatherOverlays['slush']) {
+						weatherOverlay = this.weatherOverlays['slush'];
+					}
+					else if (this.weather.type === 'blood' && this.weatherOverlays['blood']) {
+						weatherOverlay = this.weatherOverlays['blood'];
+					}
+					else if (this.weather.type === 'acid' && this.weatherOverlays['acid']) {
+						weatherOverlay = this.weatherOverlays['acid'];
+					}
+					else if (this.weather.type === 'slime' && this.weatherOverlays['slime']) {
+						weatherOverlay = this.weatherOverlays['slime'];
+					}
+					if (weatherOverlay) {
+						this.ctx.drawImage(weatherOverlay, shiftX + getWorldCenter(this.isNGP, this.gameMode) * 512 - 5*512, shiftY + 5*512 + 416, 283*32, 142*32);
+					}
+				}
+			}
+
+			// Darken sky with height
+			if (this.pwVertical < 0) {
+				const viewArea = this.getViewArea();
+			
+				// Calculate how dark the top and bottom of the CURRENT SCREEN should be
+				// Assuming higher up = more negative Y = darker
+				const maxWorldHeight = -24576 * 6; 
+				const bottomFactor = Math.min(Math.max(viewArea.bottom / maxWorldHeight, 0), 1);
+				const topFactor = Math.min(Math.max(viewArea.top / maxWorldHeight, 0), 1);
+
+				this.ctx.save(); // Save the camera transform
+
+				// Reset the context to target the physical screen pixels
+				this.ctx.resetTransform(); 
+				// Note: If you have an older setup that doesn't support resetTransform, 
+				// use this.ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+				// Create a gradient from the physical top of the canvas (0) to the bottom (height)
+				const gradient = this.ctx.createLinearGradient(0, 0, 0, this.canvas.height);
+
+				// Top of the screen gets the topFactor, bottom gets the bottomFactor
+				// Scaled by 0.8 so it doesn't become 100% pitch black at the absolute top
+				gradient.addColorStop(0, `rgba(0, 0, 0, ${topFactor*0.75})`);
+				gradient.addColorStop(1, `rgba(0, 0, 0, ${bottomFactor*0.75})`);
+
+				this.ctx.fillStyle = gradient;
+				this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+				this.ctx.restore(); // Restore the camera transform for the rest of your rendering
+			}
+
+			// Scales
+			if (this.gameMode !== 'nightmare' && this.ngPlusCount === 0) {
+				const scaleOffsetX = 25*512;
+				const scaleOffsetY = -256;
+				for (let worldKey of this.worldsInView) {
+					const { pwX, pwY, shiftX, shiftY } = worldOffsets[worldKey];
+					if (pwY === 0) {
+						if (pwX === 0) {
+							// Scale variants based on sun/darksun gem unlocks
+							if (appSettings.sunGem && appSettings.darksunGem) {
+								if (this.surfaceOverlayScenes && this.surfaceOverlayScenes['scale_balanced']) {
+									this.ctx.drawImage(this.surfaceOverlayScenes['scale_balanced'], shiftX + getWorldCenter(this.isNGP, this.gameMode) * 512 + scaleOffsetX, shiftY + 14*512 + scaleOffsetY, 512, 512);
+								}
+							}
+							else if (appSettings.sunGem) {
+								if (this.surfaceOverlayScenes && this.surfaceOverlayScenes['scale_light']) {
+									this.ctx.drawImage(this.surfaceOverlayScenes['scale_light'], shiftX + getWorldCenter(this.isNGP, this.gameMode) * 512 + scaleOffsetX, shiftY + 14*512 + scaleOffsetY, 512, 512);
+								}
+							}
+							else if (appSettings.darksunGem) {
+								if (this.surfaceOverlayScenes && this.surfaceOverlayScenes['scale_dark']) {
+									this.ctx.drawImage(this.surfaceOverlayScenes['scale_dark'], shiftX + getWorldCenter(this.isNGP, this.gameMode) * 512 + scaleOffsetX, shiftY + 14*512 + scaleOffsetY, 512, 512);
+								}
+							}
+							else {
+								if (this.surfaceOverlayScenes && this.surfaceOverlayScenes['scale_empty']) {
+									this.ctx.drawImage(this.surfaceOverlayScenes['scale_empty'], shiftX + getWorldCenter(this.isNGP, this.gameMode) * 512 + scaleOffsetX, shiftY + 14*512 + scaleOffsetY, 512, 512);
+								}
+							}
+						}
+						else {
+							// Broken scale otherwise
 							if (this.surfaceOverlayScenes && this.surfaceOverlayScenes['scale_empty']) {
 								this.ctx.drawImage(this.surfaceOverlayScenes['scale_empty'], shiftX + getWorldCenter(this.isNGP, this.gameMode) * 512 + scaleOffsetX, shiftY + 14*512 + scaleOffsetY, 512, 512);
 							}
 						}
 					}
-					else {
-						// Broken scale otherwise
-						if (this.surfaceOverlayScenes && this.surfaceOverlayScenes['scale_empty']) {
-							this.ctx.drawImage(this.surfaceOverlayScenes['scale_empty'], shiftX + getWorldCenter(this.isNGP, this.gameMode) * 512 + scaleOffsetX, shiftY + 14*512 + scaleOffsetY, 512, 512);
+				}
+			}
+
+			// Moons and Suns
+			if (appSettings.sunState) {
+				if (this.surfaceOverlayScenes && this.surfaceOverlayScenes['sun']) {
+					this.ctx.drawImage(this.surfaceOverlayScenes['sun'], getWorldCenter(this.isNGP, this.gameMode) * 512 - this.pw * getWorldSize(this.isNGP, this.gameMode) * 512 - 7.5*512, -37*512 - this.pwVertical * 24576 - 32 - 7.5*512, 16*512, 16*512);
+				}
+			}
+			else {
+				if (this.surfaceOverlayScenes && this.surfaceOverlayScenes['moon']) {
+					this.ctx.drawImage(this.surfaceOverlayScenes['moon'], getWorldCenter(this.isNGP, this.gameMode) * 512 - this.pw * getWorldSize(this.isNGP, this.gameMode) * 512, -37*512 - this.pwVertical * 24576 - 32, 512, 540);
+				}
+			}
+			if (this.gameMode !== 'nightmare') {
+				// Why is it not in Nightmare? So weird.
+				if (appSettings.darksunState) {
+					if (this.surfaceOverlayScenes && this.surfaceOverlayScenes['darksun']) {
+						this.ctx.drawImage(this.surfaceOverlayScenes['darksun'], getWorldCenter(this.isNGP, this.gameMode) * 512 - this.pw * getWorldSize(this.isNGP, this.gameMode) * 512 - 7.5*512, 87*512 - this.pwVertical * 24576 + 128 - 7.5*512, 16*512, 16*512);
+					}
+				}
+				else {
+				
+					if (this.surfaceOverlayScenes && this.surfaceOverlayScenes['darkmoon']) {
+						this.ctx.drawImage(this.surfaceOverlayScenes['darkmoon'], getWorldCenter(this.isNGP, this.gameMode) * 512 - this.pw * getWorldSize(this.isNGP, this.gameMode) * 512, 87*512 - this.pwVertical * 24576 + 128, 512, 512);
+					}
+				}
+			}
+
+			// Stars
+			renderStars(this.ctx, this.seed, this.ngPlusCount, this.pw, this.pwVertical);
+
+			// Echoing spire (so silly, why does this even exist? no one knows)
+			if (this.surfaceOverlayScenes) {
+				let echoingSpireScene;
+				if ((this.ngPlusCount === 0 && this.gameMode !== 'nightmare') || this.ngPlusCount === 7 || this.ngPlusCount === 28) {
+					echoingSpireScene = this.surfaceOverlayScenes['echoing_spire'];
+				}
+				else if (this.ngPlusCount === 21) {
+					echoingSpireScene = this.surfaceOverlayScenes['echoing_spire_sand'];
+				}
+				else {
+					// Hills2 and hills will just render the same, so we don't need one specific to NG+14
+					echoingSpireScene = this.surfaceOverlayScenes['echoing_spire_grass'];
+				}
+				if (echoingSpireScene) {
+					const viewArea = this.getViewArea();
+					const minPW = Math.floor(viewArea.left / (512 * this.w));
+					const maxPW = Math.floor(viewArea.right / (512 * this.w));
+					const minVerticalSegment = Math.floor((viewArea.top + 11*512) / (512 * 25));
+					const maxVerticalSegment = Math.floor((viewArea.bottom + 11*512) / (512 * 25));
+					for (let pwX = minPW; pwX <= maxPW; pwX++) {
+						for (let verticalSegment = minVerticalSegment; verticalSegment <= maxVerticalSegment; verticalSegment++) {
+							if (verticalSegment > 0 || verticalSegment < -pwX+1) continue;
+							const posX = (getWorldCenter(this.isNGP, this.gameMode) - 25) * 512 + pwX * 512 * this.w - this.pw * 512 * this.w;
+							const posY = verticalSegment * 512 * 25 - 11*512 - this.pwVertical * 24576;
+							this.ctx.drawImage(echoingSpireScene, posX, posY, 512, 512*25);
 						}
 					}
 				}
 			}
 		}
-
-		// Moons and Suns
-		if (appSettings.sunState) {
-			if (this.surfaceOverlayScenes && this.surfaceOverlayScenes['sun']) {
-				this.ctx.drawImage(this.surfaceOverlayScenes['sun'], getWorldCenter(this.isNGP, this.gameMode) * 512 - this.pw * getWorldSize(this.isNGP, this.gameMode) * 512 - 7.5*512, -37*512 - this.pwVertical * 24576 - 32 - 7.5*512, 16*512, 16*512);
-			}
-		}
-		else {
-			if (this.surfaceOverlayScenes && this.surfaceOverlayScenes['moon']) {
-				this.ctx.drawImage(this.surfaceOverlayScenes['moon'], getWorldCenter(this.isNGP, this.gameMode) * 512 - this.pw * getWorldSize(this.isNGP, this.gameMode) * 512, -37*512 - this.pwVertical * 24576 - 32, 512, 540);
-			}
-		}
-		if (this.gameMode !== 'nightmare') {
-			// Why is it not in Nightmare? So weird.
-			if (appSettings.darksunState) {
-				if (this.surfaceOverlayScenes && this.surfaceOverlayScenes['darksun']) {
-					this.ctx.drawImage(this.surfaceOverlayScenes['darksun'], getWorldCenter(this.isNGP, this.gameMode) * 512 - this.pw * getWorldSize(this.isNGP, this.gameMode) * 512 - 7.5*512, 87*512 - this.pwVertical * 24576 + 128 - 7.5*512, 16*512, 16*512);
-				}
-			}
-			else {
-				
-				if (this.surfaceOverlayScenes && this.surfaceOverlayScenes['darkmoon']) {
-					this.ctx.drawImage(this.surfaceOverlayScenes['darkmoon'], getWorldCenter(this.isNGP, this.gameMode) * 512 - this.pw * getWorldSize(this.isNGP, this.gameMode) * 512, 87*512 - this.pwVertical * 24576 + 128, 512, 512);
-				}
-			}
-		}
-
-		// Stars
-		renderStars(this.ctx, this.seed, this.ngPlusCount, this.pw, this.pwVertical);
-
-		// Echoing spire (so silly, why does this even exist? no one knows)
-		if (this.surfaceOverlayScenes) {
-			let echoingSpireScene;
-			if ((this.ngPlusCount === 0 && this.gameMode !== 'nightmare') || this.ngPlusCount === 7 || this.ngPlusCount === 28) {
-				echoingSpireScene = this.surfaceOverlayScenes['echoing_spire'];
-			}
-			else if (this.ngPlusCount === 21) {
-				echoingSpireScene = this.surfaceOverlayScenes['echoing_spire_sand'];
-			}
-			else {
-				// Hills2 and hills will just render the same, so we don't need one specific to NG+14
-				echoingSpireScene = this.surfaceOverlayScenes['echoing_spire_grass'];
-			}
-			if (echoingSpireScene) {
-				const viewArea = this.getViewArea();
-				const minPW = Math.floor(viewArea.left / (512 * this.w));
-				const maxPW = Math.floor(viewArea.right / (512 * this.w));
-				const minVerticalSegment = Math.floor((viewArea.top + 11*512) / (512 * 25));
-				const maxVerticalSegment = Math.floor((viewArea.bottom + 11*512) / (512 * 25));
-				for (let pwX = minPW; pwX <= maxPW; pwX++) {
-					for (let verticalSegment = minVerticalSegment; verticalSegment <= maxVerticalSegment; verticalSegment++) {
-						if (verticalSegment > 0 || verticalSegment < -pwX+1) continue;
-						const posX = (getWorldCenter(this.isNGP, this.gameMode) - 25) * 512 + pwX * 512 * this.w - this.pw * 512 * this.w;
-						const posY = verticalSegment * 512 * 25 - 11*512 - this.pwVertical * 24576;
-						this.ctx.drawImage(echoingSpireScene, posX, posY, 512, 512*25);
-					}
-				}
-			}
-		}
+		if (prof) markLayer(prof, 'atmosphere');
 
 		const showBoxes = document.getElementById('debug-show-tile-bounds').checked;
 		const showPaths = document.getElementById('debug-show-path').checked;
@@ -2357,221 +2596,234 @@ export const app = {
 		// Tile background, needs to overwrite custom art in some places in NG+ based on a mask
 		
 		// TODO: Might need special mask for vertical PWs but for now I'll just not draw it there
-		for (let worldKey of this.worldsInView) {
-			const { pwX, pwY, shiftX, shiftY } = worldOffsets[worldKey];
-			if (pwY === 0) {
-				if (this.biomeMapAlphaMask) {
-					this.ctx.drawImage(this.biomeMapAlphaMask, shiftX, shiftY, this.w * 512, this.h * 512);
+		if (L.alphaMask) {
+			for (let worldKey of this.worldsInView) {
+				const { pwX, pwY, shiftX, shiftY } = worldOffsets[worldKey];
+				if (pwY === 0) {
+					if (this.biomeMapAlphaMask) {
+						this.ctx.drawImage(this.biomeMapAlphaMask, shiftX, shiftY, this.w * 512, this.h * 512);
+					}
 				}
 			}
 		}
+		if (prof) markLayer(prof, 'alphaMask');
+
+		// Checkerboard over chunks nothing paints, drawn after the alpha mask so the
+		// mask cannot repaint an uncovered chunk with a solid biome color again.
+		this.drawUnpaintedCheckerboard(worldOffsets);
+		if (prof) markLayer(prof, 'unpainted');
 
 		// Layer 4
 		// Tile data
 
-		for (let worldKey of this.worldsInView) {
-			const { pwX, pwY, shiftX, shiftY } = worldOffsets[worldKey];
+		if (L.tileOverlays) {
+			for (let worldKey of this.worldsInView) {
+				const { pwX, pwY, shiftX, shiftY } = worldOffsets[worldKey];
 
-			// Hack PW offsets
-			let pwOffset = 0;
-			if (this.isNGP || this.gameMode === 'nightmare') {
-				pwOffset = -pwX * 8;
-			}
-			let pwOffsetVertical = -pwY * 6;
-
-			// Draw original tile data
-			// Note: Need to remove canvas from the layers data because web workers cannot access it
-			/*
-			if (biomeOverlayMode === 'none') {
-				for (const layer of this.tileLayers) {
-					if (layer.canvas) {
-						this.ctx.drawImage(layer.canvas, layer.correctedX + shiftX + pwOffset + VISUAL_TILE_OFFSET_X, layer.correctedY + shiftY + pwOffsetVertical + VISUAL_TILE_OFFSET_Y, layer.w, layer.h);
-					}
+				// Hack PW offsets
+				let pwOffset = 0;
+				if (this.isNGP || this.gameMode === 'nightmare') {
+					pwOffset = -pwX * 8;
 				}
-			}
-			*/
-			
-			// TODO: Might need to overwrite outside the region of the map for NG+ shifts of way too much
-			// This might also just fix itself when cross-world panning is implemented
+				let pwOffsetVertical = -pwY * 6;
 
-			// OVERLAYS
-			// Tile overlay (recolor white to biome foreground average color)
-
-			if (biomeOverlayMode !== 'none') {
-				// Generation of overlays was moved to the worker thread (hopefully working...)
+				// Draw original tile data
+				// Note: Need to remove canvas from the layers data because web workers cannot access it
 				/*
-				if (!this.tileOverlaysByPW[`${pwX},${pwY}`]) {
-					// Major timesave in NG, we can reuse the same overlay...
-					if (!this.isNGP) {
-						if (this.tileOverlaysByPW[`0,${pwY}`]) {
-							this.tileOverlaysByPW[`${pwX},${pwY}`] = this.tileOverlaysByPW[`0,${pwY}`];
-						}
-					}
-					if (!this.tileOverlaysByPW[`${pwX},${pwY}`]) {
-						// Generate it now (this seems like a bad idea since it will hang)
-						// Use different recolor map for vertical PWs
-						let recolorMapUsed = this.recolorOffscreenBuffer;
-						if (pwY < 0) {
-							recolorMapUsed = this.recolorOffscreenHeavenBuffer;
-						}
-						else if (pwY > 0) {
-							recolorMapUsed = this.recolorOffscreenHellBuffer;
-						}
-						if (biomeOverlayMode === 'expanded') {
-							this.tileOverlaysByPW[`${pwX},${pwY}`] = createTileOverlaysExpanded(this.biomeData, recolorMapUsed, this.tileLayers, pwX, pwY, this.isNGP);
-						}
-						else if (biomeOverlayMode === 'normal') {
-							this.tileOverlaysByPW[`${pwX},${pwY}`] = createTileOverlays(this.biomeData, recolorMapUsed, this.tileLayers, pwX, pwY, this.isNGP);
-						}
-						else {
-							this.tileOverlaysByPW[`${pwX},${pwY}`] = createTileOverlaysCheap(this.biomeData, this.tileLayers, pwX, pwY, this.isNGP);
+				if (biomeOverlayMode === 'none') {
+					for (const layer of this.tileLayers) {
+						if (layer.canvas) {
+							this.ctx.drawImage(layer.canvas, layer.correctedX + shiftX + pwOffset + VISUAL_TILE_OFFSET_X, layer.correctedY + shiftY + pwOffsetVertical + VISUAL_TILE_OFFSET_Y, layer.w, layer.h);
 						}
 					}
 				}
 				*/
-				if (this.tileOverlaysByPW[`${pwX},${pwY}`]) {
-					for (let i = 0; i < this.tileLayers.length; i++) {
-						const layer = this.tileLayers[i];
-						const overlay = this.tileOverlaysByPW[`${pwX},${pwY}`][i];
-						
-						if (overlay) {
-							// One overlay per biome region, scattered across a 70x48-chunk
-							// world. Only a few can be on screen at once, so at normal zoom
-							// most of these drawImage calls are entirely offscreen. The
-							// Expanded mode pads its draw by the full edge-noise extent, so the cull accounts for it.
-							const expanded = appSettings.enableEdgeNoise && biomeOverlayMode === 'expanded';
-							const pad = expanded ? BIOME_EDGE_NOISE_PADDING_PIXELS : 0;
-							if (offscreen(
-								layer.correctedX + shiftX + pwOffset + VISUAL_TILE_OFFSET_X - pad,
-								layer.correctedY + shiftY + pwOffsetVertical + VISUAL_TILE_OFFSET_Y - pad,
-								layer.w + pad * 2, layer.h + pad * 2)) continue;
+			
+				// TODO: Might need to overwrite outside the region of the map for NG+ shifts of way too much
+				// This might also just fix itself when cross-world panning is implemented
 
-							if (expanded) {
-								this.ctx.drawImage(
-									overlay,
-									layer.correctedX + shiftX + pwOffset + VISUAL_TILE_OFFSET_X - pad,
-									layer.correctedY + shiftY + pwOffsetVertical + VISUAL_TILE_OFFSET_Y - pad,
-									layer.w + pad * 2,
-									layer.h + pad * 2
-								);
+				// OVERLAYS
+				// Tile overlay (recolor white to biome foreground average color)
+
+				if (biomeOverlayMode !== 'none') {
+					// Generation of overlays was moved to the worker thread (hopefully working...)
+					/*
+					if (!this.tileOverlaysByPW[`${pwX},${pwY}`]) {
+						// Major timesave in NG, we can reuse the same overlay...
+						if (!this.isNGP) {
+							if (this.tileOverlaysByPW[`0,${pwY}`]) {
+								this.tileOverlaysByPW[`${pwX},${pwY}`] = this.tileOverlaysByPW[`0,${pwY}`];
+							}
+						}
+						if (!this.tileOverlaysByPW[`${pwX},${pwY}`]) {
+							// Generate it now (this seems like a bad idea since it will hang)
+							// Use different recolor map for vertical PWs
+							let recolorMapUsed = this.recolorOffscreenBuffer;
+							if (pwY < 0) {
+								recolorMapUsed = this.recolorOffscreenHeavenBuffer;
+							}
+							else if (pwY > 0) {
+								recolorMapUsed = this.recolorOffscreenHellBuffer;
+							}
+							if (biomeOverlayMode === 'expanded') {
+								this.tileOverlaysByPW[`${pwX},${pwY}`] = createTileOverlaysExpanded(this.biomeData, recolorMapUsed, this.tileLayers, pwX, pwY, this.isNGP);
+							}
+							else if (biomeOverlayMode === 'normal') {
+								this.tileOverlaysByPW[`${pwX},${pwY}`] = createTileOverlays(this.biomeData, recolorMapUsed, this.tileLayers, pwX, pwY, this.isNGP);
 							}
 							else {
-								this.ctx.drawImage(
-									overlay, 
-									layer.correctedX + shiftX + pwOffset + VISUAL_TILE_OFFSET_X, 
-									layer.correctedY + shiftY + pwOffsetVertical + VISUAL_TILE_OFFSET_Y,
-									layer.w,
-									layer.h
-								);
+								this.tileOverlaysByPW[`${pwX},${pwY}`] = createTileOverlaysCheap(this.biomeData, this.tileLayers, pwX, pwY, this.isNGP);
 							}
 						}
 					}
-				}
-				else {
-					// Check if there is an existing overlay request pending. If not, request it.
-					// Normally this does not need to be done, but race conditions can sometimes break it
-					/*
-					if (!isOverlayPending(pwX, pwY)) {
-						console.log(`Requesting overlay for PW ${pwX}, ${pwY} to fix race condition`);
-						getOrGenerateOverlay(pwX, pwY);
-					}
 					*/
-					// This doesn't seem to help actually
+					if (this.tileOverlaysByPW[`${pwX},${pwY}`]) {
+						for (let i = 0; i < this.tileLayers.length; i++) {
+							const layer = this.tileLayers[i];
+							const overlay = this.tileOverlaysByPW[`${pwX},${pwY}`][i];
+						
+							if (overlay) {
+								// One overlay per biome region, scattered across a 70x48-chunk
+								// world. Only a few can be on screen at once, so at normal zoom
+								// most of these drawImage calls are entirely offscreen. The
+								// Expanded mode pads its draw by the full edge-noise extent, so the cull accounts for it.
+								const expanded = appSettings.enableEdgeNoise && biomeOverlayMode === 'expanded';
+								const pad = expanded ? BIOME_EDGE_NOISE_PADDING_PIXELS : 0;
+								if (offscreen(
+									layer.correctedX + shiftX + pwOffset + VISUAL_TILE_OFFSET_X - pad,
+									layer.correctedY + shiftY + pwOffsetVertical + VISUAL_TILE_OFFSET_Y - pad,
+									layer.w + pad * 2, layer.h + pad * 2)) continue;
+
+								if (expanded) {
+									this.ctx.drawImage(
+										overlay,
+										layer.correctedX + shiftX + pwOffset + VISUAL_TILE_OFFSET_X - pad,
+										layer.correctedY + shiftY + pwOffsetVertical + VISUAL_TILE_OFFSET_Y - pad,
+										layer.w + pad * 2,
+										layer.h + pad * 2
+									);
+								}
+								else {
+									this.ctx.drawImage(
+										overlay, 
+										layer.correctedX + shiftX + pwOffset + VISUAL_TILE_OFFSET_X, 
+										layer.correctedY + shiftY + pwOffsetVertical + VISUAL_TILE_OFFSET_Y,
+										layer.w,
+										layer.h
+									);
+								}
+							}
+						}
+					}
+					else {
+						// Check if there is an existing overlay request pending. If not, request it.
+						// Normally this does not need to be done, but race conditions can sometimes break it
+						/*
+						if (!isOverlayPending(pwX, pwY)) {
+							console.log(`Requesting overlay for PW ${pwX}, ${pwY} to fix race condition`);
+							getOrGenerateOverlay(pwX, pwY);
+						}
+						*/
+						// This doesn't seem to help actually
+					}
 				}
 			}
 		}
+		if (prof) markLayer(prof, 'tileOverlays');
 
 		// Layer 5
 		// Pixel scenes
-		for (let worldKey of this.worldsInView) {
-			const { pwX, pwY, shiftX, shiftY } = worldOffsets[worldKey];
+		if (L.pixelScenes) {
+			for (let worldKey of this.worldsInView) {
+				const { pwX, pwY, shiftX, shiftY } = worldOffsets[worldKey];
 
-			// Skip rendering pixel scenes when really zoomed out since they just make the interface laggy
+				// Skip rendering pixel scenes when really zoomed out since they just make the interface laggy
+				if (this.cam.z >= 0.0625) {
+					// Render pixel scenes (after overlays)
+					if (this.pixelScenesByPW && this.pixelScenesByPW[`${pwX},${pwY}`]) {
+						for (let scene of this.pixelScenesByPW[`${pwX},${pwY}`]) {
+							//if (!scene || !scene.imgElement) continue;
+							// Note positions of these *do not* use the tile offset
+							const drawX = scene.x + getWorldCenter(this.isNGP, this.gameMode)*512 - pwX*getWorldSize(this.isNGP, this.gameMode)*512 + shiftX;
+							const drawY = scene.y + 14*512 - pwY*24576 + shiftY;
 
-			if (this.cam.z >= 0.0625) {
-				// Render pixel scenes (after overlays)
-				if (this.pixelScenesByPW && this.pixelScenesByPW[`${pwX},${pwY}`]) {
-					for (let scene of this.pixelScenesByPW[`${pwX},${pwY}`]) {
-						//if (!scene || !scene.imgElement) continue;
-						// Note positions of these *do not* use the tile offset
-						const drawX = scene.x + getWorldCenter(this.isNGP, this.gameMode)*512 - pwX*getWorldSize(this.isNGP, this.gameMode)*512 + shiftX;
-						const drawY = scene.y + 14*512 - pwY*24576 + shiftY;
+							// Cull offscreen scenes before getPixelSceneCanvas(), so scenes
+							// outside the view never pay for their lazily-built OffscreenCanvas
+							// either. With cosmetic pixel scenes enabled this loop is roughly an
+							// order of magnitude longer, and nearly all of it is offscreen.
+							const sceneData = PIXEL_SCENE_DATA[scene.key];
+							if (sceneData) {
+								if (drawX + sceneData.width < viewLeft || drawX > viewRight ||
+									drawY + sceneData.height < viewTop || drawY > viewBottom) continue;
+							}
 
-						// Cull offscreen scenes before getPixelSceneCanvas(), so scenes
-						// outside the view never pay for their lazily-built OffscreenCanvas
-						// either. With cosmetic pixel scenes enabled this loop is roughly an
-						// order of magnitude longer, and nearly all of it is offscreen.
-						const sceneData = PIXEL_SCENE_DATA[scene.key];
-						if (sceneData) {
-							if (drawX + sceneData.width < viewLeft || drawX > viewRight ||
-								drawY + sceneData.height < viewTop || drawY > viewBottom) continue;
+							const pixelSceneCanvas = getPixelSceneCanvas(scene);
+							if (!pixelSceneCanvas) continue;
+							this.ctx.drawImage(pixelSceneCanvas, drawX, drawY);
 						}
-
-						const pixelSceneCanvas = getPixelSceneCanvas(scene);
-						if (!pixelSceneCanvas) continue;
-						this.ctx.drawImage(pixelSceneCanvas, drawX, drawY);
 					}
 				}
-			}
 
-			// Orb rooms (effectively another pixel scene overlay)
-			this.biomeData.orbs.forEach(o => {
-				if (o.y < 14) return; // Skip the sky altar and pyramid top orbs
+				// Orb rooms (effectively another pixel scene overlay)
+				this.biomeData.orbs.forEach(o => {
+					if (o.y < 14) return; // Skip the sky altar and pyramid top orbs
 
-				// Main world always renders orb rooms. For vertical worlds, only bottom-map
-				// orbs are repeated, and they tile every chunk (512px) downward.
-				const isBottomMapChunkOrb = o.y === this.h - 1;
-				const renderHere = pwY === 0 || (pwY > 0 && isBottomMapChunkOrb);
-				if (!renderHere) return;
-				const repeatCount = (pwY > 0 && isBottomMapChunkOrb) ? 48 : 1;
+					// Main world always renders orb rooms. For vertical worlds, only bottom-map
+					// orbs are repeated, and they tile every chunk (512px) downward.
+					const isBottomMapChunkOrb = o.y === this.h - 1;
+					const renderHere = pwY === 0 || (pwY > 0 && isBottomMapChunkOrb);
+					if (!renderHere) return;
+					const repeatCount = (pwY > 0 && isBottomMapChunkOrb) ? 48 : 1;
 
-				if (document.getElementById('custom-art').checked && this.surfaceOverlayScenes && this.surfaceOverlayScenes['orb_room']) {
-					// Technically always NGP the way I have this set up but whatever
-					const sceneName = (pwX === 0 && this.gameMode !== 'nightmare') ? 'orb_room' : 'cursed_orb_room';
-					for (let k = 0; k < repeatCount; k++) {
-						const repeatedSceneName = k > 0 ? 'cursed_orb_room' : sceneName;
-						const sceneImage = this.surfaceOverlayScenes[repeatedSceneName] || this.surfaceOverlayScenes[sceneName];
-						this.ctx.drawImage(sceneImage, o.x * 512 + shiftX, o.y * 512 + shiftY - k * 512, 512, 512);
-					}
-					// Circle (not really needed with exaggerated orb size in art)
-					/*
-					const ox = (o.x + 0.5) * 512; const oy = (o.y + 0.5) * 512;
-					this.ctx.fillStyle = 'rgba(255, 215, 0, 0.3)'; this.ctx.strokeStyle = '#f00';
-					this.ctx.beginPath(); this.ctx.arc(ox, oy, 200, 0, Math.PI*2);
-					this.ctx.lineWidth = 10; this.ctx.fill(); this.ctx.stroke();
-					*/
-				}
-				else {
-					for (let k = 0; k < repeatCount; k++) {
-						const ox = (o.x + 0.5) * 512 + shiftX;
-						const oy = (o.y + 0.5) * 512 + shiftY - k * 512;
-						// Fill in chunk entirely to overwrite any tiles underneath, since orbs break the tile rules and can appear under other PoIs
-						this.ctx.fillStyle = '#ffd100';
-						this.ctx.fillRect(ox - 256, oy - 256, 512, 512);
+					if (document.getElementById('custom-art').checked && this.surfaceOverlayScenes && this.surfaceOverlayScenes['orb_room']) {
+						// Technically always NGP the way I have this set up but whatever
+						const sceneName = (pwX === 0 && this.gameMode !== 'nightmare') ? 'orb_room' : 'cursed_orb_room';
+						for (let k = 0; k < repeatCount; k++) {
+							const repeatedSceneName = k > 0 ? 'cursed_orb_room' : sceneName;
+							const sceneImage = this.surfaceOverlayScenes[repeatedSceneName] || this.surfaceOverlayScenes[sceneName];
+							this.ctx.drawImage(sceneImage, o.x * 512 + shiftX, o.y * 512 + shiftY - k * 512, 512, 512);
+						}
+						// Circle (not really needed with exaggerated orb size in art)
+						/*
+						const ox = (o.x + 0.5) * 512; const oy = (o.y + 0.5) * 512;
 						this.ctx.fillStyle = 'rgba(255, 215, 0, 0.3)'; this.ctx.strokeStyle = '#f00';
 						this.ctx.beginPath(); this.ctx.arc(ox, oy, 200, 0, Math.PI*2);
 						this.ctx.lineWidth = 10; this.ctx.fill(); this.ctx.stroke();
+						*/
 					}
-				}
-			});
-		}
+					else {
+						for (let k = 0; k < repeatCount; k++) {
+							const ox = (o.x + 0.5) * 512 + shiftX;
+							const oy = (o.y + 0.5) * 512 + shiftY - k * 512;
+							// Fill in chunk entirely to overwrite any tiles underneath, since orbs break the tile rules and can appear under other PoIs
+							this.ctx.fillStyle = '#ffd100';
+							this.ctx.fillRect(ox - 256, oy - 256, 512, 512);
+							this.ctx.fillStyle = 'rgba(255, 215, 0, 0.3)'; this.ctx.strokeStyle = '#f00';
+							this.ctx.beginPath(); this.ctx.arc(ox, oy, 200, 0, Math.PI*2);
+							this.ctx.lineWidth = 10; this.ctx.fill(); this.ctx.stroke();
+						}
+					}
+				});
+			}
 
-		// Cauldron room should be on top of the biome data
-		if (this.cauldronState !== null && this.gameMode !== 'nightmare' && this.surfaceOverlayScenes && this.surfaceOverlayScenes["cauldron_room"] && this.surfaceOverlayScenes["cauldron_room_broken"]) {
-			// With the states being null and void it's hard to tell which is 0 and which is 1.
-			if (this.cauldronState === 0 || (this.cauldronState === 2 && getCauldronVariation())) {
-				this.ctx.drawImage(this.surfaceOverlayScenes["cauldron_room_broken"], getWorldCenter(this.isNGP, this.gameMode) * 512 - this.pw * getWorldSize(this.isNGP, this.gameMode) * 512 + 7*512, 14*512 + 10 * 512 - this.pwVertical * 24576, 512, 512);
-			}
-			else {
-				this.ctx.drawImage(this.surfaceOverlayScenes["cauldron_room"], getWorldCenter(this.isNGP, this.gameMode) * 512 - this.pw * getWorldSize(this.isNGP, this.gameMode) * 512 + 7*512, 14*512 + 10 * 512 - this.pwVertical * 24576, 512, 512);
+			// Cauldron room should be on top of the biome data
+			if (this.cauldronState !== null && this.gameMode !== 'nightmare' && this.surfaceOverlayScenes && this.surfaceOverlayScenes["cauldron_room"] && this.surfaceOverlayScenes["cauldron_room_broken"]) {
+				// With the states being null and void it's hard to tell which is 0 and which is 1.
+				if (this.cauldronState === 0 || (this.cauldronState === 2 && getCauldronVariation())) {
+					this.ctx.drawImage(this.surfaceOverlayScenes["cauldron_room_broken"], getWorldCenter(this.isNGP, this.gameMode) * 512 - this.pw * getWorldSize(this.isNGP, this.gameMode) * 512 + 7*512, 14*512 + 10 * 512 - this.pwVertical * 24576, 512, 512);
+				}
+				else {
+					this.ctx.drawImage(this.surfaceOverlayScenes["cauldron_room"], getWorldCenter(this.isNGP, this.gameMode) * 512 - this.pw * getWorldSize(this.isNGP, this.gameMode) * 512 + 7*512, 14*512 + 10 * 512 - this.pwVertical * 24576, 512, 512);
+				}
 			}
 		}
+		if (prof) markLayer(prof, 'pixelScenes');
 
 		// Layer 6
 		// Debug overlays (tile bounds, pathfinding)
 
 		// Draw debug boxes and paths above overlays/pixel scenes so they aren't obscured
-		if (showBoxes || showPaths) {
+		if (L.debugBoxes && (showBoxes || showPaths)) {
 			for (let worldKey of this.worldsInView) {
 				const { pwX, pwY, shiftX, shiftY } = worldOffsets[worldKey];
 				// Hack PW offsets
@@ -2644,25 +2896,29 @@ export const app = {
 				}
 			}
 		}
+		if (prof) markLayer(prof, 'debugBoxes');
 
 		// Layer 7
 		// Secrets
 		// TODO: These are only near the center and should just render with a sort of absolute position, no reason to iterate over worlds in view for this
 
 		// Draw secret messages
-		renderWallMessages(this.ctx, this.isNGP, this.gameMode, this.pw, this.pwVertical);
-		if (this.pwVertical === 0 && this.gameMode === 'normal') {
-			/*
-			if (this.pw === 0) {
-				// TODO: Two of these are really in the first vertical PW in main
-				renderWallMessages(this.ctx, this.isNGP);
+		if (L.secrets) {
+			renderWallMessages(this.ctx, this.isNGP, this.gameMode, this.pw, this.pwVertical);
+			if (this.pwVertical === 0 && this.gameMode === 'normal') {
+				/*
+				if (this.pw === 0) {
+					// TODO: Two of these are really in the first vertical PW in main
+					renderWallMessages(this.ctx, this.isNGP);
+				}
+				*/
+				// For now I'll leave these as is because it is kind of accurate to the game that the eyes just pop in when you enter the PW
+				// Technically it's drawing two copies but it doesn't matter too much
+				renderEyeMessages(this.ctx, this.eyes.east, this.pw, this.isNGP);
+				renderEyeMessages(this.ctx, this.eyes.west, this.pw, this.isNGP);
 			}
-			*/
-			// For now I'll leave these as is because it is kind of accurate to the game that the eyes just pop in when you enter the PW
-			// Technically it's drawing two copies but it doesn't matter too much
-			renderEyeMessages(this.ctx, this.eyes.east, this.pw, this.isNGP);
-			renderEyeMessages(this.ctx, this.eyes.west, this.pw, this.isNGP);
 		}
+		if (prof) markLayer(prof, 'secrets');
 
 		// Layer 8
 		// Other debug stuff maybe
@@ -2686,29 +2942,32 @@ export const app = {
 		*/
 
 		// Local search progress display
-		if (activeLocalSearchArea) {
-			const { x, y, r } = activeLocalSearchArea;
-			//console.log(`Rendering local search area at (${x}, ${y}) with radius ${r}`);
+		if (L.misc) {
+			if (activeLocalSearchArea) {
+				const { x, y, r } = activeLocalSearchArea;
+				//console.log(`Rendering local search area at (${x}, ${y}) with radius ${r}`);
 			
-			// The total width and height of the searched square
-			const size = r * 2;
-			const topLeftX = getWorldCenter(this.isNGP, this.gameMode) * 512 - this.pw * getWorldSize(this.isNGP, this.gameMode) * 512 + x - r;
-			const topLeftY = 14 * 512 - this.pwVertical * 48 * 512 + y - r;
+				// The total width and height of the searched square
+				const size = r * 2;
+				const topLeftX = getWorldCenter(this.isNGP, this.gameMode) * 512 - this.pw * getWorldSize(this.isNGP, this.gameMode) * 512 + x - r;
+				const topLeftY = 14 * 512 - this.pwVertical * 48 * 512 + y - r;
 
-			// Draw a semi-transparent fill
-			this.ctx.fillStyle = 'rgba(0, 255, 255, 0.15)'; // Light cyan
-			this.ctx.fillRect(topLeftX, topLeftY, size, size);
+				// Draw a semi-transparent fill
+				this.ctx.fillStyle = 'rgba(0, 255, 255, 0.15)'; // Light cyan
+				this.ctx.fillRect(topLeftX, topLeftY, size, size);
 
-			// Draw a solid border 
-			this.ctx.strokeStyle = 'rgba(0, 255, 255, 0.8)';
-			this.ctx.lineWidth = 2; // Adjust based on your zoom level if necessary
-			this.ctx.strokeRect(topLeftX, topLeftY, size, size);
+				// Draw a solid border 
+				this.ctx.strokeStyle = 'rgba(0, 255, 255, 0.8)';
+				this.ctx.lineWidth = 2; // Adjust based on your zoom level if necessary
+				this.ctx.strokeRect(topLeftX, topLeftY, size, size);
+			}
+
+			// TODO: Check this with panning
+			if (document.getElementById('debug-edge-noise').checked && this.debugCanvas) {
+				this.ctx.drawImage(this.debugCanvas, this.debugX - this.debugCanvas.width/2 + getWorldCenter(this.isNGP, this.gameMode)*512, this.debugY - this.debugCanvas.height/2 + 14*512);
+			}
 		}
-
-		// TODO: Check this with panning
-		if (document.getElementById('debug-edge-noise').checked && this.debugCanvas) {
-			this.ctx.drawImage(this.debugCanvas, this.debugX - this.debugCanvas.width/2 + getWorldCenter(this.isNGP, this.gameMode)*512, this.debugY - this.debugCanvas.height/2 + 14*512);
-		}
+		if (prof) markLayer(prof, 'misc');
 
 		// Layer 9
 		// PoIs
@@ -2919,20 +3178,23 @@ export const app = {
 				}
 			}
 		}
+		if (prof) markLayer(prof, 'pois');
 
-		if (this.zoomPixel) {
-			const zoomPixelX = this.zoomPixel.x - (this.pw * 512 * getWorldSize(this.isNGP, this.gameMode)) + getWorldCenter(this.isNGP, this.gameMode) * 512;
-			const zoomPixelY = this.zoomPixel.y + 14 * 512 - (this.pwVertical * 24576);
-			this.ctx.fillStyle = '#FF0000';
-			this.ctx.fillRect(zoomPixelX-1, zoomPixelY-1, 3, 3);
-			this.ctx.fillStyle = '#FFFF00';
-			this.ctx.fillRect(zoomPixelX, zoomPixelY, 1, 1);
+		if (L.misc) {
+			if (this.zoomPixel) {
+				const zoomPixelX = this.zoomPixel.x - (this.pw * 512 * getWorldSize(this.isNGP, this.gameMode)) + getWorldCenter(this.isNGP, this.gameMode) * 512;
+				const zoomPixelY = this.zoomPixel.y + 14 * 512 - (this.pwVertical * 24576);
+				this.ctx.fillStyle = '#FF0000';
+				this.ctx.fillRect(zoomPixelX-1, zoomPixelY-1, 3, 3);
+				this.ctx.fillStyle = '#FFFF00';
+				this.ctx.fillRect(zoomPixelX, zoomPixelY, 1, 1);
+			}
 		}
+		if (prof) markLayer(prof, 'misc');
 
 		this.ctx.restore();
 
-		//const t1 = performance.now();
-		//console.log(`Draw completed in ${(t1 - t0)} ms.`);
+		this.finishLayerProfile(prof);
 	},
 
 	setupCamera(ctx) {
@@ -3048,6 +3310,9 @@ export const app = {
 			highlightPoiScale: Number.parseFloat(document.getElementById('debug-highlight-poi-scale').value),
 			scaleHighlightedPoisWithZoom: document.getElementById('debug-highlight-pois-zoom').checked,
 			originalBiomeMap: document.getElementById('debug-original-biome-map').checked,
+			renderLayers: readRenderLayersFromUI(),
+			debugLayerTimings: document.getElementById('debug-layer-timings').checked,
+			checkerboardUnpainted: document.getElementById('debug-unpainted-checkerboard').checked,
 			enableEdgeNoise: document.getElementById('enable-edge-noise').checked,
 			blockEdgeSpawns: document.getElementById('debug-block-edge-spawns').checked,
 			edgeNoiseDebug: document.getElementById('debug-edge-noise').checked,
@@ -3134,6 +3399,15 @@ export const app = {
 				document.getElementById('debug-highlight-poi-scale-value').textContent = `${Number.parseFloat(document.getElementById('debug-highlight-poi-scale').value).toFixed(1)}x`;
 				document.getElementById('debug-highlight-pois-zoom').checked = settings.scaleHighlightedPoisWithZoom ?? true;
 				document.getElementById('debug-original-biome-map').checked = settings.originalBiomeMap || false;
+				// Render layer toggles. A layer missing from an older saved blob keeps its
+				// code default (see RENDER_LAYERS), and the UI is the source of truth after.
+				for (const layer of RENDER_LAYERS) {
+					document.getElementById(layer.id).checked = settings.renderLayers?.[layer.key] ?? layer.defaultOn;
+				}
+				settings.renderLayers = readRenderLayersFromUI();
+				document.getElementById('debug-layer-timings').checked = settings.debugLayerTimings || false;
+				document.getElementById('debug-unpainted-checkerboard').checked = settings.checkerboardUnpainted ?? true;
+				settings.checkerboardUnpainted = document.getElementById('debug-unpainted-checkerboard').checked;
 				document.getElementById('enable-edge-noise').checked = settings.enableEdgeNoise || false;
 				document.getElementById('debug-block-edge-spawns').checked = settings.blockEdgeSpawns || false;
 				document.getElementById('debug-edge-noise').checked = settings.edgeNoiseDebug || false;
