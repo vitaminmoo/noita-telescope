@@ -12,7 +12,132 @@ import { appSettings } from './settings.js';
 // This was originally constant but it sometimes needs to be cleared to regenerate the cache...
 export let PIXEL_SCENE_DATA = {};
 export let PIXEL_SCENE_SPAWN_DATA = {}; // Populated during the prescan of pixel scenes, keyed by biome and scene name, used for looking up spawn points during generation without needing to access the image data again
-const PIXEL_SCENE_CANVAS_CACHE = {};
+// ---------------------------------------------------------------------------
+// Pixel scene bitmap cache (PERF_PLAN Step 1)
+//
+// Each recolored variant is uploaded once as an ImageBitmap plus a mip chain
+// (1/2 .. 1/16). The draw site picks a level from the camera zoom, so a zoomed-out
+// frame blits a handful of pixels per scene instead of a full-resolution image, which
+// is what made drawing them at low zoom expensive enough to gate off entirely.
+//
+// The raw recolored Uint8Array is released once its bitmap exists (the overlay worker
+// recolors from the untouched base image, so any variant can be produced again). Entries
+// are evicted least-recently-drawn first over a byte budget; an evicted variant is
+// re-requested from the overlay worker through the rebuild hook below.
+// ---------------------------------------------------------------------------
+const PIXEL_SCENE_MAX_MIP = 4; // 1/2, 1/4, 1/8, 1/16
+const PIXEL_SCENE_BITMAP_CACHE = new Map(); // `${key}/${variantKey}` -> entry
+let pixelSceneCacheBytes = 0;
+let pixelSceneDrawTick = 0;
+
+// Left in place of a released Uint8Array so the "do we already have this variant?" checks
+// in overlay_manager / world_manager don't re-request it while its bitmap is still alive.
+const VARIANT_RELEASED = { released: true };
+
+let variantRebuilder = null;
+
+// overlay_manager registers the way back to the worker here (importing it directly would
+// be circular).
+export function setPixelSceneVariantRebuilder(fn) {
+	variantRebuilder = fn;
+}
+
+export function getPixelSceneCacheStats() {
+	return { entries: PIXEL_SCENE_BITMAP_CACHE.size, bytes: pixelSceneCacheBytes };
+}
+
+function releasePixelSceneEntry(entry) {
+	for (const bitmap of entry.levels) {
+		if (bitmap) bitmap.close();
+	}
+	pixelSceneCacheBytes -= entry.bytes;
+	PIXEL_SCENE_BITMAP_CACHE.delete(entry.cacheKey);
+}
+
+export function clearPixelSceneBitmapCache() {
+	for (const entry of [...PIXEL_SCENE_BITMAP_CACHE.values()]) releasePixelSceneEntry(entry);
+	pixelSceneCacheBytes = 0;
+}
+
+function evictPixelSceneBitmaps(keep) {
+	const budget = (appSettings.pixelSceneBitmapBudgetMB || 256) * 1024 * 1024;
+	if (pixelSceneCacheBytes <= budget) return;
+	const entries = [...PIXEL_SCENE_BITMAP_CACHE.values()].sort((a, b) => a.used - b.used);
+	for (const entry of entries) {
+		if (pixelSceneCacheBytes <= budget) break;
+		if (entry === keep) continue; // never drop the one we are about to draw
+		releasePixelSceneEntry(entry);
+	}
+}
+
+function addPixelSceneBitmap(entry, level, bitmap) {
+	const bytes = bitmap.width * bitmap.height * 4;
+	entry.levels[level] = bitmap;
+	entry.bytes += bytes;
+	pixelSceneCacheBytes += bytes;
+}
+
+function buildPixelSceneEntry(pixelSceneKey, variantKey, cacheKey) {
+	const pixelSceneData = PIXEL_SCENE_DATA[pixelSceneKey];
+	if (!pixelSceneData) return null;
+	const raw = pixelSceneData.variants[variantKey];
+	if (!ArrayBuffer.isView(raw)) {
+		// Released after its bitmap was built and the bitmap has since been evicted, so
+		// ask for the recolor again. Nothing to draw for this scene until it arrives.
+		if (raw === VARIANT_RELEASED && variantRebuilder) variantRebuilder(pixelSceneKey, variantKey);
+		return null;
+	}
+	const width = pixelSceneData.width;
+	const height = pixelSceneData.height;
+	const canvas = new OffscreenCanvas(width, height);
+	const ctx = canvas.getContext('2d');
+	const imageData = ctx.createImageData(width, height);
+	imageData.data.set(raw);
+	ctx.putImageData(imageData, 0, 0);
+	const entry = {
+		cacheKey,
+		width,
+		height,
+		levels: new Array(PIXEL_SCENE_MAX_MIP + 1).fill(null),
+		// Halving stops once either axis would round to nothing
+		maxLevel: Math.min(PIXEL_SCENE_MAX_MIP, Math.floor(Math.log2(Math.max(1, Math.min(width, height))))),
+		bytes: 0,
+		used: 0,
+	};
+	addPixelSceneBitmap(entry, 0, canvas.transferToImageBitmap());
+	PIXEL_SCENE_BITMAP_CACHE.set(cacheKey, entry);
+	// The bitmap is now the only copy this thread needs of the recolored pixels. Material
+	// lookups (utils.js) read the pre-biome variants, which are left alone.
+	if (variantKey.includes('biome=')) pixelSceneData.variants[variantKey] = VARIANT_RELEASED;
+	return entry;
+}
+
+function buildPixelSceneMips(entry, level) {
+	// Each level is filtered from the one above it rather than resampled from the base,
+	// which is both cheaper and closer to a proper mip chain.
+	for (let l = 1; l <= level; l++) {
+		if (entry.levels[l]) continue;
+		const src = entry.levels[l - 1];
+		const w = Math.max(1, src.width >> 1);
+		const h = Math.max(1, src.height >> 1);
+		const canvas = new OffscreenCanvas(w, h);
+		const ctx = canvas.getContext('2d');
+		ctx.imageSmoothingEnabled = true;
+		ctx.imageSmoothingQuality = 'high';
+		ctx.drawImage(src, 0, 0, w, h);
+		addPixelSceneBitmap(entry, l, canvas.transferToImageBitmap());
+	}
+	return entry.levels[level];
+}
+
+// Largest mip whose resolution still meets the on-screen resolution: at camera zoom z one
+// world pixel covers z screen pixels, so a 1/2^L bitmap is enough while 2^-L >= z.
+// Anything at or above 1:1 draws the native image, exactly as before.
+export function pixelSceneMipLevel(z) {
+	if (!(z > 0) || z >= 1) return 0;
+	const level = Math.floor(Math.log2(1 / z));
+	return level > PIXEL_SCENE_MAX_MIP ? PIXEL_SCENE_MAX_MIP : level;
+}
 
 export function injectPixelSceneSpawnData(cachedData) {
 	PIXEL_SCENE_SPAWN_DATA = cachedData;
@@ -45,29 +170,28 @@ const PIXEL_SCENE_AIR_TRANSPARENCY_EXCEPTIONS = {
 }
 
 export async function reloadPixelSceneCache() {
+	clearPixelSceneBitmapCache();
 	PIXEL_SCENE_DATA = {};
 	await loadPixelSceneData();
 }
 
-export function getPixelSceneCanvas(pixelScene) {
+// Returns the bitmap to draw for this scene at the requested mip level (0 = native), or
+// null when its recolored pixels aren't available yet. The caller always draws it into
+// the scene's full-resolution world rectangle, so the level only changes sampling.
+export function getPixelSceneCanvas(pixelScene, level = 0) {
 	const pixelSceneKey = pixelScene.key;
 	const variantKey = pixelScene.variantKey || '';
-	const key = `${pixelSceneKey}/${variantKey}`;
-	if (PIXEL_SCENE_CANVAS_CACHE[key]) return PIXEL_SCENE_CANVAS_CACHE[key];
-	const pixelSceneData = PIXEL_SCENE_DATA[pixelSceneKey].variants[variantKey];
-	if (!pixelSceneData) {
-		//console.warn(`Pixel scene data not found for key ${pixelSceneKey} with variant ${variantKey}.`);
-		return null;
+	const cacheKey = `${pixelSceneKey}/${variantKey}`;
+	let entry = PIXEL_SCENE_BITMAP_CACHE.get(cacheKey);
+	if (!entry) {
+		entry = buildPixelSceneEntry(pixelSceneKey, variantKey, cacheKey);
+		if (!entry) return null;
 	}
-	const width = PIXEL_SCENE_DATA[pixelSceneKey].width;
-	const height = PIXEL_SCENE_DATA[pixelSceneKey].height;
-	const canvas = new OffscreenCanvas(width, height);
-	const ctx = canvas.getContext('2d');
-	const imageData = ctx.createImageData(width, height);
-	imageData.data.set(pixelSceneData);
-	ctx.putImageData(imageData, 0, 0);
-	PIXEL_SCENE_CANVAS_CACHE[key] = canvas;
-	return canvas;
+	entry.used = ++pixelSceneDrawTick;
+	const wanted = level > entry.maxLevel ? entry.maxLevel : level;
+	const bitmap = entry.levels[wanted] || buildPixelSceneMips(entry, wanted);
+	evictPixelSceneBitmaps(entry);
+	return bitmap;
 }
 
 function getBiomeAlias(biomeName) {

@@ -14,7 +14,7 @@ import { findEyeMessages, renderEyeMessages } from './eye_messages.js';
 import { BIOME_COLOR_LOOKUP, createBiomeMapAlphaMask, createTileOverlays, createTileOverlaysCheap, createTileOverlaysExpanded } from './image_processing.js';
 import { COALMINE_ALT_SCENES } from './pixel_scene_config.js';
 import { debugBiomeEdgeNoise } from './edge_noise.js';
-import { getPixelSceneCanvas, loadPixelSceneData, reloadPixelSceneCache, PIXEL_SCENE_DATA } from './pixel_scene_generation.js';
+import { getPixelSceneCanvas, pixelSceneMipLevel, loadPixelSceneData, reloadPixelSceneCache, PIXEL_SCENE_DATA } from './pixel_scene_generation.js';
 import { addStaticPixelScenes } from './static_spawns.js';
 import { NollaPrng } from './nolla_prng.js';
 import { appSettings, updateSettings, updateSpellFlags, updateSpecialFlags, RENDER_LAYERS, readRenderLayersFromUI } from './settings.js';
@@ -468,6 +468,7 @@ export const app = {
 		document.getElementById('debug-small-pois').onchange = () => {this.saveSettings(); this.draw();};
 		document.getElementById('debug-unpainted-checkerboard').onchange = () => {this.saveSettings(); this.draw();};
 		document.getElementById('debug-layer-timings').onchange = () => {this.saveSettings(); this.draw();};
+		document.getElementById('debug-pixel-scene-budget').onchange = () => {this.saveSettings(); this.draw();};
 		for (const layer of RENDER_LAYERS) {
 			document.getElementById(layer.id).onchange = () => {this.saveSettings(); this.draw();};
 		}
@@ -2736,33 +2737,34 @@ export const app = {
 		// Layer 5
 		// Pixel scenes
 		if (L.pixelScenes) {
+			// Scenes are sampled from a mip chain rather than always blitting the native
+			// image, so zooming out costs a 1/16 bitmap per scene instead of a full one.
+			// That replaces the old "stop drawing scenes below z 0.0625" cutoff.
+			const sceneMipLevel = pixelSceneMipLevel(this.cam.z);
 			for (let worldKey of this.worldsInView) {
 				const { pwX, pwY, shiftX, shiftY } = worldOffsets[worldKey];
 
-				// Skip rendering pixel scenes when really zoomed out since they just make the interface laggy
-				if (this.cam.z >= 0.0625) {
-					// Render pixel scenes (after overlays)
-					if (this.pixelScenesByPW && this.pixelScenesByPW[`${pwX},${pwY}`]) {
-						for (let scene of this.pixelScenesByPW[`${pwX},${pwY}`]) {
-							//if (!scene || !scene.imgElement) continue;
-							// Note positions of these *do not* use the tile offset
-							const drawX = scene.x + getWorldCenter(this.isNGP, this.gameMode)*512 - pwX*getWorldSize(this.isNGP, this.gameMode)*512 + shiftX;
-							const drawY = scene.y + 14*512 - pwY*24576 + shiftY;
+				// Render pixel scenes (after overlays)
+				if (this.pixelScenesByPW && this.pixelScenesByPW[`${pwX},${pwY}`]) {
+					for (let scene of this.pixelScenesByPW[`${pwX},${pwY}`]) {
+						//if (!scene || !scene.imgElement) continue;
+						// Note positions of these *do not* use the tile offset
+						const drawX = scene.x + getWorldCenter(this.isNGP, this.gameMode)*512 - pwX*getWorldSize(this.isNGP, this.gameMode)*512 + shiftX;
+						const drawY = scene.y + 14*512 - pwY*24576 + shiftY;
 
-							// Cull offscreen scenes before getPixelSceneCanvas(), so scenes
-							// outside the view never pay for their lazily-built OffscreenCanvas
-							// either. With cosmetic pixel scenes enabled this loop is roughly an
-							// order of magnitude longer, and nearly all of it is offscreen.
-							const sceneData = PIXEL_SCENE_DATA[scene.key];
-							if (sceneData) {
-								if (drawX + sceneData.width < viewLeft || drawX > viewRight ||
-									drawY + sceneData.height < viewTop || drawY > viewBottom) continue;
-							}
+						// Cull offscreen scenes before getPixelSceneCanvas(), so scenes
+						// outside the view never pay for their lazily-built bitmaps
+						// either. With cosmetic pixel scenes enabled this loop is roughly an
+						// order of magnitude longer, and nearly all of it is offscreen.
+						const sceneData = PIXEL_SCENE_DATA[scene.key];
+						if (!sceneData) continue;
+						if (drawX + sceneData.width < viewLeft || drawX > viewRight ||
+							drawY + sceneData.height < viewTop || drawY > viewBottom) continue;
 
-							const pixelSceneCanvas = getPixelSceneCanvas(scene);
-							if (!pixelSceneCanvas) continue;
-							this.ctx.drawImage(pixelSceneCanvas, drawX, drawY);
-						}
+						const pixelSceneCanvas = getPixelSceneCanvas(scene, sceneMipLevel);
+						if (!pixelSceneCanvas) continue;
+						// Always the full-resolution rectangle: only the source changes with the level
+						this.ctx.drawImage(pixelSceneCanvas, drawX, drawY, sceneData.width, sceneData.height);
 					}
 				}
 
@@ -3315,6 +3317,7 @@ export const app = {
 			renderLayers: readRenderLayersFromUI(),
 			debugLayerTimings: document.getElementById('debug-layer-timings').checked,
 			checkerboardUnpainted: document.getElementById('debug-unpainted-checkerboard').checked,
+			pixelSceneBitmapBudgetMB: Number.parseInt(document.getElementById('debug-pixel-scene-budget').value),
 			enableEdgeNoise: document.getElementById('enable-edge-noise').checked,
 			blockEdgeSpawns: document.getElementById('debug-block-edge-spawns').checked,
 			edgeNoiseDebug: document.getElementById('debug-edge-noise').checked,
@@ -3410,6 +3413,7 @@ export const app = {
 				document.getElementById('debug-layer-timings').checked = settings.debugLayerTimings || false;
 				document.getElementById('debug-unpainted-checkerboard').checked = settings.checkerboardUnpainted ?? true;
 				settings.checkerboardUnpainted = document.getElementById('debug-unpainted-checkerboard').checked;
+				document.getElementById('debug-pixel-scene-budget').value = settings.pixelSceneBitmapBudgetMB || 256;
 				document.getElementById('enable-edge-noise').checked = settings.enableEdgeNoise || false;
 				document.getElementById('debug-block-edge-spawns').checked = settings.blockEdgeSpawns || false;
 				document.getElementById('debug-edge-noise').checked = settings.edgeNoiseDebug || false;

@@ -69,6 +69,8 @@ export const appSettings = {
 	renderLayers: defaultRenderLayers(),
 	debugLayerTimings: false,
 	checkerboardUnpainted: true,
+	// Byte budget for the pixel scene ImageBitmap + mip cache, least-recently-drawn first
+	pixelSceneBitmapBudgetMB: 256,
 	// UI related options are not included here, this is mainly for settings which the web workers will need
 }
 
@@ -112,6 +114,7 @@ export function updateSettingsFromUI() {
 		renderLayers: readRenderLayersFromUI(),
 		debugLayerTimings: document.getElementById('debug-layer-timings')?.checked || false,
 		checkerboardUnpainted: document.getElementById('debug-unpainted-checkerboard')?.checked ?? true,
+		pixelSceneBitmapBudgetMB: parseInt(document.getElementById('debug-pixel-scene-budget')?.value) || 256,
 	};
 	updateSettings(newSettings);
 }

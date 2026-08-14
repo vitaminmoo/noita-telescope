@@ -1,6 +1,6 @@
 // world_manager.js
 import { app } from './app.js';
-import { PIXEL_SCENE_DATA } from './pixel_scene_generation.js';
+import { PIXEL_SCENE_DATA, setPixelSceneVariantRebuilder } from './pixel_scene_generation.js';
 import { appSettings, updateSettingsFromUI } from './settings.js';
 
 export const overlayWorker = new Worker(new URL('./overlay_worker.js', import.meta.url), { type: 'module' });
@@ -26,6 +26,7 @@ overlayWorker.onmessage = async (e) => {
 				PIXEL_SCENE_DATA[key].variants = {};
 			}
 			PIXEL_SCENE_DATA[key].variants[variantKey] = imgElement;
+			pendingVariantRebuilds.delete(`${key}/${variantKey}`);
 		}
 		app.draw();
 	}
@@ -109,6 +110,21 @@ export function recolorPixelScenes(pixelSceneList) {
 		overlayWorker.postMessage(payload);
 	}
 }
+
+// A pixel scene variant whose bitmap was evicted under the byte budget no longer has its
+// recolored pixels on this thread, so ask the worker to produce them again. Deduped
+// because the draw loop will keep asking every frame until the reply lands.
+const pendingVariantRebuilds = new Set();
+setPixelSceneVariantRebuilder((pixelSceneKey, variantKey) => {
+	const combinedKey = `${pixelSceneKey}/${variantKey}`;
+	if (pendingVariantRebuilds.has(combinedKey)) return;
+	pendingVariantRebuilds.add(combinedKey);
+	overlayWorker.postMessage({
+		cmd: 'GENERATE_PIXEL_SCENES',
+		pixelSceneKeys: [pixelSceneKey],
+		variantKeys: [variantKey]
+	});
+});
 
 export function getOrGenerateOverlay(pw, pwVertical) {
 	const pwKey = `${pw},${pwVertical}`;
