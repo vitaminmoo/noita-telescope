@@ -5,7 +5,7 @@ import { getBiomeAtWorldCoordinates } from './utils.js';
 import { biomeEdgeNoiseFlag } from './wobble_flags.js';
 import { loadPNG } from './png_sanitizer.js';
 import { prescanPixelScene } from './poi_scanner.js';
-import { BIOME_BACKGROUND_COLORS, TILE_OVERLAY_COLORS, makeBlackTransparent } from './image_processing.js';
+import { BIOME_BACKGROUND_COLORS, TILE_OVERLAY_COLORS, makeBlackTransparent, terrainFillColorForBiome } from './image_processing.js';
 import { GENERATOR_CONFIG } from './generator_config.js';
 import { appSettings } from './settings.js';
 
@@ -569,7 +569,12 @@ export function recolorPixelSceneForBiome(sceneName, sourceData, targetBiome) {
 	// Some scene name exceptions because this just isn't working
 
 
-	let targetColor = TILE_OVERLAY_COLORS[targetBiome] || 0xff00ff;
+	// A scene's gray/white pixels are the engine's "fill with this biome's own
+	// material" class, so in a constant-material biome they must come out as that
+	// biome's fill color -- the same one the terrain around them paints. Otherwise
+	// they take the hand-authored foreground color, which for these biomes equals
+	// the background color and leaves the carved room reading as a flat block.
+	let targetColor = terrainFillColorForBiome(targetBiome) ?? TILE_OVERLAY_COLORS[targetBiome] ?? 0xff00ff;
 	let bgColor = BIOME_BACKGROUND_COLORS[targetBiome] || 0x000000;
 	let targetR = (targetColor >> 16) & 0xFF;
 	let targetG = (targetColor >> 8) & 0xFF;

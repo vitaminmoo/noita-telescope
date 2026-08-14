@@ -1,7 +1,7 @@
 import { BIOME_EDGE_NOISE_EXTENT, BIOME_EDGE_NOISE_PADDING_TILES, CHUNK_SIZE, TILE_SIZE, WORLD_CHUNK_CENTER_Y } from "./constants.js";
-import { BIOME_COLOR_TO_NAME, BIOME_COLORS_WITH_TERRAIN, FILL_BIOME_COLORS, GENERATOR_CONFIG } from "./generator_config.js";
+import { BIOME_COLOR_TO_NAME, BIOME_COLORS_WITH_TERRAIN, FILL_BIOME_MATERIALS, GENERATOR_CONFIG } from "./generator_config.js";
 import { loadPNG } from "./png_sanitizer.js";
-import { MATERIAL_COLOR_CONVERSION } from "./potion_config.js";
+import { MATERIAL_COLOR_CONVERSION, TEXTURE_COLORS } from "./potion_config.js";
 import { appSettings } from "./settings.js";
 import { getBiomeAtWorldCoordinates, getWorldSize, tileToWorldCoordinates } from "./utils.js";
 
@@ -67,15 +67,61 @@ if (typeof process === 'undefined' || !process?.versions?.node) {
 }
 
 /**
- * The color a constant-material fill biome paints, or undefined for any biome
- * that is not a fill biome (or has no color defined for it).
+ * How far biome_map_foreground.png may sit from the fill material's own texture
+ * color and still be treated as a deliberate, hand-tuned rendition of it.
  *
- * Single source of truth for the CPU bake, the GL chunk texture and the hover
- * readout, so the two renderers cannot paint a fill chunk differently.
+ * The foreground map is unauthored for most tileless biomes: its pixel is either
+ * a copy of the biome-map color (lava #ff6a02, robot_egg #9e4302) or a sample of
+ * whatever was above the chunk (roadblock #60b8ff is sky). Painting a fill with
+ * those would be wrong, and for the sky-sampled ones absurd. But where the
+ * author *did* pick a color it is within a few units of the material -- 4 for
+ * solid_wall, 12 for solid_wall_tower, 13 for solid_wall_temple -- and keeping
+ * it means fills recolor consistently with every other chunk on the map.
+ *
+ * So: the authored color wins when it is recognisably the material, otherwise
+ * the material's own texture_color does. At 24 that splits 22 fill biomes into
+ * 17 authored and 5 material (boss_arena, roadblock, robot_egg, temple_wall,
+ * water) -- exactly the ones whose foreground pixel is demonstrably not the
+ * material.
+ */
+const FILL_COLOR_AUTHORED_TOLERANCE = 24;
+
+const channelDistance = (a, b) => Math.max(
+    Math.abs(((a >> 16) & 0xff) - ((b >> 16) & 0xff)),
+    Math.abs(((a >> 8) & 0xff) - ((b >> 8) & 0xff)),
+    Math.abs((a & 0xff) - (b & 0xff)));
+
+const fillColorCache = new Map();
+
+/**
+ * The color a constant-material fill biome paints, or undefined for any biome
+ * that is not a fill biome.
+ *
+ * Single source of truth for the CPU bake, the GL chunk texture, the pixel-scene
+ * recolor and the hover readout, so none of them can paint a fill chunk
+ * differently from the others.
  */
 export function terrainFillColor(biomeColor) {
-    if (!FILL_BIOME_COLORS.has(biomeColor)) return undefined;
-    return TILE_FOREGROUND_COLORS[biomeColor];
+    const material = FILL_BIOME_MATERIALS[biomeColor];
+    if (material === undefined) return undefined;
+    let color = fillColorCache.get(biomeColor);
+    if (color === undefined) {
+        // Same table MATERIAL_COLOR_CONVERSION recolors wang materials through,
+        // so a fill and a wang tile of the same material come out identical.
+        const textureColor = parseInt(TEXTURE_COLORS[material], 16) & 0xffffff;
+        const authored = TILE_FOREGROUND_COLORS[biomeColor];
+        color = (authored !== undefined && channelDistance(authored, textureColor) <= FILL_COLOR_AUTHORED_TOLERANCE)
+            ? authored
+            : textureColor;
+        fillColorCache.set(biomeColor, color);
+    }
+    return color;
+}
+
+/** terrainFillColor by biome name, for the pixel-scene recolor. */
+export function terrainFillColorForBiome(biomeName) {
+    const conf = GENERATOR_CONFIG[biomeName];
+    return conf ? terrainFillColor(conf.color & 0xffffff) : undefined;
 }
 
 // Non-Wang biomes whose tile overlays must ignore edge noise on both sides of a
