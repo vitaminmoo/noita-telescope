@@ -2424,6 +2424,14 @@ export const app = {
 		this.ctx.restore();
 	},
 
+	/** The layer-1 biome background image for a world row, honoring the raw-map debug toggle. */
+	biomeBackgroundImage(pwY) {
+		if (document.getElementById('debug-original-biome-map').checked) {
+			return pwY === 0 ? this.offscreen : pwY > 0 ? this.offscreenHell : this.offscreenHeaven;
+		}
+		return pwY === 0 ? this.recolorOffscreen : pwY > 0 ? this.recolorOffscreenHell : this.recolorOffscreenHeaven;
+	},
+
 	drawNow() {
 		// Panning update: Render layers for each world in view, shifted by the appropriate amount based on the PW and camera position
 
@@ -2470,28 +2478,8 @@ export const app = {
 		// Background biome colors
 		if (L.biomeBackground) {
 			for (let worldKey of this.worldsInView) {
-				const { pwX, pwY, shiftX, shiftY } = worldOffsets[worldKey];
-				if (document.getElementById('debug-original-biome-map').checked) {
-					if (pwY === 0) {
-						this.ctx.drawImage(this.offscreen, shiftX, shiftY, this.w * 512, this.h * 512);
-					}
-					else if (pwY > 0) {
-						this.ctx.drawImage(this.offscreenHell, shiftX, shiftY, this.w * 512, this.h * 512);
-					}
-					else {
-						this.ctx.drawImage(this.offscreenHeaven, shiftX, shiftY, this.w * 512, this.h * 512);
-					}
-				} else {
-					if (pwY === 0) {
-						this.ctx.drawImage(this.recolorOffscreen, shiftX, shiftY, this.w * 512, this.h * 512);
-					}
-					else if (pwY > 0) {
-						this.ctx.drawImage(this.recolorOffscreenHell, shiftX, shiftY, this.w * 512, this.h * 512);
-					}
-					else {
-						this.ctx.drawImage(this.recolorOffscreenHeaven, shiftX, shiftY, this.w * 512, this.h * 512);
-					}
-				}
+				const { pwY, shiftX, shiftY } = worldOffsets[worldKey];
+				this.ctx.drawImage(this.biomeBackgroundImage(pwY), shiftX, shiftY, this.w * 512, this.h * 512);
 			}
 			this.drawBackgroundEdges(worldOffsets, viewRect, offscreen);
 		}
@@ -3024,6 +3012,7 @@ export const app = {
 				const { pwX, pwY, shiftX, shiftY } = worldOffsets[worldKey];
 
 				// Render pixel scenes (after overlays)
+				let airErased = false;
 				if (this.pixelScenesByPW && this.pixelScenesByPW[`${pwX},${pwY}`]) {
 					for (let scene of this.pixelScenesByPW[`${pwX},${pwY}`]) {
 						//if (!scene || !scene.imgElement) continue;
@@ -3044,19 +3033,39 @@ export const app = {
 						if (!pixelSceneCanvas) continue;
 						// A scene's #000042 pixels are the engine's FORCE AIR: they erase the
 						// terrain the chunk generated instead of painting over it. Punch them
-						// out first, so the hole is real over the engine-resolved GL terrain
-						// (which paints every chunk) as well as over a fill layer. Null unless
-						// the scene has air and material textures are on -- with them off the
-						// flat recolor's opaque-background approximation is kept untouched.
+						// out, so the hole is real over the engine-resolved GL terrain (which
+						// paints every chunk) as well as over a fill layer. Null unless the
+						// scene has air and material textures are on -- with them off the flat
+						// recolor's opaque-background approximation is kept untouched.
+						//
+						// The mask and the scene image never touch the same pixel (a scene that
+						// paints its air opaque contributes no mask), so their order is free.
 						const airMask = getPixelSceneAirMask(scene);
 						if (airMask) {
 							this.ctx.globalCompositeOperation = 'destination-out';
 							this.ctx.drawImage(airMask, drawX, drawY, sceneData.width, sceneData.height);
 							this.ctx.globalCompositeOperation = 'source-over';
+							airErased = true;
 						}
 						// Always the full-resolution rectangle: only the source changes with the level
 						this.ctx.drawImage(pixelSceneCanvas, drawX, drawY, sceneData.width, sceneData.height);
 					}
+				}
+
+				// Put the biome background back behind the holes the masks just punched.
+				// `destination-out` erases everything under the air, layer 1 included, which
+				// would leave a carved room reading as two colors: page black where a scene
+				// forced air, the biome background where the scene simply painted nothing.
+				// `destination-over` only reaches pixels that are still transparent -- the
+				// canvas is opaque everywhere else from drawNow's base fill -- so one blit
+				// per world refills exactly those holes with what layer 1 would have shown.
+				//
+				// Skipped when the background layer is off: then nothing is meant to be
+				// behind the terrain, and forced air correctly reads as empty.
+				if (airErased && L.biomeBackground) {
+					this.ctx.globalCompositeOperation = 'destination-over';
+					this.ctx.drawImage(this.biomeBackgroundImage(pwY), shiftX, shiftY, this.w * 512, this.h * 512);
+					this.ctx.globalCompositeOperation = 'source-over';
 				}
 
 				// Orb rooms (effectively another pixel scene overlay)

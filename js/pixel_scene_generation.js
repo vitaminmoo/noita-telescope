@@ -1047,11 +1047,16 @@ export function texturePixelSceneForBiome(sceneName, sourceData, width, height, 
 		if (outData[i + 3] === 0) continue;   // untouched: alpha 0 / #000000
 		const r = outData[i], g = outData[i + 1], b = outData[i + 2];
 
-		// FORCE AIR: erases the world. Recorded in the mask; the image keeps
-		// whatever alpha the scene's own art asked for (almost always none).
+		// FORCE AIR: erases the world rather than painting it, so it goes in the
+		// mask -- unless this scene is one of the few whose art wants its air
+		// painted solid, in which case the image covers the same pixel and the mask
+		// must leave it alone (that keeps the two passes disjoint, so the draw site
+		// can run them in either order).
 		if (r === 0x00 && g === 0x00 && b === 0x42) {
-			if (!airMask) airMask = new Uint8Array(sourceData.length);
-			airMask[i + 3] = 0xff;
+			if (airAlpha === 0x00) {
+				if (!airMask) airMask = new Uint8Array(sourceData.length);
+				airMask[i + 3] = 0xff;
+			}
 			outData[i] = bgColorR;
 			outData[i + 1] = bgColorG;
 			outData[i + 2] = bgColorB;
