@@ -794,7 +794,9 @@ ivec2 engResolveCell(ivec2 w) {
 
 // Material id -> color: materials_gfx texel at absolute world coords when the
 // material has a texture (byte-exact vs the game), else the engine's flat
-// display color (CellData+0x64, ABGR — R/B swapped from the XML).
+// display color. The XML color text is plain aRGB (water A0376259 -> #376259);
+// ABGR is only the engine's in-memory byte order, already normalized in
+// engine_data.js — no swap here.
 void engMaterialColor(int mat, ivec2 w) {
     uvec4 mc = texelFetch(u_matMetaTex, ivec2(mat, 1), 0);
     if (mc.x > 0u) { materialTexel(int(mc.x), w, outColor); return; }

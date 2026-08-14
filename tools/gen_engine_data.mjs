@@ -74,9 +74,10 @@ const flat = new Array(maxId + 1).fill(0);
 for (const [name, id] of idByName) {
     const hex = colorByName.get(name);
     const v = hex ? parseInt(hex, 16) : (0xff000000 | (wangByName.get(name) ?? 0));
-    // engine word is ABGR: display R = XML B, display B = XML R
-    const r = v & 0xff, g = (v >> 8) & 0xff, b = (v >> 16) & 0xff;
-    flat[id] = (r << 16) | (g << 8) | b;
+    // The XML color TEXT is plain aRGB (water "A0376259" displays #376259,
+    // proven by BAKEDUMP). The engine's ABGR is only its in-MEMORY byte layout
+    // of the same value; swapping here double-swaps and paints water #596237.
+    flat[id] = v & 0xffffff;
 }
 
 // ---- wang sampler params by id ---------------------------------------------
