@@ -29,6 +29,43 @@ export { CHUNK_FLAG_EDGE_NOISE_EXCEPTION, CHUNK_FLAG_HAS_TILES };
 export const CHUNK_FLAG_NOISE_INELIGIBLE = 1 << 2;
 /** TILE_FOREGROUND_COLORS has an entry for this chunk color. */
 export const CHUNK_FLAG_FG_DEFINED = 1 << 3;
+/**
+ * Constant-material fill biome: no wang tiles, every cell the biome paints is
+ * the biome's fill material. The shader paints these chunks with the same
+ * per-chunk `u_fgTex` color the gray/white class uses, so no new texture and no
+ * new encoding is needed — see FILL_BIOME_COLORS below.
+ */
+export const CHUNK_FLAG_FILL = 1 << 4;
+
+/**
+ * The biome-map colors the game fills with one material and telescope has no
+ * generator for. Verified against the biome maps (2026-08): these are the only
+ * two colors in biome_map.png / _newgame_plus / _nightmare that have no
+ * `wangFile`, are not in `edgeNoiseOverlayExceptions`, and cover more than a
+ * handful of chunks (solid_wall 941/677/696, solid_wall_tower 155/83/0).
+ *
+ * Game data (data/biome/solid_wall.xml, data/biome/tower/solid_wall_tower.xml):
+ * neither sets `noise_biome_edges` (default 1 -> wobbles) or
+ * `big_noise_biome_edges` (default 1); both set `fat_biome_edges="0"`. So they
+ * are ordinary wobble sources *and* targets, which the resolver chain above
+ * already handles — nothing here short-circuits them.
+ *
+ *   0x3d3d3d solid_wall        <MaterialComponent> rock_hard ("dense rock",
+ *                              material_index 10) + rock_hard_border
+ *                              ("extremely dense rock", material_index 9)
+ *   0x3f3d3e solid_wall_tower  a single <MaterialComponent> rock_static_cursed
+ *
+ * The painted color comes from TILE_FOREGROUND_COLORS (biome_map_foreground.png),
+ * which already carries 0x2b1914 for solid_wall and 0x815455 for
+ * solid_wall_tower — within a few units of the game's own material base colors
+ * (rock_hard_border texture_color 0x271612, rock_static_cursed 0x754f4f) and,
+ * unlike a hardcoded material color, consistent with how every other chunk's
+ * foreground fill is recolored.
+ */
+export const FILL_BIOME_COLORS = new Set([
+    0x3d3d3d, // solid_wall
+    0x3f3d3e, // solid_wall_tower
+]);
 
 /**
  * Builds both mapWidth x 48 RGBA8UI chunk textures in one pass.
@@ -50,6 +87,9 @@ export function buildChunkTextures(biomeData, mapWidth) {
         if (name && edgeNoiseOverlayExceptions.has(name)) flags |= CHUNK_FLAG_EDGE_NOISE_EXCEPTION;
         if (biomeEdgeNoiseFlag(color, 'noise_biome_edges') === 0) flags |= CHUNK_FLAG_NOISE_INELIGIBLE;
         if (fgColor !== undefined) flags |= CHUNK_FLAG_FG_DEFINED;
+        // The fill color IS the foreground color, so a fill biome without one
+        // would paint black; leave it transparent instead.
+        if (fgColor !== undefined && FILL_BIOME_COLORS.has(color)) flags |= CHUNK_FLAG_FILL;
         chunk[i * 4] = (color >> 16) & 0xff;
         chunk[i * 4 + 1] = (color >> 8) & 0xff;
         chunk[i * 4 + 2] = color & 0xff;

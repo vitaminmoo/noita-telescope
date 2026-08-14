@@ -26,7 +26,7 @@
 // reference) — grays and materials paint flat, exactly as the CPU bake does.
 
 import { EDGE_SIGNS } from '../edge_noise.js';
-import { CHUNK_FLAG_EDGE_NOISE_EXCEPTION, CHUNK_FLAG_FG_DEFINED, CHUNK_FLAG_HAS_TILES, CHUNK_FLAG_NOISE_INELIGIBLE } from './chunk_textures.js';
+import { CHUNK_FLAG_EDGE_NOISE_EXCEPTION, CHUNK_FLAG_FG_DEFINED, CHUNK_FLAG_FILL, CHUNK_FLAG_HAS_TILES, CHUNK_FLAG_NOISE_INELIGIBLE } from './chunk_textures.js';
 import { NO_REGION } from './indirection.js';
 import { PALETTE_ALPHA_CHUNK_FG, PALETTE_ALPHA_SKIP } from './palette.js';
 
@@ -90,6 +90,13 @@ int parity(int x, int y) { return pmod(x, 2) * 2 + pmod(y, 2); }
 int noiseAt(int i) { return int(texelFetch(u_noiseTex, ivec2(i, 0), 0).r); }
 uvec4 chunkAt(ivec2 p) { return texelFetch(u_chunkTex, ivec2(pmod(p.x, u_mapWidth), clamp(p.y, 0, u_maxRow)), 0); }
 bool exceptionAt(ivec2 p) { return (chunkAt(p).a & ${CHUNK_FLAG_EDGE_NOISE_EXCEPTION}u) != 0u; }
+
+// TILE_FOREGROUND_COLORS for a chunk: the gray/white class resolves to it, and
+// so does a fill biome's constant material (chunk_textures.js FILL_BIOME_COLORS).
+vec4 chunkForeground(ivec2 p) {
+    uvec4 fg = texelFetch(u_fgTex, ivec2(pmod(p.x, u_mapWidth), clamp(p.y, 0, u_maxRow)), 0);
+    return vec4(vec3(fg.rgb) / 255.0, 1.0);
+}
 
 // getUnwobbledTileOverlayBiome's cell math (image_processing.js:111-116).
 ivec2 unwob(int wx, int wy) {
@@ -264,9 +271,16 @@ void main() {
     ivec2 pos;
     bool ignored;
     overlayBiome(w.x, w.y, pos, ignored);
-    if (ignored) return;
 
     uvec4 cc = chunkAt(pos);
+    // Constant-material fill biome: every cell the engine paints there is the
+    // biome's fill material, so the resolved chunk is the whole answer — no
+    // region, no atlas, no palette. Checked before the ignored early-out
+    // because "ignore edge noise" means "use the unwobbled chunk" (which is what
+    // overlayBiome leaves in pos), not "paint nothing"; a fill chunk next to a
+    // holy-mountain wall is still solid rock in game.
+    if ((cc.a & ${CHUNK_FLAG_FILL}u) != 0u) { outColor = chunkForeground(pos); return; }
+    if (ignored) return;
     if ((cc.a & ${CHUNK_FLAG_HAS_TILES}u) == 0u) return;
 
     uint slot = texelFetch(u_indirTex, pos, 0).r;
@@ -287,8 +301,7 @@ void main() {
     if (mode == ${PALETTE_ALPHA_SKIP}) return;                 // air, or cleared spawn pixel
     if (mode == ${PALETTE_ALPHA_CHUNK_FG}) {                   // gray / white: per-chunk foreground
         if ((cc.a & ${CHUNK_FLAG_FG_DEFINED}u) == 0u) return;
-        uvec4 fg = texelFetch(u_fgTex, ivec2(pmod(pos.x, u_mapWidth), clamp(pos.y, 0, u_maxRow)), 0);
-        outColor = vec4(vec3(fg.rgb) / 255.0, 1.0);
+        outColor = chunkForeground(pos);
         return;
     }
     outColor = vec4(pal.rgb, 1.0);
