@@ -22,6 +22,7 @@ import { BIOME_COLOR_TO_NAME, BIOME_COLORS_WITH_TILES, FILL_LAYER_COLORS } from 
 import { edgeNoiseOverlayExceptions, terrainFillColor, TILE_FOREGROUND_COLORS } from '../image_processing.js';
 import { biomeEdgeNoiseFlag } from '../wobble_flags.js';
 import { EDGE_NOISE } from '../edge_noise.js';
+import { PERM_CLASSIC, PERM_CUSTOM } from '../engine_resolve/engine_data.js';
 import { CHUNK_FLAG_EDGE_NOISE_EXCEPTION, CHUNK_FLAG_HAS_TILES, BIOME_MAP_HEIGHT } from './indirection.js';
 
 export { CHUNK_FLAG_EDGE_NOISE_EXCEPTION, CHUNK_FLAG_HAS_TILES };
@@ -91,11 +92,18 @@ export function buildChunkTextures(biomeData, mapWidth) {
 }
 
 /**
- * The 512-entry doubled permutation table (`EDGE_NOISE_2`, edge_noise.js:17-21).
- * Indices up to 255 + 255 occur when the two hashed lattice coords are summed.
+ * The noise permutation tables, one row each, all doubled to 512 entries
+ * (indices up to 255 + 255 occur when two hashed lattice coords are summed):
+ *   row 0  EDGE_NOISE (`EDGE_NOISE_2`, edge_noise.js:17-21) — wobble simplex
+ *   row 1  the classic Perlin table — ProceduralNoise_Simplex2D (engine mode)
+ *   row 2  the custom table @0xfdffe0 — Perlin2D / ValueNoisePerlinPerm2D
  */
 export function buildNoiseTable512() {
-    const t = new Uint8Array(512);
-    for (let i = 0; i < 512; i++) t[i] = EDGE_NOISE[i & 0xff];
-    return t;
+    const t = new Uint8Array(512 * 3);
+    for (let i = 0; i < 512; i++) {
+        t[i] = EDGE_NOISE[i & 0xff];
+        t[512 + i] = PERM_CLASSIC[i & 0xff];
+        t[1024 + i] = PERM_CUSTOM[i & 0xff];
+    }
+    return { width: 512, height: 3, data: t };
 }

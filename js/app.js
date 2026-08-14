@@ -554,6 +554,12 @@ export const app = {
 			this.saveSettings();
 			this.draw();
 		};
+		document.getElementById('engine-terrain').onchange = () => {
+			// The GL resource key includes the flag, so the next draw builds (or
+			// drops) the engine lattices; no worker regeneration involved.
+			this.saveSettings();
+			this.draw();
+		};
 		document.getElementById('debug-biome-overlay-mode').onchange = () => {
 			this.saveSettings();
 			this.tileOverlaysByPW = {}; // Clear cached overlays so they will be regenerated with the new mode
@@ -2312,6 +2318,10 @@ export const app = {
 				recolorMaterials: appSettings.recolorMaterials,
 				clearSpawnPixels: appSettings.clearSpawnPixels,
 			},
+			// Engine resolve mode builds the 1/10 lattices + parameter tables.
+			engineTerrain: appSettings.engineTerrain,
+			seed: this.seed,
+			generatorConfig: GENERATOR_CONFIG,
 		});
 		if (!ok) return null;
 
@@ -2327,6 +2337,7 @@ export const app = {
 			// Per-cell material textures only mean anything once wang colors
 			// resolve to their material, which is what recolorMaterials does.
 			materialTextures: appSettings.materialTextures && appSettings.recolorMaterials,
+			engineTerrain: appSettings.engineTerrain,
 		});
 		if (!glCanvas) return null;
 
@@ -3592,6 +3603,7 @@ export const app = {
 			excludeTaikasauva: document.getElementById('exclude-taikasauva').checked,
 			recolorMaterials: document.getElementById('recolor-materials').checked,
 			materialTextures: document.getElementById('material-textures').checked,
+			engineTerrain: document.getElementById('engine-terrain').checked,
 			clearSpawnPixels: document.getElementById('clear-spawn-pixels').checked,
 			customArt: document.getElementById('custom-art').checked,
 			enableStaticPixelScenes: document.getElementById('enable-static-pixel-scenes').value,
@@ -3685,6 +3697,7 @@ export const app = {
 				// `?? true` so a settings blob saved before this option existed
 				// keeps the checkbox's default-on state.
 				document.getElementById('material-textures').checked = settings.materialTextures ?? true;
+				document.getElementById('engine-terrain').checked = settings.engineTerrain || false;
 				document.getElementById('clear-spawn-pixels').checked = settings.clearSpawnPixels || false;
 				document.getElementById('custom-art').checked = settings.customArt || false;
 				document.getElementById('enable-static-pixel-scenes').value = settings.enableStaticPixelScenes || 'none';

@@ -78,12 +78,12 @@ export function createForegroundTexture(gl, chunkTextures) {
     return tex;
 }
 
-/** R8UI 512x1 edge-noise permutation table (buildNoiseTable512). */
+/** R8UI 512x3 noise permutation tables (buildNoiseTable512). */
 export function createNoiseTexture(gl, table) {
     const tex = makeTexture(gl);
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8UI, table.length, 1, 0,
-        gl.RED_INTEGER, gl.UNSIGNED_BYTE, table);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8UI, table.width, table.height, 0,
+        gl.RED_INTEGER, gl.UNSIGNED_BYTE, table.data);
     return tex;
 }
 
@@ -105,12 +105,20 @@ export function createMaterialAtlasTexture(gl, atlas) {
     return tex;
 }
 
-/** RGBA16UI N x 1 material rects (x, y, w, h) — entry E lives at texel E-1. */
-export function createMaterialMetaTexture(gl, atlas) {
+/**
+ * RGBA16UI 512 x 2: row 0 = material rects (x, y, w, h) by atlas entry (entry E
+ * at texel E-1); row 1 = (atlasEntry, r, g, b) by MATERIAL ID for the engine
+ * resolve mode (buildMatColorTable). Two tables share one texture to stay
+ * inside the 16-sampler WebGL2 minimum.
+ */
+export function createMaterialMetaTexture(gl, atlas, colorTable) {
+    const data = new Uint16Array(512 * 2 * 4);
+    data.set(atlas.meta.subarray(0, Math.min(atlas.meta.length, 512 * 4)), 0);
+    if (colorTable) data.set(colorTable.data.subarray(0, 512 * 4), 512 * 4);
     const tex = makeTexture(gl);
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16UI, atlas.entryCount, 1, 0,
-        gl.RGBA_INTEGER, gl.UNSIGNED_SHORT, atlas.meta);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16UI, 512, 2, 0,
+        gl.RGBA_INTEGER, gl.UNSIGNED_SHORT, data);
     return tex;
 }
 
@@ -129,6 +137,69 @@ export function createFillMaterialTexture(gl, table, mapWidth) {
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8UI, mapWidth, table.length / mapWidth, 0,
         gl.RED_INTEGER, gl.UNSIGNED_BYTE, table);
+    return tex;
+}
+
+/** R32F world-sized 1/10 coverage lattice (engine resolve mode). */
+export function createCoverageLatticeTexture(gl, lattice) {
+    const tex = makeTexture(gl);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, lattice.GW, lattice.GH, 0,
+        gl.RED, gl.FLOAT, lattice.cov);
+    return tex;
+}
+
+/** R16UI world-sized 1/10 material lattice (stored value − 1 = material id). */
+export function createMaterialLatticeTexture(gl, lattice) {
+    const tex = makeTexture(gl);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R16UI, lattice.GW, lattice.GH, 0,
+        gl.RED_INTEGER, gl.UNSIGNED_SHORT, lattice.mat);
+    return tex;
+}
+
+/** R16UI per-chunk engine table (biome slot | mode | edge-noise flag). */
+export function createEngineChunkTexture(gl, res) {
+    const tex = makeTexture(gl);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R16UI, res.width, res.height, 0,
+        gl.RED_INTEGER, gl.UNSIGNED_SHORT, res.chunk);
+    return tex;
+}
+
+/** R32F single-channel table (sin-hash lookup). */
+export function createR32FTexture(gl, table) {
+    const tex = makeTexture(gl);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, table.width, table.height, 0,
+        gl.RED, gl.FLOAT, table.data);
+    return tex;
+}
+
+/** RGBA32F parameter table (bands / topo0 / wang params). */
+export function createFloatTableTexture(gl, table) {
+    const tex = makeTexture(gl);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, table.width, table.height, 0,
+        gl.RGBA, gl.FLOAT, table.data);
+    return tex;
+}
+
+/** RGBA16UI material color/entry table (engine resolve mode). */
+export function createMatColorTexture(gl, table) {
+    const tex = makeTexture(gl);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16UI, table.width, table.height, 0,
+        gl.RGBA_INTEGER, gl.UNSIGNED_SHORT, table.data);
+    return tex;
+}
+
+/** R8UI 512x2 noise permutation tables (row 0 classic, row 1 custom). */
+export function createPermTexture(gl, table) {
+    const tex = makeTexture(gl);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8UI, table.width, table.height, 0,
+        gl.RED_INTEGER, gl.UNSIGNED_BYTE, table.data);
     return tex;
 }
 

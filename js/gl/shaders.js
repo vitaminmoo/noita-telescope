@@ -50,16 +50,30 @@ precision highp int;
 
 uniform highp usampler2D u_chunkTex;    // mapW x 48 RGBA8UI: rgb = biome-map color, a = flags
 uniform highp usampler2D u_fgTex;       // mapW x 48 RGBA8UI: rgb = TILE_FOREGROUND_COLORS, a = 255 if defined
-uniform highp usampler2D u_noiseTex;    // 512x1 R8UI: EDGE_NOISE doubled
+uniform highp usampler2D u_noiseTex;    // 512x3 R8UI: row 0 EDGE_NOISE doubled, rows 1/2 the
+                                        // classic + custom noise permutation tables (engine mode)
 uniform highp usampler2D u_indirTex;    // mapW x 48 RG16UI: r = region slot, g = chunk flags
 uniform highp isampler2D u_regionTex;   // 2 x N RGBA32I region metadata
 uniform highp usampler2D u_atlasTex;    // R8UI palette-index atlas of every layer buffer
 uniform sampler2D u_paletteTex;         // 256x1 RGBA8: rgb = color, a = paint mode
 uniform highp usampler2D u_matAtlasTex; // RGBA8UI packed materials_gfx textures
-uniform highp usampler2D u_matMetaTex;  // N x 1 RGBA16UI: material rect (x, y, w, h)
+uniform highp usampler2D u_matMetaTex;  // 512 x 2 RGBA16UI: row 0 material rect (x, y, w, h) by
+                                        // atlas entry; row 1 (atlasEntry, r, g, b) by MATERIAL ID
 uniform highp usampler2D u_palMatTex;   // 256x1 R8UI: palette index -> material entry
 uniform highp usampler2D u_fgMatTex;    // mapW x 48 R8UI: fill chunk -> material entry
 uniform bool u_matDetail;               // off: every material paints its flat color
+
+// --- engine-faithful resolve mode (u_engineTerrain) -------------------------
+uniform highp sampler2D u_covTex;       // GW x GH R32F: the global 1/10 coverage lattice
+uniform highp usampler2D u_latMatTex;   // GW x GH R16UI: material lattice (stored id + 1)
+uniform highp usampler2D u_engChunkTex; // mapW x 48 R16UI: biome slot | mode<<8 | edgeNoise<<10
+uniform highp sampler2D u_engTableTex;  // 512 x (nBiomes+1) RGBA32F: per-biome band table
+                                        // (cols 0..47) + topology-0 params (cols 48..53);
+                                        // last row = wang sampler params by material id
+uniform highp sampler2D u_sinHashTex;   // 1024x512 R32F: exact frac(sin(n)*43758.5)
+                                        // for integer n in [-262144, 262143]
+uniform bool u_engineTerrain;
+uniform float u_surfacePhase;           // per-seed surface-noise X phase (BiomeGrid+0x48)
 
 // Camera: world coords of screen pixel (0,0) split into an exact integer part
 // and a fraction, so world positions stay exact out to the parallel-world
@@ -136,19 +150,22 @@ ivec2 unwob(int wx, int wy) {
 }
 
 // ComputeMagicValueFromDoubles (simplex-style gradient noise), float32.
+// Lattice coords are SIGNED (CVTTSD2SI + floor fixup, then & 0xff on the
+// two's-complement int): negative inputs occur for every raw-world-coordinate
+// caller west/above the origin, so no unsigned shortcuts here.
 float magicNoise(float x, float y) {
     float d7 = (x + y) * SQRT312;
     float d6 = d7 + x;
-    uint u2 = uint(int(d6));          // JS 'd >>> 0': truncate toward zero
-    if (d6 < float(u2)) u2 -= 1u;
+    int u2 = int(d6);                 // truncate toward zero...
+    if (d6 < float(u2)) u2 -= 1;      // ...then floor fixup
     d7 = d7 + y;
-    uint u1 = uint(int(d7));
-    if (d7 < float(u1)) u1 -= 1u;
+    int u1 = int(d7);
+    if (d7 < float(u1)) u1 -= 1;
     float dd = float(u1 + u2) * SQRT336;
     float d10 = x - (float(u2) - dd);
     float d9  = y - (float(u1) - dd);
-    int i1 = int(u1 & 0xffu);
-    int i2 = int(u2 & 0xffu);
+    int i1 = u1 & 0xff;
+    int i2 = u2 & 0xff;
     int s1 = (d9 < d10) ? 1 : 0;
     int s2 = (d10 <= d9) ? 1 : 0;
     float e7  = (d10 - float(s1)) + SQRT336;
@@ -307,6 +324,483 @@ void overlayBiome(int wx, int wy, out ivec2 pos, out bool ignored) {
     ignored = true;
 }
 
+// ============================================================================
+// Engine-faithful per-pixel resolve (WorldSave_ResolveCellMaterialAtPixel
+// @0x0087d0e0), ported from the bit-exact CPU model in scripts/ref_resolver/
+// (spec: reverse/noita docs/worldgen/topology2_resolve.md). GLSL is float32
+// like the engine's SSE scalar math, but drivers may fuse/reorder ops, so the
+// port follows the binary's operation ORDER and accepts ulp-level divergence
+// (knife-edge threshold flips on boundary contours; measured by the harness).
+// ============================================================================
+
+int permC(int i) { return int(texelFetch(u_noiseTex, ivec2(i, 1), 0).r); } // classic (simplex)
+int permP(int i) { return int(texelFetch(u_noiseTex, ivec2(i, 2), 0).r); } // custom (perlin/value)
+
+float covAt(int x, int y) {
+    ivec2 s = textureSize(u_covTex, 0);
+    return texelFetch(u_covTex, ivec2(pmod(x, s.x), pmod(y, s.y)), 0).r;
+}
+int latMatAt(int x, int y) {
+    ivec2 s = textureSize(u_latMatTex, 0);
+    return int(texelFetch(u_latMatTex, ivec2(pmod(x, s.x), pmod(y, s.y)), 0).r);
+}
+uint engInfoAt(int cx, int cy) {
+    return texelFetch(u_engChunkTex, ivec2(pmod(cx, u_mapWidth), clamp(cy, 0, u_maxRow)), 0).r;
+}
+vec4 engTable(int col, int row) { return texelFetch(u_engTableTex, ivec2(col, row), 0); }
+
+// ProceduralNoise_Simplex2D @0x00872d40 — classic-table float32 simplex.
+// Lattice floor is trunc + DEC-unless-(v>0): 0.0 -> -1, -2.0 -> -3.
+const float CS_F2 = 0.36602538824081420898;
+const float CS_G2 = 0.21132487058639526367;
+const float CS_G2x2 = 0.42264974117279052734;
+int skewFloor(float v) { int i = int(v); if (!(v > 0.0)) i -= 1; return i; }
+float csCorner(float cx, float cy, int g) {
+    float tt = (0.5 - cx * cx) - cy * cy;
+    if (tt < 0.0) return 0.0;
+    float t2 = tt * tt;
+    float u = (g & 7) < 4 ? cx : cy;
+    float v = (g & 7) < 4 ? cy : cx;
+    if ((g & 1) != 0) u = -u;
+    v = v * (((g & 2) != 0) ? -2.0 : 2.0);
+    return (u + v) * (t2 * t2);
+}
+float carveSimplex(float x, float y) {
+    float s = (x + y) * CS_F2;
+    int i = skewFloor(x + s);
+    int j = skewFloor(s + y);
+    float t = float(i + j) * CS_G2;
+    float x0 = x - (float(i) - t);
+    float y0 = y - (float(j) - t);
+    int i1 = x0 > y0 ? 1 : 0;
+    int j1 = 1 - i1;
+    float x1 = (x0 - float(i1)) + CS_G2;
+    float y1 = (y0 - float(j1)) + CS_G2;
+    float x2 = (x0 - 1.0) + CS_G2x2;
+    float y2 = (y0 - 1.0) + CS_G2x2;
+    int ii = i & 0xff, jj = j & 0xff;
+    float n0 = csCorner(x0, y0, permC(permC(jj) + ii));
+    float n1 = csCorner(x1, y1, permC(permC(jj + j1) + ii + i1));
+    float n2 = csCorner(x2, y2, permC(permC(jj + 1) + ii + 1));
+    return ((n1 + n0) + n2) * 40.0;
+}
+
+// ProceduralNoise_Perlin2D @0x00872a20 / ValueNoisePerlinPerm2D @0x00872be0:
+// custom permutation table, TRUE lattice floor, fade 6t^5-15t^4+10t^3.
+const vec2 GRAD8[8] = vec2[8](vec2(-1.,0.), vec2(1.,0.), vec2(0.,-1.), vec2(0.,1.),
+                              vec2(-1.,-1.), vec2(-1.,1.), vec2(1.,-1.), vec2(1.,1.));
+float fade5(float t) {
+    float a = t * 6.0; a = a - 15.0; a = a * t; a = a + 10.0; a = a * t; a = a * t; a = a * t;
+    return a;
+}
+float perlin2(float x, float y) {
+    int ix = int(floor(x)), iy = int(floor(y));
+    float fx = x - float(ix), fy = y - float(iy);
+    int X = ix & 0xff, Xp = (ix + 1) & 0xff;
+    int Y = iy & 0xff, Yp = (iy + 1) & 0xff;
+    int pX = permP(X), pX1 = permP(Xp);
+    int g00 = permP(pX + Y) & 7, g01 = permP(pX + Yp) & 7;
+    int g10 = permP(pX1 + Y) & 7, g11 = permP(pX1 + Yp) & 7;
+    float fx1 = fx - 1.0, fy1 = fy - 1.0;
+    float n00 = GRAD8[g00].y * fy + fx * GRAD8[g00].x;
+    float n10 = GRAD8[g10].y * fy + fx1 * GRAD8[g10].x;
+    float n01 = GRAD8[g01].y * fy1 + GRAD8[g01].x * fx;
+    float n11 = GRAD8[g11].y * fy1 + GRAD8[g11].x * fx1;
+    float fdY = fade5(fy);
+    float A = (n01 - n00) * fdY + n00;
+    float B = (n11 - n10) * fdY + n10;
+    return (B - A) * fade5(fx) + A;
+}
+float valueNoise2(float x, float y) {
+    int ix = int(floor(x)), iy = int(floor(y));
+    float fx = x - float(ix), fy = y - float(iy);
+    int X = ix & 0xff, Xp = (ix + 1) & 0xff;
+    int Y = iy & 0xff, Yp = (iy + 1) & 0xff;
+    int pX = permP(X), pX1 = permP(Xp);
+    float v00 = float(permP(pX + Y)) / 255.0;
+    float v01 = float(permP(pX + Yp)) / 255.0;
+    float v10 = float(permP(pX1 + Y)) / 255.0;
+    float v11 = float(permP(pX1 + Yp)) / 255.0;
+    float fdY = fade5(fy);
+    float A = (v01 - v00) * fdY + v00;
+    float B = (v11 - v10) * fdY + v10;
+    float r = (B - A) * fade5(fx) + A;
+    return (r - 0.5) * 2.0;
+}
+
+// BiomeNodeLookupCoord @0x0087ce50: world -> 1/10 lattice coord, noise-warped
+// by the material's wang_noise_percent. u_centerPx/u_baseY are the engine's
+// world offsets (mapW*256, 14*512).
+const float ENG_WARP_CX = 0.13715155947046348;
+const float ENG_WARP_CY = 0.13717455323209457;
+const float ENG_F2 = 0.11111110448837280273;
+vec2 engLookupCoord(float scale, ivec2 w) {
+    float X = float(w.x + u_centerPx);
+    float Y = float(w.y + u_baseY);
+    float gx = (X + 0.5) * 0.1;
+    float gy = (Y + 0.5) * 0.1;
+    if (!(scale > 0.0)) return vec2(gx, gy);
+    float fgx = floor(gx), fgy = floor(gy);
+    float A = carveSimplex(X * ENG_WARP_CX, Y * ENG_WARP_CY) * 0.45 + 0.1;
+    float Yf = Y * ENG_F2, Xf = X * ENG_F2;
+    // Y warp: Perlin2D with the arguments SWAPPED; the exact accumulation order
+    // of the CPU reference (frac + warp, then + floor).
+    float pv = perlin2(Yf, Xf);
+    float fyM = 1.0 - A; fyM = fyM * 0.33; fyM = fyM + 0.111; fyM = fyM * scale;
+    float outY = pv * fyM; outY = outY + (gy - fgy); outY = fgy + outY;
+    float vn = valueNoise2(Xf, Yf);
+    float ax = A * scale;
+    float outX = vn * ax; outX = outX + (gx - fgx); outX = outX + fgx;
+    return vec2(outX, outY);
+}
+
+float sstep2(float t) { float sq = t * t; float lin = t * 2.0; return (3.0 - lin) * sq; }
+
+// WangGrid_LookupMaterialIndex @0x008712d0 — smoothstep-aware nearest cell.
+int engWangLookup(vec2 c) {
+    int x0 = int(floor(c.x)), y0 = int(floor(c.y));
+    float fx = c.x - float(x0), fy = c.y - float(y0);
+    if (!(0.5 > sstep2(fy))) y0 += 1;
+    if (!(0.5 > sstep2(fx))) x0 += 1;
+    return latMatAt(x0, y0) - 1;
+}
+
+// FloatGrid2D_SampleBilinearSmooth @0x00870e60 (wang_noise_type 0).
+float engBilinear(vec2 c) {
+    int x0 = int(floor(c.x)), y0 = int(floor(c.y));
+    float fx = c.x - float(x0);
+    float fy = c.y - float(y0);
+    float sFx = sstep2(fx);
+    float cTL = covAt(x0, y0 + 1);
+    float cBL = covAt(x0, y0);
+    float cBR = covAt(x0 + 1, y0);
+    float bottom = (cBR - cBL) * sFx + cBL;
+    float cTR = covAt(x0 + 1, y0 + 1);
+    float top = (cTR - cTL) * sFx + cTL;
+    return (top - bottom) * sstep2(fy) + bottom;
+}
+
+// FloatGrid2D_SampleCoverageEdge @0x00871160 (wang_noise_type 1) — binary.
+float engCoverageEdge(vec2 c) {
+    float xp = c.x + 0.5, yp = c.y + 0.5;
+    int x0 = int(floor(xp)), y0 = int(floor(yp));
+    if (covAt(x0, y0) > 0.5) return 1.0;
+    float fx = xp - float(x0), fy = yp - float(y0);
+    float omfx = 1.0 - fx;
+    int nx, ny;
+    if (fx >= fy) { if (omfx <= fy) { nx = x0 + 1; ny = y0; } else { nx = x0; ny = y0 - 1; } }
+    else { if (omfx <= fy) { nx = x0; ny = y0 + 1; } else { nx = x0 - 1; ny = y0; } }
+    if (covAt(nx, ny) >= 0.5) return 1.0;
+    int sx1 = x0 + (fx >= 0.5 ? 1 : -1);
+    int sy1 = y0 + (fy >= 0.5 ? 1 : -1);
+    if (covAt(sx1, sy1) < 0.5) return 0.0;
+    if (covAt(sx1, y0) >= 0.5) return 1.0;
+    return covAt(x0, sy1) >= 0.5 ? 1.0 : 0.0;
+}
+
+// FloatGrid2D_SampleMaterialEdge @0x00870f80 (wang_noise_type 2) — binary,
+// same-material 45-degree corner fills (the temple-brick look).
+float engMaterialEdge(vec2 c) {
+    float xp = c.x + 0.5, yp = c.y + 0.5;
+    int x0 = int(floor(xp)), y0 = int(floor(yp));
+    if (covAt(x0, y0) > 0.5) return 1.0;
+    float fx = xp - float(x0), fy = yp - float(y0);
+    int dx = fx >= fy ? 1 : -1;
+    int dy = fx >= fy ? -1 : 1;
+    int m0 = latMatAt(x0, y0);
+    if (covAt(x0 + dx, y0) >= 0.5 && covAt(x0, y0 + dy) >= 0.5 &&
+        latMatAt(x0 + dx, y0) == m0 && latMatAt(x0, y0 + dy) == m0) return 1.0;
+    int d = (1.0 - fx) >= fy ? -1 : 1;
+    if (covAt(x0 + d, y0) >= 0.5 && covAt(x0, y0 + d) >= 0.5 &&
+        latMatAt(x0 + d, y0) == m0 && latMatAt(x0, y0 + d) == m0) return 1.0;
+    return 0.0;
+}
+
+// BiomeMaterials_ComputeMaterialNoiseDensity @0x0087d010 (ore-vein matNoise).
+float engMatNoiseDensity(ivec2 w, float cov) {
+    float n1 = valueNoise2(float(w.x) * 0.035, float(w.y) * 0.07);
+    float warp = n1 * 15.5;
+    float t = (cov - 0.5) * 0.5;
+    float sy = (float(w.y) + warp) * 0.048927501;
+    float sx = (float(w.x) + warp) * 0.048927501;
+    float n2 = carveSimplex(sx, sy);
+    float m = t * t; m = m * 5.35; m = m * 0.95;
+    float r = n2 * m + cov;
+    return 0.5 > r ? 0.5 : r;
+}
+
+// BiomeMaterials_RarePolkaTest @0x00872140 + PolkaCellHash @0x0086fd40/0x0086fe30.
+const float PK_INV71 = 0.014084507152438164;
+const float PK_SCALAR = 0.0010132591396197677;
+const float PK_V0 = 0.0010514580644667149;
+const float PK_V1 = 0.0015553091652691364;
+const float PK_V2 = 0.0012450951617211103;
+int engFfloor(float v) { int i = int(v); if (v < float(i)) i -= 1; return i; }
+float engFfrac(float v) { return v - float(engFfloor(v)); }
+float polkaBase(int cx, int cy) {
+    int ix = engFfloor(float(cx) * PK_INV71);
+    int iy = engFfloor(float(cy) * PK_INV71);
+    float a = (float(cx) - float(ix) * 71.0) + 26.0;
+    float b = (float(cy) - float(iy) * 71.0) + 161.0;
+    return (b * b) * (a * a);
+}
+float rarePolka(float x, float y, float plo, float phi, bool boxed, float prob) {
+    int cy = engFfloor(y), cx = engFfloor(x);
+    float base = polkaBase(cx, cy);
+    if (prob <= engFfrac(base * PK_SCALAR)) return 0.0;
+    float fx = x - float(cx), fy = y - float(cy);
+    float h0 = engFfrac(base * PK_V0);
+    float h1 = engFfrac(base * PK_V1);
+    float h2 = engFfrac(base * PK_V2);
+    float radius = (phi - plo) * h2 + plo;
+    if (!(0.0 < radius)) return 0.0;
+    float s = 2.0 / radius;
+    float sm1 = s - 1.0, sm2 = s - 2.0;
+    float dy = sm2 * h1 + (fy * s - sm1);
+    float dx = sm2 * h0 + (fx * s - sm1);
+    dy = dy * dy; dx = dx * dx;
+    float dd;
+    if (boxed) { dd = dy * dy + dx * dx; if (1.0 < dd) return 0.0; }
+    else { dd = dy + dx; if (1.0 <= dd) dd = 1.0; }
+    float u = 1.0 - dd;
+    return (u * u) * u;
+}
+
+// BiomeMaterials_SelectComponentForCell @0x0086d2a0 — first passing band wins;
+// bands are pre-sorted in the engine's runtime order (stable by material_index).
+int engBandSelect(int slot, ivec2 w, float density) {
+    vec4 hdr = engTable(0, slot);
+    if (!(hdr.x <= density && density <= hdr.y)) return 0;
+    int nBands = int(hdr.z);
+    float fx = float(w.x), fy = float(w.y);
+    for (int b = 0; b < 8; b++) {
+        if (b >= nBands) break;
+        int o = 1 + b * 5;
+        vec4 t0 = engTable(o, slot);
+        vec4 t1 = engTable(o + 1, slot);
+        int flags = int(t1.y);
+        if ((flags & 1) != 0 && !(t0.z <= fy && fy <= t0.w)) continue;
+        float n = density;
+        if ((flags & 2) != 0) n = magicNoise(fx * t1.z, fy * t1.w) + density;
+        if (!(t0.x <= n && n < t0.y)) continue;
+        if ((flags & 4) == 0) return int(t1.x);
+        vec4 t2 = engTable(o + 2, slot);
+        vec4 t3 = engTable(o + 3, slot);
+        vec4 t4 = engTable(o + 4, slot);
+        float rx = fx * t2.x + t2.z;
+        float ry = fy * t2.y + t2.w;
+        if ((flags & 8) != 0) {
+            float p = magicNoise(rx, ry);
+            if (!(t3.w < p && p <= t4.x)) continue;
+        }
+        if ((flags & 16) == 0) return int(t1.x);
+        float k = rarePolka(rx, ry, t3.x, t3.y, (flags & 32) != 0, t3.z);
+        if (t3.w < k && k <= t4.x) return int(t1.x);
+    }
+    return 0;
+}
+
+// Topology-2 resolve (the mines/crypt coverage-lattice chain).
+int engTopo2(int slot, ivec2 w) {
+    vec2 c0 = engLookupCoord(0.0, w);
+    int idx0 = engWangLookup(c0);
+    float scale = 1.0, thr = 0.5;
+    int stype = 0;
+    if (idx0 >= 1 && idx0 < 512) {
+        int wangRow = textureSize(u_engTableTex, 0).y - 1;
+        vec4 p = engTable(idx0, wangRow);
+        scale = p.x; thr = p.y; stype = int(p.z);
+    }
+    vec2 c = engLookupCoord(scale, w);
+    float cov = stype == 1 ? engCoverageEdge(c) : stype == 2 ? engMaterialEdge(c) : engBilinear(c);
+    if (cov < thr) return 0;
+    int idx2 = engWangLookup(c);
+    if (idx2 >= 1) return idx2;
+    return engBandSelect(slot, w, engMatNoiseDensity(w, cov));
+}
+
+// Topology-0 pieces (CellNoise_EvaluateCaveAndMaterial @0x0087e110 chain).
+float engFbm4(float x, float y) {
+    const float M0 = 0.84147, M1 = 0.5403;
+    float acc = magicNoise(x, y) * 0.5;
+    float u = ((M0 * x) + (M1 * y)) * 2.02;
+    float v = ((M1 * x) + (-M0 * y)) * 2.02;
+    acc = acc + magicNoise(u, v) * 0.25;
+    float u2 = ((M0 * u) + (M1 * v)) * 2.33;
+    float v2 = ((M1 * u) + (-M0 * v)) * 2.33;
+    acc = acc + magicNoise(u2, v2) * 0.125;
+    float u3 = ((M0 * u2) + (M1 * v2)) * 2.01;
+    float v3 = ((M1 * u2) + (-M0 * v2)) * 2.01;
+    acc = acc + magicNoise(u3, v3) * 0.0625;
+    return acc / 0.9375;
+}
+// Sin-hash value noise @0x00871850 (even/odd lattice parity picks smoothstep vs
+// linear weights). The hash amplifies sin() error 43758x, so integer arguments
+// (the only kind this noise produces) read exact CPU-computed values from
+// u_sinHashTex; the GPU sin() fallback only runs beyond several parallel worlds.
+float engSinHash(float v) {
+    int n = int(v) + 262144;
+    if (n >= 0 && n < 524288) {
+        return texelFetch(u_sinHashTex, ivec2(n & 1023, n >> 10), 0).r;
+    }
+    float m = sin(v) * 43758.546875;
+    return m - floor(m);
+}
+float engCarveVN(float x, float y) {
+    int ix = int(floor(x)), iy = int(floor(y));
+    float fx = x - float(ix), fy = y - float(iy);
+    float fadeX = (3.0 - fx * 2.0) * (fx * fx);
+    float u0 = (ix & 1) == 0 ? fadeX : fx;
+    float u1 = ((ix + 1) & 1) == 0 ? fadeX : fx;
+    float u = (u1 - u0) * fx + u0;
+    float fadeY = (3.0 - fy * 2.0) * (fy * fy);
+    float v0 = (iy & 1) == 0 ? fadeY : fy;
+    float v1 = ((iy + 1) & 1) == 0 ? fadeY : fy;
+    float v = (v1 - v0) * fy + v0;
+    float n = float(iy) * 57.0 + float(ix);
+    float h57 = engSinHash(n + 57.0), h58 = engSinHash(n + 58.0);
+    float h0 = engSinHash(n), h1 = engSinHash(n + 1.0);
+    float hTop = (h58 - h57) * u + h57;
+    float hBot = (h1 - h0) * u + h0;
+    return (hTop - hBot) * v + hBot;
+}
+float engCarveDensity(float wx, float wy, float density) {
+    float vn = engCarveVN(wx * 0.025, wy * 0.025);
+    float a = vn * 0.05 + 0.05;
+    float sx = a * ((wx * 0.5) * 0.02);
+    float sy = ((wy * 0.5) * 0.02) * a;
+    float s = carveSimplex(sx, sy);
+    float cave = s * density;
+    float t = (density - 0.85) / 0.1;
+    return (cave - density) * t + density;
+}
+
+const int ENG_TOPO0_COL = 48;   // topo0 params live after the 48 band columns
+float engSurfaceTop(vec4 t0, vec4 t1, float wx, out float botY) {
+    int edge = int(t0.x);
+    float topB = t0.y, botB = t0.z;
+    if (edge == 0) { botY = botB; return topB; }
+    if (edge == 3) {
+        float d = (wx - t1.z) * t1.w;
+        botY = botB + d;
+        return topB + d;
+    }
+    float sx = t0.w * (u_surfacePhase + wx);
+    botY = magicNoise(sx, botB * t0.w) * t1.y + botB;
+    return magicNoise(sx, topB * t0.w) * t1.x + topB;
+}
+// CellNoise_EvaluateCaveBoundary @0x0087e8d0: depth ratio in the biome's
+// gradient band, blended with the LEFT neighbour cell's line near the surface.
+float engDepthRatio(int slot, int leftSlot, float wx, float wy, float subX) {
+    vec4 t0 = engTable(ENG_TOPO0_COL + 0, slot);
+    vec4 t1 = engTable(ENG_TOPO0_COL + 1, slot);
+    float botY;
+    float topY = engSurfaceTop(t0, t1, wx, botY);
+    if (wy <= 380.0 && subX < 42.0) {
+        vec4 l0 = engTable(ENG_TOPO0_COL + 0, leftSlot);
+        vec4 l1 = engTable(ENG_TOPO0_COL + 1, leftSlot);
+        float lBot;
+        float lTop = engSurfaceTop(l0, l1, wx, lBot);
+        float f = 1.0 - subX / 41.0;
+        topY = (lTop - topY) * f + topY;
+        botY = (lBot - botY) * f + botY;
+    }
+    if (wy <= topY) return 0.0;
+    if (botY <= wy) return 1.0;
+    if (botY == topY) return 1.0;
+    return (wy - topY) / (botY - topY);
+}
+// CellNoise_EvaluateCaveAndMaterial @0x0087e110 (noise_type 0 carve regime;
+// unsupported variants never reach the shader — see buildEngineResources).
+float engEvalCaveMat(int slot, int leftSlot, ivec2 w) {
+    vec4 t2p = engTable(ENG_TOPO0_COL + 2, slot);
+    vec4 t3p = engTable(ENG_TOPO0_COL + 3, slot);
+    vec4 t4p = engTable(ENG_TOPO0_COL + 4, slot);
+    vec4 t5p = engTable(ENG_TOPO0_COL + 5, slot);
+    float wx = float(w.x) + 0.5, wy = float(w.y) + 0.5;
+    int mk = int(t5p.x);
+    float m = 1.0;
+    bool blendMod = false;
+    if (mk == 1) { m = t5p.y; if (m < 1.0) blendMod = true; }
+    else if (mk == 2) { m = 0.0; blendMod = true; }
+    if (blendMod) {
+        float gx = (wx * 0.49162514) * 0.1;
+        float gy = (wy * 0.49162514) * 0.1;
+        float sN = magicNoise(gx, gy);
+        m = m + (sN * (1.0 - m)) * 0.495;
+    }
+    if (!(m > 0.0)) return 0.0;
+    float subX = float(pmod(w.x + u_centerPx, CHUNK));
+    float r = engDepthRatio(slot, leftSlot, wx, wy, subX);
+    float density = r * m;
+    if (density <= 0.0) return 0.0;
+    float matWeight = 0.0, mn = 0.0;
+    if (0.51 < density && t2p.y != 0.0) {
+        matWeight = (density - 0.5) * 2.0;
+        float msx = wx * 0.05243442 * t3p.x + 0.1 + t3p.z;
+        float msy = wy * 0.05243442 * t3p.y + 0.1 + t3p.w;
+        int ifl = int(t4p.x);
+        mn = (ifl & 1) != 0 ? engFbm4(msx, msy) : magicNoise(msx, msy);
+        if ((ifl & 2) != 0) mn = mn * mn;
+        if ((ifl & 4) != 0) mn = clamp(mn, t4p.y, t4p.z);
+        if ((ifl & 8) != 0) mn = (t4p.z - t4p.y) * (mn * 0.5 + 0.5) + t4p.y;
+    }
+    float addValue = 0.0;
+    if (density > 0.85) {
+        addValue = t2p.z;
+        density = engCarveDensity(wx, wy, density);
+    }
+    return ((t2p.y * matWeight) * mn + (t2p.x * density)) + addValue;
+}
+int engTopo0(int slot, int leftSlot, ivec2 w) {
+    vec4 hdr = engTable(0, slot);
+    if (hdr.z < 1.0) return 0;    // no MaterialComponents: this path paints nothing
+    return engBandSelect(slot, w, engEvalCaveMat(slot, leftSlot, w));
+}
+
+// ChunkGrid_ResolveChunkAtPosition @0x0087d9a0 — the engine's own biome-cell
+// wobble (no telescope exception lists here).
+void engProbe(int px, int py, uvec3 oc, inout uvec3 nc, inout ivec2 npos, inout bool hit) {
+    uvec3 c = chunkAt(ivec2(px, py)).rgb;
+    if (any(notEqual(c, oc))) { nc = c; npos = ivec2(px, py); hit = true; }
+}
+ivec2 engResolveCell(ivec2 w) {
+    int sx = w.x + u_centerPx, sy = w.y + u_baseY;
+    int cx = fdiv(sx, CHUNK), cy = fdiv(sy, CHUNK);
+    if ((engInfoAt(cx, cy) & 1024u) == 0u) return ivec2(cx, cy);
+    int subX = pmod(sx, CHUNK), subY = pmod(sy, CHUNK);
+    if (subX >= 42 && subY >= 42 && subX <= 470 && subY <= 470) return ivec2(cx, cy);
+    uvec3 oc = chunkAt(ivec2(cx, cy)).rgb;
+    uvec3 nc = oc;
+    ivec2 npos = ivec2(cx, cy);
+    bool hit = false;
+    if (subX < 42) engProbe(cx - 1, cy, oc, nc, npos, hit);
+    if (!hit && subY < 42) engProbe(cx, cy - 1, oc, nc, npos, hit);
+    if (!hit && subX > 470) engProbe(cx + 1, cy, oc, nc, npos, hit);
+    if (!hit && subY > 470) engProbe(cx, cy + 1, oc, nc, npos, hit);
+    if (!hit && subX < 42 && subY < 42) engProbe(cx - 1, cy - 1, oc, nc, npos, hit);
+    if (!hit && subX < 42 && subY > 470) engProbe(cx - 1, cy + 1, oc, nc, npos, hit);
+    if (!hit && subX > 470 && subY < 42) engProbe(cx + 1, cy - 1, oc, nc, npos, hit);
+    if (!hit && subX > 470 && subY > 470) engProbe(cx + 1, cy + 1, oc, nc, npos, hit);
+    if (!hit || (engInfoAt(npos.x, npos.y) & 1024u) == 0u) return ivec2(cx, cy);
+    float s = magicNoise(float(sx) * 0.05, float(sy) * 0.05);
+    float offCol = sin(float(sy) * 0.005) * 30.0 + s * 11.0;
+    float offRow = cos(float(sx) * 0.005) * 30.0 + s * 11.0;
+    int wCx = fdiv(int(offCol + float(sx)), CHUNK);
+    int wCy = fdiv(int(offRow + float(sy)), CHUNK);
+    if ((engInfoAt(wCx, wCy) & 1024u) == 0u) return ivec2(cx, cy);
+    return ivec2(wCx, wCy);
+}
+
+// Material id -> color: materials_gfx texel at absolute world coords when the
+// material has a texture (byte-exact vs the game), else the engine's flat
+// display color (CellData+0x64, ABGR — R/B swapped from the XML).
+void engMaterialColor(int mat, ivec2 w) {
+    uvec4 mc = texelFetch(u_matMetaTex, ivec2(mat, 1), 0);
+    if (mc.x > 0u) { materialTexel(int(mc.x), w, outColor); return; }
+    outColor = vec4(vec3(mc.yzw) / 255.0, 1.0);
+}
+
 void main() {
     // Screen pixel center -> world. gl_FragCoord.y counts from the bottom.
     vec2 pix = vec2(gl_FragCoord.x, u_screenSize.y - gl_FragCoord.y);
@@ -318,6 +812,27 @@ void main() {
     // Vertical parallel worlds keep the CPU overlays (see terrain_renderer.js).
     if (fdiv(w.y + u_baseY, (u_maxRow + 1) * CHUNK) != 0) return;
     int pwX = fdiv(w.x + u_centerPx, u_worldWidth);
+
+    // Engine-faithful resolve: the game's own per-pixel chain for every chunk
+    // whose biome the port supports; anything else falls through to the legacy
+    // pipeline below (per chunk, so the two coexist seam-by-seam).
+    if (u_engineTerrain) {
+        ivec2 cell = engResolveCell(w);
+        uint info = engInfoAt(cell.x, cell.y);
+        uint mode = (info >> 8) & 3u;
+        if (mode != 2u) {
+            int slot = int(info & 0xffu);
+            int mat;
+            if (mode == 1u) {
+                mat = engTopo2(slot, w);
+            } else {
+                int leftSlot = int(engInfoAt(cell.x - 1, cell.y) & 0xffu);
+                mat = engTopo0(slot, leftSlot, w);
+            }
+            if (mat > 0) engMaterialColor(mat, w);
+            return;
+        }
+    }
 
     ivec2 pos;
     bool ignored;

@@ -25,6 +25,9 @@
 import { CHUNK_SIZE, WORLD_CHUNK_CENTER_Y } from '../constants.js';
 import { getWorldCenter, getWorldSize } from '../utils.js';
 import { buildChunkTextures, buildNoiseTable512 } from './chunk_textures.js';
+import {
+    buildEngineResources, buildEngineTable, buildMatColorTable, buildSinHashTable, surfaceNoisePhase,
+} from './engine_resources.js';
 import { BIOME_MAP_HEIGHT } from './indirection.js';
 import {
     buildFillMaterialTable, buildPaletteMaterialTable, getMaterialAtlas, initMaterialAtlas,
@@ -32,10 +35,12 @@ import {
 import { buildPaletteLUT } from './palette.js';
 import { TERRAIN_FS, TERRAIN_VS } from './shaders.js';
 import {
-    createChunkTexture, createFillMaterialTexture, createForegroundTexture, createIndirectionTexture,
-    createMaterialAtlasTexture, createMaterialMetaTexture, createNoiseTexture,
-    createPaletteMaterialTexture, createPaletteTexture, createRegionAtlasTexture,
-    createRegionMetaTexture, deleteTerrainTextures, maxTextureSize, updatePaletteTexture,
+    createChunkTexture, createCoverageLatticeTexture, createEngineChunkTexture,
+    createFillMaterialTexture, createFloatTableTexture, createForegroundTexture,
+    createIndirectionTexture, createMaterialAtlasTexture, createMaterialLatticeTexture,
+    createMaterialMetaTexture, createNoiseTexture, createPaletteMaterialTexture,
+    createPaletteTexture, createR32FTexture, createRegionAtlasTexture, createRegionMetaTexture,
+    deleteTerrainTextures, maxTextureSize, updatePaletteTexture,
 } from './textures.js';
 import { buildTerrainResources } from './terrain_resources.js';
 
@@ -44,6 +49,7 @@ const UNIFORM_NAMES = [
     'u_originInt', 'u_originFrac', 'u_invZoom', 'u_screenSize',
     'u_mapWidth', 'u_worldWidth', 'u_centerPx', 'u_baseY', 'u_maxRow', 'u_worldSizeX', 'u_edgeNoise',
     'u_matAtlasTex', 'u_matMetaTex', 'u_palMatTex', 'u_fgMatTex', 'u_matDetail',
+    'u_covTex', 'u_latMatTex', 'u_engChunkTex', 'u_engTableTex', 'u_sinHashTex', 'u_engineTerrain', 'u_surfacePhase',
 ];
 
 function compile(gl, type, src) {
@@ -148,12 +154,19 @@ export class GLTerrainRenderer {
         // buildChunkTextures, so the toggle has to reach buildAndUpload or a fill
         // chunk would keep its old color while the CPU bake repainted it.
         const recolorMaterials = opts.lut?.recolorMaterials !== false;
-        const key = `${layers.length}|${isNGP}|${gameMode}|${recolorMaterials}|${!!getMaterialAtlas()}`;
+        // engineTerrain is in the key because its lattice/table textures are only
+        // built when the mode is on (they cost ~55 MB of GPU memory).
+        const key = `${layers.length}|${isNGP}|${gameMode}|${recolorMaterials}|${!!getMaterialAtlas()}` +
+            `|${!!opts.engineTerrain}|${opts.seed ?? 0}`;
         const same = this.textures && this.sourceKey === key &&
             this.sourceLayers === layers && this.sourceBiomeData === biomeData;
         if (!same) {
             try {
-                this.buildAndUpload(layers, biomeData, { isNGP, gameMode, lut: opts.lut });
+                this.buildAndUpload(layers, biomeData, {
+                    isNGP, gameMode, lut: opts.lut,
+                    engineTerrain: !!opts.engineTerrain, seed: opts.seed ?? 0,
+                    GENERATOR_CONFIG: opts.generatorConfig,
+                });
             } catch (err) {
                 this.failed = String(err && err.message ? err.message : err);
                 console.error('[GL terrain] resource build failed, staying on the CPU bake:', err);
@@ -184,6 +197,15 @@ export class GLTerrainRenderer {
         // Null until the atlas fetch lands; the sourceKey then forces a rebuild.
         const matAtlas = getMaterialAtlas();
 
+        // Engine resolve mode: the game's own 1/10 lattices + per-biome tables,
+        // built from the same layers (lattice_builder.js, bit-exact vs COVDUMP).
+        let engine = null;
+        if (opts.engineTerrain) {
+            const { GENERATOR_CONFIG } = opts;
+            engine = buildEngineResources(layers, biomeData, GENERATOR_CONFIG ?? {}, mapWidth);
+            this.surfacePhase = surfaceNoisePhase(opts.seed ?? 0);
+        }
+
         deleteTerrainTextures(gl, this.textures);
         this.textures = {
             atlas: createRegionAtlasTexture(gl, resources.atlas),
@@ -194,11 +216,16 @@ export class GLTerrainRenderer {
             fg: createForegroundTexture(gl, chunkTextures),
             noise: createNoiseTexture(gl, buildNoiseTable512()),
             matAtlas: matAtlas && createMaterialAtlasTexture(gl, matAtlas),
-            matMeta: matAtlas && createMaterialMetaTexture(gl, matAtlas),
+            matMeta: matAtlas && createMaterialMetaTexture(gl, matAtlas, buildMatColorTable(matAtlas)),
             palMat: matAtlas && createPaletteMaterialTexture(gl,
                 buildPaletteMaterialTable(matAtlas, resources.palette)),
             fgMat: matAtlas && createFillMaterialTexture(gl,
                 buildFillMaterialTable(matAtlas, biomeData, mapWidth), mapWidth),
+            cov: engine && createCoverageLatticeTexture(gl, engine.lattice),
+            latMat: engine && createMaterialLatticeTexture(gl, engine.lattice),
+            engChunk: engine && createEngineChunkTexture(gl, engine),
+            engTable: engine && createFloatTableTexture(gl, buildEngineTable()),
+            sinHash: engine && createR32FTexture(gl, buildSinHashTable()),
         };
         this.resources = resources;
 
@@ -277,14 +304,29 @@ export class GLTerrainRenderer {
         // u_matDetail is false and the shader never reaches their texelFetches.
         const matDetail = !!(view.materialTextures && this.textures.matAtlas && this.textures.matMeta
             && this.textures.palMat && this.textures.fgMat);
-        if (matDetail) {
-            units.push(
-                ['u_matAtlasTex', this.textures.matAtlas],
-                ['u_matMetaTex', this.textures.matMeta],
-                ['u_palMatTex', this.textures.palMat],
-                ['u_fgMatTex', this.textures.fgMat],
-            );
-        }
+        // Engine resolve needs its own four textures plus the material atlas set
+        // (engMaterialColor reads u_matMetaTex row 1 / u_matAtlasTex).
+        const engineOn = !!(view.engineTerrain && this.textures.cov && this.textures.latMat
+            && this.textures.engChunk && this.textures.engTable && this.textures.sinHash
+            && this.textures.matAtlas && this.textures.matMeta);
+        // Every sampler uniform gets its own unit even when its texture is
+        // absent (the u_matDetail / u_engineTerrain flags gate all real use):
+        // an unbound sampler defaults to unit 0, and a FLOAT sampler sharing
+        // unit 0 with the integer u_chunkTex is a draw-time INVALID_OPERATION.
+        // Placeholders match the sampler's type: chunk for integer samplers,
+        // palette for float ones.
+        const intPh = this.textures.chunk, floatPh = this.textures.palette;
+        units.push(
+            ['u_matAtlasTex', this.textures.matAtlas || intPh],
+            ['u_matMetaTex', this.textures.matMeta || intPh],
+            ['u_palMatTex', this.textures.palMat || intPh],
+            ['u_fgMatTex', this.textures.fgMat || intPh],
+            ['u_covTex', this.textures.cov || floatPh],
+            ['u_latMatTex', this.textures.latMat || intPh],
+            ['u_engChunkTex', this.textures.engChunk || intPh],
+            ['u_engTableTex', this.textures.engTable || floatPh],
+            ['u_sinHashTex', this.textures.sinHash || floatPh],
+        );
         units.forEach(([name, tex], i) => {
             gl.activeTexture(gl.TEXTURE0 + i);
             gl.bindTexture(gl.TEXTURE_2D, tex);
@@ -303,6 +345,8 @@ export class GLTerrainRenderer {
         gl.uniform1i(u.u_worldSizeX, this.worldSizeX);
         gl.uniform1i(u.u_edgeNoise, view.edgeNoise ? 1 : 0);
         gl.uniform1i(u.u_matDetail, matDetail ? 1 : 0);
+        gl.uniform1i(u.u_engineTerrain, engineOn ? 1 : 0);
+        gl.uniform1f(u.u_surfacePhase, this.surfacePhase ?? 0);
 
         gl.drawArrays(gl.TRIANGLES, 0, 3);
         return this.canvas;
