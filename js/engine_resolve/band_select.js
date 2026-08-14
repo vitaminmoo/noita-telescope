@@ -8,7 +8,7 @@
 // density d, at this exact world pixel".
 //
 // `d` is never the raw coverage: the engine runs coverage through
-// ComputeMaterialNoiseDensity first (material_noise.js, re-exported below), and
+// ComputeMaterialNoiseDensity first (topo2_resolve.js, re-exported below), and
 // so must every caller here.
 //
 // It reads the committed BIOME_ENGINE tables (engine_resolve/engine_data.js),
@@ -25,7 +25,7 @@ import { ComputeMagicValueFromDoubles } from './simplex_noise.js';
 
 // Re-exported so a caller cannot pick up the chooser without the density term
 // that belongs in front of it.
-export { computeMaterialNoiseDensity } from './material_noise.js';
+export { computeMaterialNoiseDensity } from './topo2_resolve.js';
 
 const F = Math.fround;
 
