@@ -31,7 +31,10 @@ import { setupProgressUI, updateUsedSpellProgress } from './progress.js';
 import { renderStars } from './star_decorations.js';
 import { getFungalShifts } from './fungal_shifts.js';
 import { pickAlchemyMaterials } from './alchemy.js';
-import { BACKGROUND_VOID, backgroundLayerColor } from './biome_backgrounds.js';
+import { BACKGROUND_VOID, backgroundLayerColor, buildBackgroundEdges, loadBackgroundEdgeMasks, tintedEdgeStrip } from './biome_backgrounds.js';
+
+// Width of a background boundary strip in world pixels, matching the engine art.
+const STRIP_WORLD_PX = 64;
 
 // Paint one cell of a recolor-map canvas. `color` is either an RGB int or
 // BACKGROUND_VOID, which the engine leaves empty (biomes with no
@@ -250,6 +253,9 @@ export const app = {
 		this.recolorOffscreen = document.createElement('canvas');
 		this.recolorOffscreenHeaven = document.createElement('canvas');
 		this.recolorOffscreenHell = document.createElement('canvas');
+		// Background boundary art. Fire and forget: the draw path skips strips whose
+		// mask has not arrived yet, and redraws pick them up once it has.
+		loadBackgroundEdgeMasks().then(() => this.draw());
 		const vp = document.getElementById('view');
 
 		const resize = () => {
@@ -1875,7 +1881,10 @@ export const app = {
 			0x48E311, // Empty
 		];
 		const surfaceLevel = 14;
-		
+		// Cells painted as telescope's fake sky, so the edge-strip builder can leave
+		// them alone -- the engine's sky is the parallax system, not this grid.
+		const skyCells = new Uint8Array(this.w * this.h);
+
 		for (let i = 0; i < this.biomeData.pixels.length; i++) {
 			const biomeColor = this.biomeData.pixels[i] & 0xFFFFFF;
 			let color = biomeColor;
@@ -1910,6 +1919,7 @@ export const app = {
 			}
 
 
+			if (isSky) skyCells[i] = 1;
 			writeBackgroundPixel(id, i, isSky ? color : backgroundLayerColor(biomeColor) ?? color);
 			this.recolorOffscreenBuffer[i*3+0] = (color >> 16) & 0xFF;
 			this.recolorOffscreenBuffer[i*3+1] = (color >> 8) & 0xFF;
@@ -1948,6 +1958,17 @@ export const app = {
 			this.recolorOffscreenHellBuffer[i*3+2] = recolor & 0xFF;
 		}
 		ctxHell.putImageData(hellData, 0, 0);
+
+		// Ragged 64px strips along the chunk lines where two backgrounds actually
+		// differ. Built once per generation (~1400 entries for the whole world) and
+		// bucketed by chunk row, so drawNow only walks the visible rows.
+		// Heaven repeats the top map row, so its sky mask is that row repeated too;
+		// hell repeats the bottom row, which is never sky.
+		const heavenSky = new Uint8Array(this.w * this.h);
+		for (let i = 0; i < heavenSky.length; i++) heavenSky[i] = skyCells[i % this.w];
+		this.backgroundEdges = buildBackgroundEdges(this.biomeData.pixels, this.w, this.h, skyCells);
+		this.backgroundEdgesHeaven = buildBackgroundEdges(this.biomeData.heavenPixels, this.w, this.h, heavenSky);
+		this.backgroundEdgesHell = buildBackgroundEdges(this.biomeData.hellPixels, this.w, this.h, null);
 	},
 
 	async getSurfaceOverlays() {
@@ -2239,6 +2260,39 @@ export const app = {
 	// is drawn through the camera transform (so it lines up with the biome background,
 	// per parallel world, in the vertical worlds too), but the checker squares themselves
 	// are filled in screen space so they stay 8px at any zoom.
+	// The engine's ragged background boundary art: one hand-drawn 64px strip
+	// straddling each chunk line where the two chunks' background_image differ,
+	// drawn by the winning side so its background bleeds into the neighbour. We
+	// draw the strip's alpha filled with the winner's flat color (see
+	// js/biome_backgrounds.js), which is why this sits on top of the per-chunk
+	// background fill rather than replacing it.
+	drawBackgroundEdges(worldOffsets, viewRect, offscreen) {
+		if (!this.backgroundEdges) return;
+		// The strips are 64 world px wide; below a few screen pixels they are not
+		// worth the per-boundary work, and at that zoom the whole 70x48 map is in
+		// view at once.
+		if (STRIP_WORLD_PX * this.cam.z < 3) return;
+		if (document.getElementById('debug-original-biome-map').checked) return;
+		for (let worldKey of this.worldsInView) {
+			const { pwY, shiftX, shiftY } = worldOffsets[worldKey];
+			const edges = pwY === 0 ? this.backgroundEdges
+				: pwY > 0 ? this.backgroundEdgesHell : this.backgroundEdgesHeaven;
+			if (!edges) continue;
+			// A strip bucketed in row r can reach one overhang into r-1 and r+1.
+			const firstRow = Math.max(0, Math.floor((viewRect.top - shiftY) / 512) - 1);
+			const lastRow = Math.min(this.h - 1, Math.ceil((viewRect.bottom - shiftY) / 512) + 1);
+			for (let r = firstRow; r <= lastRow; r++) {
+				for (const e of edges[r]) {
+					const dx = shiftX + e.dx, dy = shiftY + e.dy;
+					if (offscreen(dx, dy, e.dw, e.dh)) continue;
+					const strip = tintedEdgeStrip(e.mask, e.color);
+					if (!strip) continue;
+					this.ctx.drawImage(strip, e.sx, e.sy, e.sw, e.sh, dx, dy, e.dw, e.dh);
+				}
+			}
+		}
+	},
+
 	drawUnpaintedCheckerboard(worldOffsets) {
 		if (!appSettings.checkerboardUnpainted) return;
 		if (!this.unpaintedMask || this.unpaintedChunkCount === 0) return;
@@ -2341,6 +2395,7 @@ export const app = {
 					}
 				}
 			}
+			this.drawBackgroundEdges(worldOffsets, viewRect, offscreen);
 		}
 		if (prof) markLayer(prof, 'biomeBackground');
 

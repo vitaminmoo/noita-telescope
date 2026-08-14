@@ -65,16 +65,6 @@ for (const b of data.biomes) {
 	});
 }
 
-// Index into BACKGROUND_IMAGE_PATHS for a biome-map color, or -1 if the biome has
-// no background image (or the color is not a known biome).
-export function backgroundImageIndex(biomeColorInt) {
-	return BY_COLOR.get(biomeColorInt & 0xffffff)?.imageIndex ?? -1;
-}
-
-export function backgroundImageColor(imageIndex) {
-	return IMAGE_COLORS[imageIndex];
-}
-
 // The color the background layer should paint for one biome-map cell:
 //   * an RGB int for a biome with a background_image,
 //   * BACKGROUND_VOID where the engine draws no background,
@@ -88,6 +78,142 @@ export function backgroundLayerColor(biomeColorInt) {
 	return IMAGE_COLORS[rec.imageIndex];
 }
 
-export function biomeBackgroundRecord(biomeColorInt) {
-	return BY_COLOR.get(biomeColorInt & 0xffffff) ?? null;
+// ---------------------------------------------------------------------------
+// Ragged boundary strips
+//
+// The straight chunk line between two different backgrounds is decorated, not
+// displaced. For each of its two "lower" boundaries (left and top) a chunk
+// resolves the neighbour at center +/- 512 -- again interior coords, so again no
+// wobble -- and if that neighbour's background_image string differs it emits a
+// single hand-drawn 64px strip (BiomeRenderer_CreateTransitionSprite @ 006f4910)
+// for the *winning* side only, so the winner's background bleeds 64px into the
+// loser's chunk. The winner is the higher background_edge_priority, ties broken
+// by string compare on the background_image path, which the game documents as
+// "if both biomes have edges defined, will use the one with higher priority (if
+// priority is same, will compare (>) background_images)".
+//
+// The art is 64x640 (left/right) or 640x64 (top/bottom): 512 for the boundary
+// itself plus 64 of overhang at each end, and the engine trims an overhang with
+// SetSourceRect when the adjacent boundary segment is not part of the same
+// transition. We reproduce the geometry exactly and approximate "same
+// transition" as "both chunks on the adjacent segment carry the same background
+// images as this one", which is what the engine's diagonal priority probes come
+// down to for a continuous boundary.
+//
+// This is the cheap variant of the effect: we do not ship the background art
+// itself, only the strips' alpha, and fill it with the winner's flat color.
+
+const CHUNK = 512;
+const STRIP = 64;
+// Strip length along the boundary: the chunk plus one overhang at each end.
+const STRIP_LEN = CHUNK + 2 * STRIP;
+
+const EDGE_MASK_BITMAPS = new Map();
+let edgeMaskPromise = null;
+
+// Kick this off once; the draw path silently skips strips whose mask has not
+// arrived yet, so it never blocks generation or the first frames.
+export function loadBackgroundEdgeMasks() {
+	return edgeMaskPromise ??= (async () => {
+		const { loadPNGBitmap } = await import('./png_sanitizer.js');
+		const paths = [...new Set(Object.values(data.edgeMasks))];
+		await Promise.all(paths.map(async (p) => {
+			try { EDGE_MASK_BITMAPS.set(p, await loadPNGBitmap('../' + p)); }
+			catch (e) { console.warn('Background edge mask failed to load:', p, e); }
+		}));
+	})();
+}
+
+// Flat-colored copy of one strip, cached per (mask, color) so the per-frame draw
+// path never allocates. There are at most ~4 directions x 23 background colors of
+// these, and only the ones actually on screen are ever built.
+const tintedStrips = new Map();
+export function tintedEdgeStrip(maskPath, color) {
+	const key = maskPath + '|' + color;
+	const hit = tintedStrips.get(key);
+	if (hit !== undefined) return hit;
+	const mask = EDGE_MASK_BITMAPS.get(maskPath);
+	if (!mask) return null; // not loaded yet -- don't cache the miss
+	const canvas = document.createElement('canvas');
+	canvas.width = mask.width;
+	canvas.height = mask.height;
+	const ctx = canvas.getContext('2d');
+	ctx.drawImage(mask, 0, 0);
+	ctx.globalCompositeOperation = 'source-in';
+	ctx.fillStyle = '#' + (color >>> 0).toString(16).padStart(6, '0');
+	ctx.fillRect(0, 0, canvas.width, canvas.height);
+	tintedStrips.set(key, canvas);
+	return canvas;
+}
+
+function imagePathOf(rec) {
+	return rec && rec.imageIndex >= 0 ? BACKGROUND_IMAGE_PATHS[rec.imageIndex] : '';
+}
+
+function edgeWinner(a, b) {
+	if (a.priority !== b.priority) return a.priority > b.priority ? a : b;
+	return imagePathOf(a) >= imagePathOf(b) ? a : b;
+}
+
+// Precompute every boundary strip for one biome-map layer, bucketed by chunk row
+// so the per-frame draw only walks the visible rows. Coordinates are map-local
+// pixels; `skyCells` (optional, one byte per cell) marks the cells telescope
+// paints as its fake sky, which has no engine background and so no strips.
+export function buildBackgroundEdges(pixels, w, h, skyCells) {
+	const rows = Array.from({ length: h }, () => []);
+	const wrapX = (cx) => ((cx % w) + w) % w; // parallel worlds tile horizontally
+	const at = (cx, cy) => (cy < 0 || cy >= h) ? null : BY_COLOR.get(pixels[cy * w + wrapX(cx)] & 0xffffff) ?? null;
+	const isSky = (cx, cy) => !!skyCells && cy >= 0 && cy < h && skyCells[cy * w + wrapX(cx)] === 1;
+	const same = (a, b) => imagePathOf(a) === imagePathOf(b);
+
+	for (let cy = 0; cy < h; cy++) {
+		for (let cx = 0; cx < w; cx++) {
+			const me = at(cx, cy);
+			// DrawWeatherLayers returns before it looks at either boundary when the
+			// chunk has no background image, so an empty chunk never decorates its
+			// own left or top edge.
+			if (!me || me.imageIndex < 0 || isSky(cx, cy)) continue;
+
+			// Left boundary: this chunk's *_left art sits outside it, the left
+			// neighbour's *_right art sits inside it.
+			const west = at(cx - 1, cy);
+			if (west && !same(me, west) && !isSky(cx - 1, cy)) {
+				const mine = edgeWinner(me, west) === me;
+				const mask = mine ? me.edges.left : west.edges.right;
+				if (mask) {
+					const keepTop = same(at(cx, cy - 1), me) && same(at(cx - 1, cy - 1), west);
+					const keepBottom = same(at(cx, cy + 1), me) && same(at(cx - 1, cy + 1), west);
+					const sy = keepTop ? 0 : STRIP;
+					const sh = (keepBottom ? STRIP_LEN : STRIP_LEN - STRIP) - sy;
+					rows[cy].push({
+						mask, color: IMAGE_COLORS[(mine ? me : west).imageIndex],
+						sx: 0, sy, sw: STRIP, sh,
+						dx: cx * CHUNK - (mine ? STRIP : 0), dy: cy * CHUNK - STRIP + sy,
+						dw: STRIP, dh: sh,
+					});
+				}
+			}
+
+			// Top boundary: this chunk's *_top art sits above it, the north
+			// neighbour's *_bottom art sits below the line, inside this chunk.
+			const north = at(cx, cy - 1);
+			if (north && !same(me, north) && !isSky(cx, cy - 1)) {
+				const mine = edgeWinner(me, north) === me;
+				const mask = mine ? me.edges.top : north.edges.bottom;
+				if (mask) {
+					const keepLeft = same(at(cx - 1, cy), me) && same(at(cx - 1, cy - 1), north);
+					const keepRight = same(at(cx + 1, cy), me) && same(at(cx + 1, cy - 1), north);
+					const sx = keepLeft ? 0 : STRIP;
+					const sw = (keepRight ? STRIP_LEN : STRIP_LEN - STRIP) - sx;
+					rows[cy].push({
+						mask, color: IMAGE_COLORS[(mine ? me : north).imageIndex],
+						sx, sy: 0, sw, sh: STRIP,
+						dx: cx * CHUNK - STRIP + sx, dy: cy * CHUNK - (mine ? STRIP : 0),
+						dw: sw, dh: STRIP,
+					});
+				}
+			}
+		}
+	}
+	return rows;
 }
