@@ -11,7 +11,7 @@ import { TIME_UNTIL_LOADING, POI_RADIUS, CHUNK_SIZE, BIOME_EDGE_NOISE_PADDING_PI
 import { getBiomeAtWorldCoordinates, getMaterialAtWorldCoordinates, getWorldCenter, getWorldSize, getPWLimit, MATERIAL_CONTAINER_TYPES } from './utils.js';
 import { renderWallMessages } from './wall_messages.js';
 import { findEyeMessages, renderEyeMessages } from './eye_messages.js';
-import { BIOME_COLOR_LOOKUP, createBiomeMapAlphaMask, createTileOverlays, createTileOverlaysCheap, createTileOverlaysExpanded } from './image_processing.js';
+import { BIOME_COLOR_LOOKUP, createBiomeMapAlphaMask, createTileOverlays, createTileOverlaysCheap, createTileOverlaysExpanded, terrainFillColor } from './image_processing.js';
 import { COALMINE_ALT_SCENES } from './pixel_scene_config.js';
 import { debugBiomeEdgeNoise } from './edge_noise.js';
 import { drawBiomeBoundaryContour } from './biome_boundary.js';
@@ -1999,9 +1999,45 @@ export const app = {
 			heavenSkip[i] = bandColumnPaints(this.biomeData.heavenPixels[i]) ? 0 : 1;
 			hellSkip[i] = bandColumnPaints(this.biomeData.hellPixels[i]) ? 0 : 1;
 		}
+		this.bandFillHeaven = this.renderBandFillCanvas(this.biomeData.heavenPixels);
+		this.bandFillHell = this.renderBandFillCanvas(this.biomeData.hellPixels);
+
 		this.backgroundEdges = buildBackgroundEdges(this.biomeData.pixels, this.w, this.h, skyCells);
 		this.backgroundEdgesHeaven = buildBackgroundEdges(this.biomeData.heavenPixels, this.w, this.h, heavenSkip);
 		this.backgroundEdgesHell = buildBackgroundEdges(this.biomeData.hellPixels, this.w, this.h, hellSkip);
+	},
+
+	// The terrain a vertical band actually contains, at one pixel per chunk.
+	//
+	// A band is the clamped edge row of the biome map repeated forever, so its
+	// constant-material fill biomes -- the infinite EDR / cursed rock columns, the
+	// lava columns of row 47 -- cover their whole column, top to bottom. The main
+	// world's fill layers only exist where the *main* map has a fill biome, so
+	// blitting those into a band gave the columns holes wherever the main map
+	// happened to hold something else. This grid is derived from the band's own
+	// map instead, and paints exactly the columns bandColumnPaints() keeps.
+	//
+	// It sits on the 512px chunk grid rather than telescope's tile raster (51
+	// tiles of 10px per chunk, resynced every 5), so it can drift up to 10px from
+	// a main-world fill at the band boundary. That is well under one chunk and
+	// the chunk grid is the engine's own, so the seam is not worth a per-chunk
+	// draw loop.
+	renderBandFillCanvas(pixels) {
+		const canvas = document.createElement('canvas');
+		canvas.width = this.w;
+		canvas.height = this.h;
+		const ctx = canvas.getContext('2d');
+		const id = ctx.createImageData(this.w, this.h);
+		for (let i = 0; i < pixels.length; i++) {
+			const color = terrainFillColor(pixels[i] & 0xFFFFFF);
+			if (color === undefined) continue;
+			id.data[i*4+0] = (color >> 16) & 0xFF;
+			id.data[i*4+1] = (color >> 8) & 0xFF;
+			id.data[i*4+2] = color & 0xFF;
+			id.data[i*4+3] = 255;
+		}
+		ctx.putImageData(id, 0, 0);
+		return canvas;
 	},
 
 	async getSurfaceOverlays() {
@@ -2815,6 +2851,25 @@ export const app = {
 			for (let worldKey of this.worldsInView) {
 				const { pwX, pwY, shiftX, shiftY } = worldOffsets[worldKey];
 				if (glCovers && glCovers(pwY)) continue;
+
+				// The vertical bands are not the main world with a different tint:
+				// heaven is biome-map row 0 repeated and hell is row 47, so the main
+				// world's layers describe nothing that is up there. Blitting them
+				// tiled the main world's central column -- mines, snowy depths,
+				// jungle -- down the whole band, gated only by which pixels happened
+				// to land in a the_sky / the_end column. Paint the band's own fill
+				// columns instead; its wang terrain (the_sky, the_end, robobase)
+				// still needs generated layers of its own, see the report in
+				// scripts/reports/vertical_pw_report.md.
+				if (pwY !== 0) {
+					const bandFill = pwY > 0 ? this.bandFillHell : this.bandFillHeaven;
+					if (bandFill) {
+						this.ctx.drawImage(bandFill,
+							shiftX + VISUAL_TILE_OFFSET_X, shiftY + VISUAL_TILE_OFFSET_Y,
+							this.w * 512, this.h * 512);
+					}
+					continue;
+				}
 
 				// Hack PW offsets
 				let pwOffset = 0;
