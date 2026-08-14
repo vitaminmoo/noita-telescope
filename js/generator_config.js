@@ -58,7 +58,7 @@ export const GENERATOR_CONFIG = {
     'temple_altar_right_snowcave': { color: 0xff93cb4f, hasStuff: false, name: "Holy Mountain (Snowy Depths Exit)" }, // note: not used in NG, for some reason
     'temple_altar_right_snowcastle': { color: 0xff93cb5a, hasStuff: false, name: "Holy Mountain (Hiisi Base Exit)" }, // note: not used in NG+, for some reason
     'temple_wall_ending': { color: 0xff5a9628, hasStuff: false, name: "Holy Mountain Basin (End)" },
-    'temple_wall': { color: 0xff6dcb28, fillMaterial: 'rock_hard_border', hasStuff: false, name: "Holy Mountain Basin" },
+    'temple_wall': { color: 0xff6dcb28, fillMaterial: 'templebrick_static', hasStuff: false, name: "Holy Mountain Basin" },
     'solid_wall_temple': { color: 0xffB8A928, fillMaterial: 'templebrick_static', hasStuff: false, name: "Holy Mountain (Solid)" },
     // Empty HM variants excluded since they only apply to daily practice run mod
     'boss_arena': { color: 0xff14EED7, fillMaterial: 'rock_hard_border', hasStuff: false, name: "The Laboratory" },
