@@ -16,7 +16,7 @@ import { COALMINE_ALT_SCENES } from './pixel_scene_config.js';
 import { debugBiomeEdgeNoise } from './edge_noise.js';
 import { drawBiomeBoundaryContour } from './biome_boundary.js';
 import { GLTerrainRenderer } from './gl/terrain_renderer.js';
-import { getPixelSceneCanvas, pixelSceneMipLevel, loadPixelSceneData, reloadPixelSceneCache, PIXEL_SCENE_DATA } from './pixel_scene_generation.js';
+import { getPixelSceneAirMask, getPixelSceneCanvas, pixelSceneMipLevel, loadPixelSceneData, reloadPixelSceneCache, PIXEL_SCENE_DATA } from './pixel_scene_generation.js';
 import { addStaticPixelScenes } from './static_spawns.js';
 import { NollaPrng } from './nolla_prng.js';
 import { appSettings, updateSettings, updateSpellFlags, updateSpecialFlags, RENDER_LAYERS, readRenderLayersFromUI } from './settings.js';
@@ -3042,6 +3042,18 @@ export const app = {
 
 						const pixelSceneCanvas = getPixelSceneCanvas(scene, sceneMipLevel);
 						if (!pixelSceneCanvas) continue;
+						// A scene's #000042 pixels are the engine's FORCE AIR: they erase the
+						// terrain the chunk generated instead of painting over it. Punch them
+						// out first, so the hole is real over the engine-resolved GL terrain
+						// (which paints every chunk) as well as over a fill layer. Null unless
+						// the scene has air and material textures are on -- with them off the
+						// flat recolor's opaque-background approximation is kept untouched.
+						const airMask = getPixelSceneAirMask(scene);
+						if (airMask) {
+							this.ctx.globalCompositeOperation = 'destination-out';
+							this.ctx.drawImage(airMask, drawX, drawY, sceneData.width, sceneData.height);
+							this.ctx.globalCompositeOperation = 'source-over';
+						}
 						// Always the full-resolution rectangle: only the source changes with the level
 						this.ctx.drawImage(pixelSceneCanvas, drawX, drawY, sceneData.width, sceneData.height);
 					}

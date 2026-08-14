@@ -1,12 +1,12 @@
 import { NollaPrng } from './nolla_prng.js';
 import { BLOCKED_COLORS, GENERAL_SCENES, PIXEL_SCENE_BIOME_MAP } from './pixel_scene_config.js';
-import { MATERIAL_COLOR_CONVERSION, MATERIAL_WANG_COLORS } from './potion_config.js';
+import { MATERIAL_COLOR_CONVERSION, MATERIAL_COLOR_LOOKUP, MATERIAL_WANG_COLORS } from './potion_config.js';
 import { getBiomeAtWorldCoordinates } from './utils.js';
 import { biomeEdgeNoiseFlag } from './wobble_flags.js';
 import { loadPNG } from './png_sanitizer.js';
 import { prescanPixelScene } from './poi_scanner.js';
-import { BIOME_BACKGROUND_COLORS, TILE_OVERLAY_COLORS, channelDistance, makeBlackTransparent, sceneMaterialFillColorForBiome, terrainFillColorForBiome } from './image_processing.js';
-import { GENERATOR_CONFIG } from './generator_config.js';
+import { BIOME_BACKGROUND_COLORS, TILE_OVERLAY_COLORS, channelDistance, makeBlackTransparent, materialDisplayColor, sceneMaterialFillColorForBiome, terrainFillColorForBiome } from './image_processing.js';
+import { FILL_BIOME_MATERIALS, GENERATOR_CONFIG } from './generator_config.js';
 import { appSettings } from './settings.js';
 
 // This was originally constant but it sometimes needs to be cleared to regenerate the cache...
@@ -42,14 +42,22 @@ export function setPixelSceneVariantRebuilder(fn) {
 	variantRebuilder = fn;
 }
 
+// Cost of the per-instance textured builds, for the perf readout.
+let texturedSceneCount = 0;
+let texturedSceneMs = 0;
+
 export function getPixelSceneCacheStats() {
-	return { entries: PIXEL_SCENE_BITMAP_CACHE.size, bytes: pixelSceneCacheBytes };
+	return {
+		entries: PIXEL_SCENE_BITMAP_CACHE.size, bytes: pixelSceneCacheBytes,
+		texturedScenes: texturedSceneCount, texturedMs: texturedSceneMs,
+	};
 }
 
 function releasePixelSceneEntry(entry) {
 	for (const bitmap of entry.levels) {
 		if (bitmap) bitmap.close();
 	}
+	if (entry.airMask) entry.airMask.close();
 	pixelSceneCacheBytes -= entry.bytes;
 	PIXEL_SCENE_BITMAP_CACHE.delete(entry.cacheKey);
 }
@@ -77,10 +85,51 @@ function addPixelSceneBitmap(entry, level, bitmap) {
 	pixelSceneCacheBytes += bytes;
 }
 
-function buildPixelSceneEntry(pixelSceneKey, variantKey, cacheKey) {
+function bitmapFromPixels(width, height, pixels) {
+	const canvas = new OffscreenCanvas(width, height);
+	const ctx = canvas.getContext('2d');
+	const imageData = ctx.createImageData(width, height);
+	imageData.data.set(pixels);
+	ctx.putImageData(imageData, 0, 0);
+	return canvas.transferToImageBitmap();
+}
+
+/**
+ * The engine-faithful pixels for one stamped scene instance, or null when the
+ * atlas/band tables are not loaded (or scene texturing is off).
+ *
+ * Runs the variant key the same way the overlay worker does -- material
+ * substitutions first, in wang color space, so the texturing step still sees wang
+ * colors -- but from the untouched base image and with the instance's own world
+ * position, which is what the texture sampling needs.
+ */
+function buildTexturedScenePixels(pixelScene, pixelSceneData) {
+	if (!sceneTextureAtlas()) return null;
+	let pixels = pixelSceneData.imgElement;
+	let biome = 'general';
+	for (const part of (pixelScene.variantKey || '').split('&')) {
+		const eq = part.indexOf('=');
+		if (eq < 0) continue;
+		if (part.slice(0, eq) === 'biome') biome = part.slice(eq + 1);
+		else pixels = recolorPixelScene(pixels, parseInt(part.slice(0, eq), 16), parseInt(part.slice(eq + 1), 16));
+	}
+	return texturePixelSceneForBiome(pixelSceneData.name, pixels, pixelSceneData.width, pixelSceneData.height,
+		biome, pixelScene.x, pixelScene.y);
+}
+
+function buildPixelSceneEntry(pixelScene, cacheKey, textured) {
+	const pixelSceneKey = pixelScene.key;
+	const variantKey = pixelScene.variantKey || '';
 	const pixelSceneData = PIXEL_SCENE_DATA[pixelSceneKey];
 	if (!pixelSceneData) return null;
-	const raw = pixelSceneData.variants[variantKey];
+
+	// Textured instances are built here rather than in the overlay worker: the
+	// worker's variants are keyed by material substitution alone, and a textured
+	// scene's pixels depend on where the instance landed.
+	const t0 = textured ? performance.now() : 0;
+	const built = textured ? buildTexturedScenePixels(pixelScene, pixelSceneData) : null;
+	if (built) { texturedSceneCount++; texturedSceneMs += performance.now() - t0; }
+	const raw = built ? built.pixels : pixelSceneData.variants[variantKey];
 	if (!ArrayBuffer.isView(raw)) {
 		// Released after its bitmap was built and the bitmap has since been evicted, so
 		// ask for the recolor again. Nothing to draw for this scene until it arrives.
@@ -89,11 +138,6 @@ function buildPixelSceneEntry(pixelSceneKey, variantKey, cacheKey) {
 	}
 	const width = pixelSceneData.width;
 	const height = pixelSceneData.height;
-	const canvas = new OffscreenCanvas(width, height);
-	const ctx = canvas.getContext('2d');
-	const imageData = ctx.createImageData(width, height);
-	imageData.data.set(raw);
-	ctx.putImageData(imageData, 0, 0);
 	const entry = {
 		cacheKey,
 		width,
@@ -101,14 +145,23 @@ function buildPixelSceneEntry(pixelSceneKey, variantKey, cacheKey) {
 		levels: new Array(PIXEL_SCENE_MAX_MIP + 1).fill(null),
 		// Halving stops once either axis would round to nothing
 		maxLevel: Math.min(PIXEL_SCENE_MAX_MIP, Math.floor(Math.log2(Math.max(1, Math.min(width, height))))),
+		// Opaque exactly on the scene's FORCE AIR pixels; drawn destination-out so
+		// the air really erases the terrain under it. Only the textured build has one.
+		airMask: null,
 		bytes: 0,
 		used: 0,
 	};
-	addPixelSceneBitmap(entry, 0, canvas.transferToImageBitmap());
+	addPixelSceneBitmap(entry, 0, bitmapFromPixels(width, height, raw));
+	if (built && built.airMask) {
+		entry.airMask = bitmapFromPixels(width, height, built.airMask);
+		entry.bytes += width * height * 4;
+		pixelSceneCacheBytes += width * height * 4;
+	}
 	PIXEL_SCENE_BITMAP_CACHE.set(cacheKey, entry);
 	// The bitmap is now the only copy this thread needs of the recolored pixels. Material
-	// lookups (utils.js) read the pre-biome variants, which are left alone.
-	if (variantKey.includes('biome=')) pixelSceneData.variants[variantKey] = VARIANT_RELEASED;
+	// lookups (utils.js) read the pre-biome variants, which are left alone. A textured
+	// instance never consumed the worker's variant, so it must not drop it either.
+	if (!built && variantKey.includes('biome=')) pixelSceneData.variants[variantKey] = VARIANT_RELEASED;
 	return entry;
 }
 
@@ -229,20 +282,42 @@ export async function reloadPixelSceneCache() {
 // Returns the bitmap to draw for this scene at the requested mip level (0 = native), or
 // null when its recolored pixels aren't available yet. The caller always draws it into
 // the scene's full-resolution world rectangle, so the level only changes sampling.
-export function getPixelSceneCanvas(pixelScene, level = 0) {
-	const pixelSceneKey = pixelScene.key;
+function pixelSceneEntry(pixelScene) {
+	// With material textures on, a scene's pixels come from its material textures
+	// sampled at ABSOLUTE world coordinates, so two instances of the same variant
+	// no longer look alike: the cache key has to carry the instance's position.
+	const textured = !!sceneTextureAtlas();
 	const variantKey = pixelScene.variantKey || '';
-	const cacheKey = `${pixelSceneKey}/${variantKey}`;
-	let entry = PIXEL_SCENE_BITMAP_CACHE.get(cacheKey);
-	if (!entry) {
-		entry = buildPixelSceneEntry(pixelSceneKey, variantKey, cacheKey);
-		if (!entry) return null;
-	}
+	const cacheKey = textured
+		? `${pixelScene.key}/${variantKey}@${pixelScene.x},${pixelScene.y}`
+		: `${pixelScene.key}/${variantKey}`;
+	return PIXEL_SCENE_BITMAP_CACHE.get(cacheKey) ?? buildPixelSceneEntry(pixelScene, cacheKey, textured);
+}
+
+export function getPixelSceneCanvas(pixelScene, level = 0) {
+	const entry = pixelSceneEntry(pixelScene);
+	if (!entry) return null;
 	entry.used = ++pixelSceneDrawTick;
 	const wanted = level > entry.maxLevel ? entry.maxLevel : level;
 	const bitmap = entry.levels[wanted] || buildPixelSceneMips(entry, wanted);
 	evictPixelSceneBitmaps(entry);
 	return bitmap;
+}
+
+/**
+ * The scene's FORCE AIR mask, to be drawn with `destination-out` before the
+ * scene itself, or null when it has none.
+ *
+ * Air in a scene PNG (#000042) is not a color the game paints, it is an
+ * instruction to erase whatever terrain the chunk generated there. Only the
+ * textured build carries the mask: with textures off the flat recolor keeps its
+ * old "paint the background color opaque over a fill biome" approximation, so
+ * that path renders exactly as before.
+ *
+ * Cheap to call right after getPixelSceneCanvas() -- it hits the same cache entry.
+ */
+export function getPixelSceneAirMask(pixelScene) {
+	return pixelSceneEntry(pixelScene)?.airMask ?? null;
 }
 
 function getBiomeAlias(biomeName) {
@@ -281,6 +356,10 @@ function getPixelSceneKey(biomeName, sceneName) {
 }
 
 export async function loadPixelSceneData() {
+	// The material atlas + band tables the textured build needs. Started here (main
+	// thread, once, well before the first draw) rather than on demand, so the draw
+	// path can stay synchronous and simply fall back to flat colors until it lands.
+	initPixelSceneTextures();
 	// Load key value pairs for all pixel scenes
 	let loaded = 0;
 	for (const biome of Object.keys(PIXEL_SCENE_BIOME_MAP)) {
@@ -608,15 +687,14 @@ function underlyingBiomeSuffix(biomeData, sceneData, biomeName, sceneName, x, y,
 	return terrainFillColorForBiome(under) === undefined ? '' : `@${under}`;
 }
 
-export function recolorPixelSceneForBiome(sceneName, sourceData, targetBiome) {
-	//const recolorMaterials = document.getElementById('recolor-materials').checked;
-	const recolorMaterials = appSettings.recolorMaterials;
-
-	const outData = new Uint8Array(sourceData.length);
-	outData.set(sourceData);
-
-	// Some scene name exceptions because this just isn't working
-
+/**
+ * How a scene stamped in `targetBiome` paints its two biome-dependent color
+ * classes: the density ("fill with this biome's own material") class, and air.
+ *
+ * Shared by the flat recolor and the textured build so the two cannot drift on
+ * which biome answers for a pseudo-biome folder, or on when air is opaque.
+ */
+function sceneBiomePaint(sceneName, targetBiome) {
 	// `biome=<folder>@<chunk biome>`: the folder decides the colors, the suffix
 	// (underlyingBiomeSuffix) names the biome of the chunk the scene landed in.
 	const at = targetBiome.indexOf('@');
@@ -638,7 +716,7 @@ export function recolorPixelSceneForBiome(sceneName, sourceData, targetBiome) {
 	// visibly the orb rooms, whose whole floor is that class. Falling back to the
 	// biome under the scene answers it exactly: those pixels are "fill with the
 	// chunk's own material", which is what the suffix names.
-	let targetColor = sceneMaterialFillColorForBiome(targetBiome)
+	const targetColor = sceneMaterialFillColorForBiome(targetBiome)
 		?? TILE_OVERLAY_COLORS[targetBiome]
 		?? (underlyingBiome ? sceneMaterialFillColorForBiome(underlyingBiome) ?? TILE_OVERLAY_COLORS[underlyingBiome] : undefined)
 		?? 0xff00ff;
@@ -657,6 +735,45 @@ export function recolorPixelSceneForBiome(sceneName, sourceData, targetBiome) {
 			| (Math.round(((fillUnder >> 8) & 0xFF) * AIR_OVER_FILL_DARKEN) << 8)
 			| Math.round((fillUnder & 0xFF) * AIR_OVER_FILL_DARKEN));
 	}
+
+	// Transparent air is only right when nothing is painted underneath: it lets
+	// whatever is already on the canvas show through, which for a wang biome is
+	// the layer's own terrain. In a constant-material fill biome the whole chunk
+	// is solid, so transparent air would leave the carved room filled in and
+	// invisible -- the scene has to punch the hole itself, in the color the
+	// background layer would have shown. Hiisi base is the hand-found instance of
+	// the same rule.
+	//
+	// Both tests ask "does this chunk actually emit a fill layer", so a
+	// `sceneOnly` room falls through to the transparent branch: its chunk is air,
+	// and the scene's air must read as the cave background the game shows there,
+	// not as an opaque plug.
+	//
+	// The textured build does not need any of this -- it erases the terrain under
+	// its air with a real mask pass -- so it only honors the authored exceptions.
+	const opaqueOverFill = targetBiome === "snowcastle" || !!fillBiomeUnderScene
+		|| terrainFillColorForBiome(targetBiome) !== undefined;
+	const authoredAirAlpha = PIXEL_SCENE_AIR_TRANSPARENCY_EXCEPTIONS[sceneName] ?? 0x00;
+
+	return {
+		targetBiome, underlyingBiome, targetColor, bgColor,
+		airAlpha: opaqueOverFill ? 0xff : authoredAirAlpha,
+		texturedAirAlpha: authoredAirAlpha,
+	};
+}
+
+export function recolorPixelSceneForBiome(sceneName, sourceData, targetBiome) {
+	//const recolorMaterials = document.getElementById('recolor-materials').checked;
+	const recolorMaterials = appSettings.recolorMaterials;
+
+	const outData = new Uint8Array(sourceData.length);
+	outData.set(sourceData);
+
+	// Some scene name exceptions because this just isn't working
+	const paint = sceneBiomePaint(sceneName, targetBiome);
+	const targetColor = paint.targetColor;
+	const bgColor = paint.bgColor;
+	const airAlpha = paint.airAlpha;
 	let targetR = (targetColor >> 16) & 0xFF;
 	let targetG = (targetColor >> 8) & 0xFF;
 	let targetB = targetColor & 0xFF;
@@ -705,29 +822,8 @@ export function recolorPixelSceneForBiome(sceneName, sourceData, targetBiome) {
 			outData[i] = bgColorR;
 			outData[i + 1] = bgColorG;
 			outData[i + 2] = bgColorB;
-			// Transparent air is only right when nothing is painted underneath:
-			// it lets whatever is already on the canvas show through, which for a
-			// wang biome is the layer's own terrain. In a constant-material fill
-			// biome the whole chunk is solid, so transparent air would leave the
-			// carved room filled in and invisible -- the scene has to punch the
-			// hole itself, in the color the background layer would have shown.
-			// Hiisi base is the hand-found instance of the same rule.
-			//
-			// Both tests ask "does this chunk actually emit a fill layer", so a
-			// `sceneOnly` room falls through to the transparent branch below: its
-			// chunk is air, and the scene's air must read as the cave background the
-			// game shows there, not as an opaque plug.
-			if (targetBiome === "snowcastle" || fillBiomeUnderScene
-				|| terrainFillColorForBiome(targetBiome) !== undefined) {
-				outData[i + 3] = 0xff;
-			}
-			else if (PIXEL_SCENE_AIR_TRANSPARENCY_EXCEPTIONS[sceneName]) {
-				outData[i + 3] = PIXEL_SCENE_AIR_TRANSPARENCY_EXCEPTIONS[sceneName];
-			}
-			else {
-				outData[i + 3] = 0x00;
-			}
-		} 
+			outData[i + 3] = airAlpha;
+		}
 		// Recolor Wang Colors
 		else if (recolorMaterials && (r > 0 || g > 0 || b > 0)) {
 			const rgb = (r << 16) | (g << 8) | b;
@@ -768,4 +864,227 @@ export function recolorPixelScene(sourceData, sourceColor, targetColor) {
     }
 
     return outData;
+}
+// ---------------------------------------------------------------------------
+// Engine-faithful pixel scene texturing
+//
+// The game does not paint a stamped scene in flat material colors. Every cell it
+// places gets its color from the material's materials_gfx texture, sampled at the
+// cell's ABSOLUTE world coordinates with a negative-safe modulo
+// (CellFactory_GetCellColor @0x007044a0) -- exactly the rule the GL terrain
+// shader already reproduces for terrain. Two consequences for this module:
+//
+//  * the answer depends on where the scene landed, so a recolored variant can no
+//    longer be shared by every instance of the same scene. The variant cache below
+//    keeps doing what it is good at (material SUBSTITUTION, which is
+//    position-independent), and the texturing happens per instance when its
+//    bitmap is built.
+//  * a scene's white/gray pixels are density 1.0 fed to the biome's
+//    <MaterialComponent> bands, not a single flat color -- and the rare gates in
+//    those bands are position-dependent too. band_select.js runs the engine's own
+//    chooser for them.
+//
+// Both modules are pulled in dynamically so the overlay/search workers, which
+// import this file for the flat recolor and the material lookups, never load the
+// 270 KB engine tables or the material atlas.
+// ---------------------------------------------------------------------------
+
+let sceneTextureModules = null;   // { atlas: <material_atlas.js>, bands: <band_select.js> }
+let sceneTextureLoading = null;
+
+/** Starts (or joins) the one-time load of the atlas + band tables. Main thread. */
+export function initPixelSceneTextures() {
+	return sceneTextureLoading ??= (async () => {
+		const [atlas, bands] = await Promise.all([
+			import('./gl/material_atlas.js'),
+			import('./engine_resolve/band_select.js'),
+		]);
+		await atlas.initMaterialAtlas();
+		sceneTextureModules = { atlas, bands };
+		return sceneTextureModules;
+	})().catch((err) => {
+		console.warn('[pixel scenes] material textures unavailable, staying on flat colors:', err);
+		return null;
+	});
+}
+
+/**
+ * The loaded atlas when scene texturing is both enabled and ready, else null.
+ *
+ * Gated exactly as the GL terrain's own material textures are (app.js passes
+ * `materialTextures && recolorMaterials` to the renderer), so the one toggle
+ * moves scenes and terrain together and "material colors off" still means flat.
+ */
+function sceneTextureAtlas() {
+	if (!appSettings.materialTextures || !appSettings.recolorMaterials || !sceneTextureModules) return null;
+	return sceneTextureModules.atlas.getMaterialAtlas();
+}
+
+// 0xRRGGBB wang color -> material name, from MATERIAL_COLOR_LOOKUP's hex keys.
+let wangColorToMaterial = null;
+function materialForWangColor(rgb) {
+	if (!wangColorToMaterial) {
+		wangColorToMaterial = new Map();
+		for (const [hex, name] of Object.entries(MATERIAL_COLOR_LOOKUP)) {
+			wangColorToMaterial.set(parseInt(hex, 16) & 0xffffff, name);
+		}
+	}
+	return wangColorToMaterial.get(rgb);
+}
+
+/**
+ * The BIOME_ENGINE entry whose <MaterialComponent> bands answer this scene's
+ * density class, preferring the scene's own folder biome and falling back to the
+ * biome of the chunk it landed in (which is what a pseudo-biome folder means).
+ * Only an entry that actually carries bands counts: the constant-material rooms
+ * (temple_altar and friends) have an empty table and are answered by their
+ * fillMaterial instead.
+ */
+function densityBiomeFor(bands, targetBiome, underlyingBiome) {
+	for (const name of [targetBiome, underlyingBiome]) {
+		if (!name) continue;
+		const conf = GENERATOR_CONFIG[name];
+		if (!conf) continue;
+		const biome = bands.engineBiomeForColor(conf.color & 0xffffff);
+		if (biome && biome.supported && biome.bands.length) return biome;
+	}
+	return null;
+}
+
+/** The fillMaterial that answers a scene's density class where no band table does. */
+function densityFillMaterialFor(targetBiome, underlyingBiome) {
+	for (const name of [targetBiome, underlyingBiome]) {
+		const conf = name ? GENERATOR_CONFIG[name] : null;
+		const material = conf ? FILL_BIOME_MATERIALS[conf.color & 0xffffff] : undefined;
+		if (material !== undefined) return material;
+	}
+	return null;
+}
+
+/**
+ * Per-instance engine-faithful build of one stamped pixel scene.
+ *
+ * `sourceData` is the scene PNG after its material substitutions (so its pixels
+ * are still wang colors); (worldX, worldY) is where its top-left corner lands in
+ * generation world space. Returns { pixels, airMask }: the RGBA image to draw,
+ * and an RGBA mask that is opaque exactly on the scene's FORCE AIR pixels, or
+ * null when it has none.
+ *
+ * Air (#000042) erases the world instead of painting it, so the caller draws the
+ * mask with `destination-out` before the image. That is what makes air correct
+ * over the engine-resolved GL terrain, which paints every chunk -- the old
+ * "opaque background color over a fill biome" trick only covered the chunks
+ * telescope itself filled.
+ */
+export function texturePixelSceneForBiome(sceneName, sourceData, width, height, targetBiome, worldX, worldY) {
+	const { atlas: atlasMod, bands } = sceneTextureModules;
+	const atlas = atlasMod.getMaterialAtlas();
+	const recolorMaterials = appSettings.recolorMaterials;
+	const paint = sceneBiomePaint(sceneName, targetBiome);
+	const airAlpha = paint.texturedAirAlpha;
+	const bgColorR = (paint.bgColor >> 16) & 0xFF;
+	const bgColorG = (paint.bgColor >> 8) & 0xFF;
+	const bgColorB = paint.bgColor & 0xFF;
+
+	// The density class: one band walk for the whole stamp when no band in front
+	// of the answer is position-dependent, otherwise per pixel.
+	const densityBiome = densityBiomeFor(bands, paint.targetBiome, paint.underlyingBiome);
+	const constDensityMat = densityBiome ? bands.constantComponentForDensity(densityBiome, 1.0) : -1;
+	const perPixelDensity = densityBiome && constDensityMat < 0;
+
+	// How one material paints: its atlas rect when it has a texture, else its flat
+	// display color (which is what the engine falls back to as well). Memoized --
+	// a scene uses a handful of materials across hundreds of thousands of pixels.
+	const recipeByName = new Map();
+	const recipeForMaterial = (name, fallbackFlat) => {
+		let recipe = recipeByName.get(name);
+		if (recipe === undefined) {
+			const wang = MATERIAL_WANG_COLORS[name];
+			recipe = {
+				entry: atlasMod.materialAtlasEntry(atlas, name),
+				flat: wang === undefined ? fallbackFlat : materialDisplayColor(name),
+			};
+			recipeByName.set(name, recipe);
+		}
+		return recipe;
+	};
+	// The density class' answer where no band table covers it: the biome's own
+	// fillMaterial, textured like any other material rather than flattened.
+	const fillMaterial = densityFillMaterialFor(paint.targetBiome, paint.underlyingBiome);
+	const fillRecipe = fillMaterial
+		? recipeForMaterial(fillMaterial, paint.targetColor)
+		: { entry: 0, flat: paint.targetColor };
+
+	const densityRecipes = new Map();
+	const densityRecipeFor = (id) => {
+		let recipe = densityRecipes.get(id);
+		if (recipe === undefined) {
+			const name = id < 0 ? null : bands.materialNameForId(id);
+			recipe = name ? recipeForMaterial(name, paint.targetColor) : fillRecipe;
+			densityRecipes.set(id, recipe);
+		}
+		return recipe;
+	};
+	// Wang color -> the same recipe, via the material that owns the color.
+	const wangRecipes = new Map();
+	const wangRecipeFor = (rgb) => {
+		let recipe = wangRecipes.get(rgb);
+		if (recipe === undefined) {
+			const name = materialForWangColor(rgb);
+			recipe = name
+				? recipeForMaterial(name, (recolorMaterials ? MATERIAL_COLOR_CONVERSION[rgb] : undefined) ?? rgb)
+				: { entry: 0, flat: (recolorMaterials ? MATERIAL_COLOR_CONVERSION[rgb] : undefined) ?? rgb };
+			wangRecipes.set(rgb, recipe);
+		}
+		return recipe;
+	};
+
+	const outData = new Uint8Array(sourceData.length);
+	outData.set(sourceData);
+	let airMask = null;
+
+	for (let i = 0, p = 0; i < outData.length; i += 4, p++) {
+		if (outData[i + 3] === 0) continue;   // untouched: alpha 0 / #000000
+		const r = outData[i], g = outData[i + 1], b = outData[i + 2];
+
+		// FORCE AIR: erases the world. Recorded in the mask; the image keeps
+		// whatever alpha the scene's own art asked for (almost always none).
+		if (r === 0x00 && g === 0x00 && b === 0x42) {
+			if (!airMask) airMask = new Uint8Array(sourceData.length);
+			airMask[i + 3] = 0xff;
+			outData[i] = bgColorR;
+			outData[i + 1] = bgColorG;
+			outData[i + 2] = bgColorB;
+			outData[i + 3] = airAlpha;
+			continue;
+		}
+
+		const wx = worldX + (p % width);
+		const wy = worldY + ((p / width) | 0);
+
+		// Density 1.0 through the biome's <MaterialComponent> bands for the gray
+		// class; the wang color's own material for everything else. A band table
+		// that accepts nothing here falls back to the biome's fillMaterial rather
+		// than to air, so a table gap can never punch a hole in a room floor.
+		const { entry, flat } = (r === g && g === b && r > 0)
+			? densityRecipeFor(perPixelDensity
+				? bands.selectComponentForCell(densityBiome, wx, wy, 1.0)
+				: constDensityMat)
+			: wangRecipeFor((r << 16) | (g << 8) | b);
+
+		if (entry > 0) {
+			const texel = atlasMod.materialTexelRGB(atlas, entry, wx, wy);
+			// A transparent texel places no cell in the engine, so paint nothing.
+			if (texel < 0) { outData[i + 3] = 0x00; continue; }
+			outData[i] = (texel >> 16) & 0xFF;
+			outData[i + 1] = (texel >> 8) & 0xFF;
+			outData[i + 2] = texel & 0xFF;
+			continue;
+		}
+		outData[i] = (flat >> 16) & 0xFF;
+		outData[i + 1] = (flat >> 8) & 0xFF;
+		outData[i + 2] = flat & 0xFF;
+	}
+
+	return { pixels: outData, airMask };
 }
