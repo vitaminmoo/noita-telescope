@@ -306,6 +306,10 @@ export async function loadPixelSceneData() {
 						height: imgData.height,
 						//spawnPoints: spawnPoints,
 						isCosmetic: spawnPoints.length === 0, // If there are no spawn points, we can consider it purely cosmetic and can optionally skip some checks during generation
+						// Which recolor classes this scene actually contains, so it only
+						// pays for a per-chunk variant when one of them depends on the
+						// chunk it lands in (underlyingBiomeSuffix).
+						...classifyPixelSceneColors(imgData.data),
 						variants: {}, // Used for color material changes, keyed as `${color}=${material}`
 					};
 					loaded++;
@@ -437,7 +441,7 @@ export function loadPixelScene(biomeData, biomeName, sceneName, ws, ng, x, y, sk
 		biomeName = getBiomeAtWorldCoordinates(biomeData, x + pixelSceneData.width/2, y + pixelSceneData.height/2, ng > 0, gameMode)?.biome || "general";
 	}
 	*/
-	const variantKey = `biome=${biomeName}${fillBiomeUnder(biomeData, biomeName, x, y, pixelSceneData.width, pixelSceneData.height, ng, gameMode)}`;
+	const variantKey = `biome=${biomeName}${underlyingBiomeSuffix(biomeData, pixelSceneData, biomeName, sceneName, x, y, ng, gameMode)}`;
 	/*
 	if (!PIXEL_SCENE_DATA[pixelSceneKey].variants[variantKey]) {
 		PIXEL_SCENE_DATA[pixelSceneKey].variants[variantKey] = recolorPixelSceneForBiome(sceneName, getPixelSceneVariant(pixelSceneKey, ''), PIXEL_SCENE_DATA[pixelSceneKey].width, PIXEL_SCENE_DATA[pixelSceneKey].height, biomeName, x, y);
@@ -547,7 +551,7 @@ export function loadRandomPixelScene(biomeData, biomeName, scene_list, ws, ng, x
 			}
 			// Recolor the pixel scene for the biome if needed
 			const finalVariantKey = variantKey + (variantKey !== '' ? '&' : '')
-				+ `biome=${biomeName}${fillBiomeUnder(biomeData, biomeName, x, y, pixelSceneData.width, pixelSceneData.height, ng, gameMode)}`;
+				+ `biome=${biomeName}${underlyingBiomeSuffix(biomeData, pixelSceneData, biomeName, scene.name, x, y, ng, gameMode)}`;
 			/*
 			if (!PIXEL_SCENE_DATA[pixelSceneKey].variants[finalVariantKey]) {
 				PIXEL_SCENE_DATA[pixelSceneKey].variants[finalVariantKey] = recolorPixelSceneForBiome(scene.name, getPixelSceneVariant(pixelSceneKey, variantKey), biomeName);
@@ -566,19 +570,41 @@ export function loadRandomPixelScene(biomeData, biomeName, scene_list, ws, ng, x
 	return null;
 }
 
+/** Does this scene contain air pixels / "fill with the biome's material" pixels? */
+function classifyPixelSceneColors(data) {
+	let hasAir = false;
+	let hasBiomeFill = false;
+	for (let i = 0; i < data.length; i += 4) {
+		const r = data[i], g = data[i + 1], b = data[i + 2];
+		if (r === 0 && g === 0 && b === 0x42) hasAir = true;
+		else if (r === g && g === b && r > 0) hasBiomeFill = true;
+		if (hasAir && hasBiomeFill) break;
+	}
+	return { hasAir, hasBiomeFill };
+}
+
 /**
- * The `@<biome>` suffix a scene's `biome=` variant key carries when it sits over
- * a constant-material fill, or '' when it does not.
+ * The `@<biome>` suffix a scene's `biome=` variant key carries when its recolor
+ * depends on the chunk it landed in, or '' when it does not.
  *
  * The recolor target is the scene's *folder* biome, which for everything under
- * general/ and temple/ is a pseudo-biome shared across the map — so it cannot
- * answer "is the chunk beneath me solid?". That question decides whether the
- * scene's air may stay transparent, and the answer belongs in the variant key so
- * one cached variant per underlying fill biome is all it costs.
+ * general/ and temple/ is a pseudo-biome shared across the map. Two things it
+ * therefore cannot answer: whether the chunk beneath is solid material, which
+ * decides if the scene's air may stay transparent; and what color the scene's
+ * "fill with the biome's own material" pixels take, since a pseudo-biome has no
+ * entry in either color table -- which is what used to paint the orb room floors
+ * magenta. Naming the chunk's biome in the variant key answers both, at one
+ * cached variant per underlying biome, and only for scenes that contain the
+ * class in question.
  */
-function fillBiomeUnder(biomeData, biomeName, x, y, width, height, ng, gameMode) {
-	const under = getBiomeAtWorldCoordinates(biomeData, x + width / 2, y + height / 2, ng > 0, gameMode, true)?.biome;
+function underlyingBiomeSuffix(biomeData, sceneData, biomeName, sceneName, x, y, ng, gameMode) {
+	// The altars are deliberately never recolored per biome; keep them at one variant.
+	if (SCENES_TO_NOT_RECOLOR.includes(sceneName)) return '';
+	const needsFillColor = sceneData.hasBiomeFill && TILE_OVERLAY_COLORS[biomeName] === undefined;
+	if (!sceneData.hasAir && !needsFillColor) return '';
+	const under = getBiomeAtWorldCoordinates(biomeData, x + sceneData.width / 2, y + sceneData.height / 2, ng > 0, gameMode, true)?.biome;
 	if (!under || under === biomeName) return '';
+	if (needsFillColor) return `@${under}`;
 	return terrainFillColorForBiome(under) === undefined ? '' : `@${under}`;
 }
 
@@ -591,20 +617,30 @@ export function recolorPixelSceneForBiome(sceneName, sourceData, targetBiome) {
 
 	// Some scene name exceptions because this just isn't working
 
-	// `biome=<folder>@<fill biome>`: the folder decides the colors, the suffix
-	// (fillBiomeUnder) says the chunk beneath the scene is solid material.
+	// `biome=<folder>@<chunk biome>`: the folder decides the colors, the suffix
+	// (underlyingBiomeSuffix) names the biome of the chunk the scene landed in.
 	const at = targetBiome.indexOf('@');
-	const fillBiomeUnderScene = at < 0 ? null : targetBiome.slice(at + 1);
+	const underlyingBiome = at < 0 ? null : targetBiome.slice(at + 1);
 	if (at >= 0) targetBiome = targetBiome.slice(0, at);
+	const fillBiomeUnderScene = (underlyingBiome && terrainFillColorForBiome(underlyingBiome) !== undefined)
+		? underlyingBiome : null;
 
 	// A scene's gray/white pixels are the engine's "fill with this biome's own
 	// material" class, so in a constant-material biome they must come out as that
 	// biome's fill color -- the same one the terrain around them paints. Otherwise
 	// they take the hand-authored foreground color, which for these biomes equals
 	// the background color and leaves the carved room reading as a flat block.
-	let targetColor = terrainFillColorForBiome(targetBiome) ?? TILE_OVERLAY_COLORS[targetBiome] ?? 0xff00ff;
+	// The pseudo-biomes (general/, temple/, spliced/) have no entry in either
+	// color table, so their scenes' fill pixels used to come out magenta -- most
+	// visibly the orb rooms, whose whole floor is that class. Falling back to the
+	// biome under the scene answers it exactly: those pixels are "fill with the
+	// chunk's own material", which is what the suffix names.
+	let targetColor = terrainFillColorForBiome(targetBiome)
+		?? TILE_OVERLAY_COLORS[targetBiome]
+		?? (underlyingBiome ? terrainFillColorForBiome(underlyingBiome) ?? TILE_OVERLAY_COLORS[underlyingBiome] : undefined)
+		?? 0xff00ff;
 	let bgColor = BIOME_BACKGROUND_COLORS[targetBiome]
-		?? (fillBiomeUnderScene ? BIOME_BACKGROUND_COLORS[fillBiomeUnderScene] : undefined)
+		?? (underlyingBiome ? BIOME_BACKGROUND_COLORS[underlyingBiome] : undefined)
 		?? 0x000000;
 
 	// Air over a fill has to punch a visible hole in solid material, so it must

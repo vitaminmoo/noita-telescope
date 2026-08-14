@@ -22,7 +22,7 @@ export const GENERATOR_CONFIG = {
     'clouds': { color: 0xff36d5c9, hasStuff: false, wangFile: '../data/wang_tiles/clouds.png', optional: true, name: "Cloudscape" },
     'the_sky': { color: 0xffD3E6F0, hasStuff: false, wangFile: '../data/wang_tiles/the_sky.png', optional: true, name: "The Work (Sky)" },
     'the_end': { color: 0xff3C0F0A, hasStuff: false, wangFile: '../data/wang_tiles/the_end.png', name: "The Work (Hell)" },
-    'boss_victoryroom': { color: 0xff50eed7, hasStuff: false, name: "The Work (Victory Room)" },
+    'boss_victoryroom': { color: 0xff50eed7, fillMaterial: 'templebrickdark_static', fillApprox: true, hasStuff: false, name: "The Work (Victory Room)" },
     'winter_caves': { color: 0xff77A5BD, hasStuff: false, wangFile: '../data/wang_tiles/snowchasm.png', optional: true, name: "Snowy Chasm" },
     'solid_wall_tower_1': { color: 0xff3d3e37, wangFile: '../data/wang_tiles/coalmine.png', name: "Tower (Mines)" },
     'solid_wall_tower_2': { color: 0xff3d3e38, wangFile: '../data/wang_tiles/excavationsite.png', name: "Tower (Coal Mines)" },
@@ -35,23 +35,23 @@ export const GENERATOR_CONFIG = {
     'solid_wall_tower_9': { color: 0xff3d3e3f, wangFile: '../data/wang_tiles/the_end.png', name: "Tower (Hell)" },
     'lake_deep': { color: 0xff1158f1, wangFile: '../data/wang_tiles/water.png', optional: true, name: "Lake" },
     // Extra biomes that don't have wang tiles
-    'excavationsite_cube_chamber': { color: 0xff24888a, name: "Meditation Cube" },
-    'snowcave_secret_chamber': { color: 0xff18a0d6, name: "Snowcave Secret Chamber" },
+    'excavationsite_cube_chamber': { color: 0xff24888a, fillMaterial: 'rock_static_grey', fillApprox: true, name: "Meditation Cube" },
+    'snowcave_secret_chamber': { color: 0xff18a0d6, fillMaterial: 'snowrock_static', fillApprox: true, name: "Snowcave Secret Chamber" },
     'snowcastle_cavern': { color: 0xff775ddb, fillMaterial: 'rock_hard_border', name: "Hiisi Hourglass Shop" },
-    'snowcastle_hourglass_chamber': { color: 0xff18d6d6, name: "Eye Room" },
+    'snowcastle_hourglass_chamber': { color: 0xff18d6d6, fillMaterial: 'rock_static_grey', fillApprox: true, name: "Eye Room" },
     'robot_egg': { color: 0xff9e4302, fillMaterial: 'lava', name: "Robot Egg" },
-    'pyramid_hallway': { color: 0xff167f5f, hasStuff: false, name: "Pyramid (Hallway)" },
+    'pyramid_hallway': { color: 0xff167f5f, fillMaterial: 'templebrickdark_static', fillApprox: true, hasStuff: false, name: "Pyramid (Hallway)" },
     'pyramid_right': { color: 0xff968f96, hasStuff: false, name: "Pyramid (Right)" },
     'pyramid_entrance': { color: 0xff967f5f, hasStuff: false, name: "Pyramid (Entrance)" },
     'pyramid_left': { color: 0xff968f5f, hasStuff: false, name: "Pyramid (Left)" },
     'pyramid_top': { color: 0xffc88f5f, name: "Pyramid (Top)"},
-    'secret_lab': { color: 0xffbaa345, name: "Abandoned Alchemy Lab" },
+    'secret_lab': { color: 0xffbaa345, fillMaterial: 'templebrickdark_static', fillApprox: true, name: "Abandoned Alchemy Lab" },
     'wizardcave_entrance': { color: 0xff804169, name: "Triangle Boss"},
     'dragoncave': { color: 0xff364d24, fillMaterial: 'rock_hard_border', name: "Dragoncave" },
-    'roboroom': { color: 0xff9d893d, name: "Mecha Kolmi Boss Room" },
-    'meatroom': { color: 0xff796620, name: "Meatball Boss Room" },
-    'ghost_secret': { color: 0xff1F3B64, hasStuff: false, name: "Forgotten Boss Room" },
-    'mestari_secret': { color: 0xff1F3B62, hasStuff: false, name: "Throne Room" },
+    'roboroom': { color: 0xff9d893d, fillMaterial: 'rock_static', fillApprox: true, name: "Mecha Kolmi Boss Room" },
+    'meatroom': { color: 0xff796620, fillMaterial: 'meat_static', fillApprox: true, name: "Meatball Boss Room" },
+    'ghost_secret': { color: 0xff1F3B64, fillMaterial: 'templebrickdark_static', fillApprox: true, hasStuff: false, name: "Forgotten Boss Room" },
+    'mestari_secret': { color: 0xff1F3B62, fillMaterial: 'templebrickdark_static', fillApprox: true, hasStuff: false, name: "Throne Room" },
     'temple_altar': { color: 0xff93cb4c, name: "Holy Mountain" }, // Apparently the only one with edge noise??
     'temple_altar_left': { color: 0xff93cb4d, hasStuff: false, name: "Holy Mountain (Left)" },
     'temple_altar_right': { color: 0xff93cb4e, hasStuff: false, name: "Holy Mountain (Right)" },
@@ -79,18 +79,18 @@ export const GENERATOR_CONFIG = {
     //'solid_wall_damage': { color: 0xff684C4C, hasStuff: false, name: "Cursed Rock" }, // Actually got this mixed up, I don't know if this one is used
     'solid_wall_tower': { color: 0xff3f3d3e, fillMaterial: 'rock_static_cursed', hasStuff: false, name: "Cursed Rock" },
     // Orb rooms
-    'orbroom_00': { color: 0xffffd100, hasStuff: false, name: "Orb Room (0)" },
-    'orbroom_01': { color: 0xffffd101, hasStuff: false, name: "Orb Room (1)" },
-    'orbroom_02': { color: 0xffffd102, hasStuff: false, name: "Orb Room (2)" },
-    'orbroom_03': { color: 0xffffd103, hasStuff: false, name: "Orb Room (3)" },
-    'orbroom_04': { color: 0xffffd104, hasStuff: false, name: "Orb Room (4)" },
-    'orbroom_05': { color: 0xffffd105, hasStuff: false, name: "Orb Room (5)" },
-    'orbroom_06': { color: 0xffffd106, hasStuff: false, name: "Orb Room (6)" },
-    'orbroom_07': { color: 0xffffd107, hasStuff: false, name: "Orb Room (7)" },
-    'orbroom_08': { color: 0xffffd108, hasStuff: false, name: "Orb Room (8)" },
-    'orbroom_09': { color: 0xffffd109, hasStuff: false, name: "Orb Room (9)" },
-    'orbroom_10': { color: 0xffffd110, hasStuff: false, name: "Orb Room (10)" },
-    'orbroom_11': { color: 0xffffd111, hasStuff: false, name: "Orb Room (11)" },
+    'orbroom_00': { color: 0xffffd100, fillMaterial: 'templebrickdark_static', fillApprox: true, hasStuff: false, name: "Orb Room (0)" },
+    'orbroom_01': { color: 0xffffd101, fillMaterial: 'templebrickdark_static', fillApprox: true, hasStuff: false, name: "Orb Room (1)" },
+    'orbroom_02': { color: 0xffffd102, fillMaterial: 'templebrickdark_static', fillApprox: true, hasStuff: false, name: "Orb Room (2)" },
+    'orbroom_03': { color: 0xffffd103, fillMaterial: 'templebrickdark_static', fillApprox: true, hasStuff: false, name: "Orb Room (3)" },
+    'orbroom_04': { color: 0xffffd104, fillMaterial: 'templebrickdark_static', fillApprox: true, hasStuff: false, name: "Orb Room (4)" },
+    'orbroom_05': { color: 0xffffd105, fillMaterial: 'templebrickdark_static', fillApprox: true, hasStuff: false, name: "Orb Room (5)" },
+    'orbroom_06': { color: 0xffffd106, fillMaterial: 'templebrickdark_static', fillApprox: true, hasStuff: false, name: "Orb Room (6)" },
+    'orbroom_07': { color: 0xffffd107, fillMaterial: 'templebrickdark_static', fillApprox: true, hasStuff: false, name: "Orb Room (7)" },
+    'orbroom_08': { color: 0xffffd108, fillMaterial: 'templebrickdark_static', fillApprox: true, hasStuff: false, name: "Orb Room (8)" },
+    'orbroom_09': { color: 0xffffd109, fillMaterial: 'templebrickdark_static', fillApprox: true, hasStuff: false, name: "Orb Room (9)" },
+    'orbroom_10': { color: 0xffffd110, fillMaterial: 'templebrickdark_static', fillApprox: true, hasStuff: false, name: "Orb Room (10)" },
+    'orbroom_11': { color: 0xffffd111, fillMaterial: 'templebrickdark_static', fillApprox: true, hasStuff: false, name: "Orb Room (11)" },
     // Static tile
     'biome_watchtower': { color: 0xffb70000, wangFile: '../data/wang_tiles/static/watchtower_fg.png', optional: true, name: "Watchtower" },
     'biome_potion_mimics': { color: 0xffff00fe, wangFile: '../data/wang_tiles/static/potion_mimics_fg.png', name: "Henkevä Temple" },
@@ -99,9 +99,9 @@ export const GENERATOR_CONFIG = {
     'biome_barren': { color: 0xffff00fb, wangFile: '../data/wang_tiles/static/barren_fg.png', optional: true, name: "Barren Temple" },
     // Spliced pixel scene biomes and other useless stuff
     'mountain_lake': { color: 0xfff7cf8d, hasStuff: false, name: "Pond" },
-    'lavalake': { color: 0xff3d5a3d, hasStuff: false, name: "Lava Lake" },
-    'lavalake_pit': { color: 0xff3d5a4f, hasStuff: false, name: "Lava Lake Pit" },
-    'lavalake_racing': { color: 0xff4118d6, hasStuff: false, name: "Racetrack" },
+    'lavalake': { color: 0xff3d5a3d, fillMaterial: 'rock_hard_border', fillApprox: true, hasStuff: false, name: "Lava Lake" },
+    'lavalake_pit': { color: 0xff3d5a4f, fillMaterial: 'rock_hard_border', fillApprox: true, hasStuff: false, name: "Lava Lake Pit" },
+    'lavalake_racing': { color: 0xff4118d6, fillMaterial: 'rock_hard_border', fillApprox: true, hasStuff: false, name: "Racetrack" },
     'mountain_left_stub': { color: 0xff608080, hasStuff: false, name: "Mountain (Left Stub)" },
     'mountain_left_entrance': { color: 0xff208080, hasStuff: false, name: "Mountain (Left Entrance)" },
     'mountain_hall': { color: 0xff204060, hasStuff: false, name: "Mountain (Hall)" },
@@ -111,10 +111,10 @@ export const GENERATOR_CONFIG = {
     'mountain_floating_island': { color: 0xffC08082, hasStuff: false, name: "Mountain (Floating Island)" },
     'mountain_tree': { color: 0xff14E1D7, hasStuff: false, name: "Tree" },
     'solid_wall_hidden_cavern': { color: 0xff42244d, fillMaterial: 'rock_hard_border', hasStuff: false, name: "Hidden Cavern" },
-    'solid_wall_tower_10': { color: 0xff3d3e41, name: "Tower (Reward)" },
+    'solid_wall_tower_10': { color: 0xff3d3e41, fillMaterial: 'templebrickdark_static', fillApprox: true, name: "Tower (Reward)" },
     'bridge': { color: 0xffad8111, hasStuff: false, name: "Bridge" },
     'empty': { color: 0xff48E311, hasStuff: false, name: "Empty" },
-    'snowcave_tunnel': { color: 0xff7be311, hasStuff: false, name: "Snowcave Tunnel" },
+    'snowcave_tunnel': { color: 0xff7be311, fillMaterial: 'rock_hard_border', fillApprox: true, hasStuff: false, name: "Snowcave Tunnel" },
     'watercave': { color: 0xff3046c1, fillMaterial: 'rock_static', hasStuff: false, name: "Dark Cave" },
     'sky_light_injector': { color: 0xfffe0000, hasStuff: false, name: "Sky Light Injector" },
     'teleroom': { color: 0xff5f8fab, fillMaterial: 'rock_hard_border', hasStuff: false, name: "Teleport Room" },
@@ -124,21 +124,21 @@ export const GENERATOR_CONFIG = {
     'friend_4': { color: 0xff6db55d, fillMaterial: 'rock_hard_border', hasStuff: false, name: "Friend Room (4)" },
     'friend_5': { color: 0xff6db55e, fillMaterial: 'rock_hard_border', hasStuff: false, name: "Friend Room (5)" },
     'friend_6': { color: 0xff6db55f, fillMaterial: 'rock_hard_border', hasStuff: false, name: "Friend Room (6)" },
-    'gun_room': { color: 0xff39a760, hasStuff: false, name: "Gun Room" },
-    'null_room': { color: 0xffe17e32, hasStuff: false, name: "Nullification Altar" },
-    'rock_room': { color: 0xff326655, hasStuff: false, name: "Rock Room" },
+    'gun_room': { color: 0xff39a760, fillMaterial: 'templebrickdark_static', fillApprox: true, hasStuff: false, name: "Gun Room" },
+    'null_room': { color: 0xffe17e32, fillMaterial: 'templebrickdark_static', fillApprox: true, hasStuff: false, name: "Nullification Altar" },
+    'rock_room': { color: 0xff326655, fillMaterial: 'templebrickdark_static', fillApprox: true, hasStuff: false, name: "Rock Room" },
     'funroom': { color: 0xff0a95a4, hasStuff: false, name: "Fungal Map" },
-    'song_room': { color: 0xff9d99d1, hasStuff: false, name: "Coral Chest" },
-    'alchemist_secret': { color: 0xff57dace, hasStuff: false, name: "Dark Chest" },
-    'moon_room': { color: 0xff567cb0, hasStuff: false, name: "Moon Room" },
-    'gourd_room': { color: 0xff2e99d1, hasStuff: false, name: "Gourd Room" },
+    'song_room': { color: 0xff9d99d1, fillMaterial: 'templebrickdark_static', fillApprox: true, hasStuff: false, name: "Coral Chest" },
+    'alchemist_secret': { color: 0xff57dace, fillMaterial: 'templebrickdark_static', fillApprox: true, hasStuff: false, name: "Dark Chest" },
+    'moon_room': { color: 0xff567cb0, fillMaterial: 'templebrickdark_static', fillApprox: true, hasStuff: false, name: "Moon Room" },
+    'gourd_room': { color: 0xff2e99d1, fillMaterial: 'templebrickdark_static', fillApprox: true, hasStuff: false, name: "Gourd Room" },
     'greed_room': { color: 0xff3f55d1, hasStuff: false, name: "Greed Room" }, // Not sure this is used
-    'ocarina': { color: 0xff57cace, hasStuff: false, name: "Ocarina" },
-    'essenceroom_air': { color: 0xff157cb8, hasStuff: false, name: "Essence of Air" },
-    'essenceroom': { color: 0xff157cb0, hasStuff: false, name: "Essence of Earth" },
-    'essenceroom_hell': { color: 0xff157cb5, hasStuff: false, name: "Essence of Water" },
-    'essenceroom_alc': { color: 0xff157cb6, hasStuff: false, name: "Essence of Spirits" },
-    'mystery_teleport': { color: 0xff157cb7, hasStuff: false, name: "Mystery Teleport" },
+    'ocarina': { color: 0xff57cace, fillMaterial: 'templebrickdark_static', fillApprox: true, hasStuff: false, name: "Ocarina" },
+    'essenceroom_air': { color: 0xff157cb8, fillMaterial: 'templebrickdark_static', fillApprox: true, hasStuff: false, name: "Essence of Air" },
+    'essenceroom': { color: 0xff157cb0, fillMaterial: 'templebrickdark_static', fillApprox: true, hasStuff: false, name: "Essence of Earth" },
+    'essenceroom_hell': { color: 0xff157cb5, fillMaterial: 'templebrickdark_static', fillApprox: true, hasStuff: false, name: "Essence of Water" },
+    'essenceroom_alc': { color: 0xff157cb6, fillMaterial: 'templebrickdark_static', fillApprox: true, hasStuff: false, name: "Essence of Spirits" },
+    'mystery_teleport': { color: 0xff157cb7, fillMaterial: 'templebrickdark_static', fillApprox: true, hasStuff: false, name: "Mystery Teleport" },
     'roadblock': { color: 0xfff0d517, fillMaterial: 'rock_hard_border', hasStuff: false, name: "Roadblock" },
 };
 
@@ -171,6 +171,15 @@ export const BIOME_COLORS_WITH_TILES = new Set(Object.values(GENERATOR_CONFIG).f
  * One source of truth: the CPU bake (image_processing.js), the GL chunk texture
  * (gl/chunk_textures.js) and the hover readout (app.js) all resolve fills from
  * here, so the two renderers cannot disagree about which chunks are filled.
+ *
+ * `fillApprox: true` marks the one-chunk procedural rooms, where the fill is an
+ * approximation rather than the engine's answer: their <Materials> leave a
+ * low-density band uncovered (that band is air) and a <BitmapCaves> bitmap or a
+ * perlin density field decides where it lands, neither of which telescope
+ * implements. Their pixel scene carves 60-100% of the chunk on top, so a
+ * constant fill of the dominant material is visually close and the residual
+ * error is confined to the ~30% the cave generator would have hollowed out.
+ * Grep the flag to find everything the density field would replace.
  */
 export const FILL_BIOME_MATERIALS = {};
 Object.values(GENERATOR_CONFIG).forEach(conf => {
