@@ -267,7 +267,10 @@ export function prescanSpawnFunctions(tileLayers, isNGP, gameMode='normal') {
 
         // Probably no longer needed
         if (!layer.buffer) {
-            console.log("Skipping layer:", layer);
+            // Fill layers are buffer-less by construction (tile_generator.js
+            // generateFillLayer) and there are ~1300 of them, so skip them
+            // silently; a buffer-less wang layer is still worth a shout.
+            if (!layer.isFill) console.log("Skipping layer:", layer);
             continue;
         }
 
