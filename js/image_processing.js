@@ -69,7 +69,7 @@ if (typeof process === 'undefined' || !process?.versions?.node) {
 // Non-Wang biomes whose tile overlays must ignore edge noise on both sides of a
 // border. Keep one-off map exceptions here rather than embedding them in
 // renderer logic.
-const edgeNoiseOverlayExceptions = new Set([
+export const edgeNoiseOverlayExceptions = new Set([
     'secret_lab', 'wizardcave_entrance', 'roboroom', 'meatroom', 'ghost_secret', 'mestari_secret',
     'boss_arena_top', 'boss_arena',
     'temple_altar', 'temple_altar_left', 'temple_altar_right', 'temple_altar_right_snowcave', 'temple_altar_right_snowcastle', 'temple_wall_ending', 'temple_wall', 'solid_wall_temple', 
@@ -92,14 +92,14 @@ const edgeNoiseOverlayExceptions = new Set([
 // Wang-tile biomes needing the same edge-noise treatment. Keep these separate
 // from the non-Wang exceptions above so their special cases remain easy to
 // review as the map is tuned.
-const transparentBackgroundExceptions = new Set([
+export const transparentBackgroundExceptions = new Set([
     'biome_watchtower', 'biome_potion_mimics', 'biome_darkness', 'biome_boss_sky', 'biome_barren',
     'clouds', 'the_sky'
 ]);
 
 const isEdgeNoiseOverlayException = (biome) => edgeNoiseOverlayExceptions.has(biome);
 
-function getUnwobbledTileOverlayBiome(biomeData, worldX, worldY, isNGP, gameMode) {
+export function getUnwobbledTileOverlayBiome(biomeData, worldX, worldY, isNGP, gameMode) {
     let biomeMap = biomeData.pixels;
     if (worldY < -14 * CHUNK_SIZE) {
         biomeMap = biomeData.heavenPixels;
@@ -128,7 +128,7 @@ function getUnwobbledTileOverlayBiome(biomeData, worldX, worldY, isNGP, gameMode
     };
 }
 
-function getTileOverlayBiome(biomeData, worldX, worldY, isNGP, gameMode, useEdgeNoise) {
+export function getTileOverlayBiome(biomeData, worldX, worldY, isNGP, gameMode, useEdgeNoise) {
     const subChunkX = ((worldX % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
     const subChunkY = ((worldY % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
     const isInterior = subChunkX >= BIOME_EDGE_NOISE_EXTENT && subChunkX <= CHUNK_SIZE - BIOME_EDGE_NOISE_EXTENT &&
@@ -174,8 +174,8 @@ function getTileOverlayBiome(biomeData, worldX, worldY, isNGP, gameMode, useEdge
 // than a simple repeating 51/52 pattern. Mirror that exact layout when mapping
 // a layer-local tile coordinate to its source chunk; otherwise left-side and
 // non-Wang boundaries can be assigned to the wrong layer.
-const chunkRasterStart = (chunk) => Math.trunc(chunk * CHUNK_SIZE / TILE_SIZE);
-const chunkAtRasterTile = (tile) => tile >= 0
+export const chunkRasterStart = (chunk) => Math.trunc(chunk * CHUNK_SIZE / TILE_SIZE);
+export const chunkAtRasterTile = (tile) => tile >= 0
     ? Math.ceil((tile + 1) * TILE_SIZE / CHUNK_SIZE) - 1
     : Math.floor(tile * TILE_SIZE / CHUNK_SIZE);
 
