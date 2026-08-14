@@ -1,0 +1,792 @@
+{
+"height": 1072,
+"textures": {
+"aluminium_oxide.png": [
+468,
+979,
+32,
+32
+],
+"blueblood.png": [
+908,
+1024,
+16,
+16
+],
+"bluefungi.png": [
+924,
+1024,
+16,
+16
+],
+"bone.png": [
+500,
+979,
+32,
+32
+],
+"brass.png": [
+259,
+912,
+48,
+48
+],
+"brick.png": [
+288,
+1056,
+8,
+8
+],
+"cloth.png": [
+888,
+1024,
+20,
+20
+],
+"coal.png": [
+532,
+979,
+32,
+32
+],
+"coal_static.png": [
+0,
+560,
+256,
+256
+],
+"concrete.png": [
+564,
+979,
+32,
+32
+],
+"concrete_wet.png": [
+940,
+1024,
+16,
+16
+],
+"confusion.png": [
+296,
+1056,
+8,
+8
+],
+"copper.png": [
+304,
+1056,
+8,
+8
+],
+"corruption.png": [
+768,
+560,
+128,
+128
+],
+"crystal.png": [
+596,
+979,
+32,
+32
+],
+"crystal_purple.png": [
+628,
+979,
+32,
+32
+],
+"darkness.png": [
+896,
+560,
+128,
+128
+],
+"desert.png": [
+0,
+816,
+96,
+96
+],
+"desert_surface.png": [
+96,
+816,
+96,
+96
+],
+"diamond.png": [
+956,
+1024,
+16,
+16
+],
+"earth.png": [
+691,
+912,
+48,
+45
+],
+"earth_alt.png": [
+256,
+560,
+256,
+256
+],
+"earth_bright.png": [
+739,
+912,
+48,
+45
+],
+"earth_bright_red.png": [
+787,
+912,
+48,
+45
+],
+"earth_rainforest.png": [
+307,
+912,
+48,
+48
+],
+"earth_rainforest_dark.png": [
+355,
+912,
+48,
+48
+],
+"endslime.png": [
+660,
+979,
+32,
+32
+],
+"fun.png": [
+67,
+912,
+64,
+64
+],
+"fungi.png": [
+972,
+1024,
+16,
+16
+],
+"glass.png": [
+692,
+979,
+32,
+32
+],
+"glowrock.png": [
+835,
+912,
+48,
+45
+],
+"gold.png": [
+403,
+912,
+48,
+48
+],
+"gold_dark.png": [
+451,
+912,
+48,
+48
+],
+"grass.png": [
+312,
+1056,
+8,
+8
+],
+"grass_dark.png": [
+320,
+1056,
+8,
+8
+],
+"grass_dry.png": [
+328,
+1056,
+8,
+8
+],
+"grass_frozen.png": [
+336,
+1056,
+8,
+8
+],
+"gunpowder.png": [
+724,
+979,
+32,
+32
+],
+"gunpowder_tnt.png": [
+756,
+979,
+32,
+32
+],
+"honey.png": [
+988,
+1024,
+16,
+16
+],
+"ice.png": [
+788,
+979,
+32,
+32
+],
+"ice_acid.png": [
+820,
+979,
+32,
+32
+],
+"ice_blood.png": [
+852,
+979,
+32,
+32
+],
+"ice_cold.png": [
+884,
+979,
+32,
+32
+],
+"ice_poison.png": [
+916,
+979,
+32,
+32
+],
+"ice_radioactive.png": [
+948,
+979,
+32,
+32
+],
+"ice_slime.png": [
+980,
+979,
+32,
+32
+],
+"lavarock.png": [
+0,
+1024,
+32,
+32
+],
+"magic_gate.png": [
+32,
+1024,
+32,
+32
+],
+"magic_liquid_unstable_telep.png": [
+1004,
+1024,
+16,
+16
+],
+"magic_liquid_weakness.png": [
+0,
+1056,
+16,
+16
+],
+"meat.png": [
+16,
+1056,
+16,
+16
+],
+"meat_burned.png": [
+32,
+1056,
+16,
+16
+],
+"meat_done.png": [
+48,
+1056,
+16,
+16
+],
+"meat_hot.png": [
+64,
+1056,
+16,
+16
+],
+"meat_rotten.png": [
+80,
+1056,
+16,
+16
+],
+"meat_static.png": [
+131,
+912,
+64,
+64
+],
+"meat_warm.png": [
+96,
+1056,
+16,
+16
+],
+"meteor.png": [
+64,
+1024,
+32,
+32
+],
+"midas_precursor.png": [
+96,
+1024,
+32,
+32
+],
+"mimic_liquid.png": [
+344,
+1056,
+8,
+8
+],
+"moss.png": [
+128,
+1024,
+32,
+32
+],
+"moss_rust.png": [
+160,
+1024,
+32,
+32
+],
+"mud.png": [
+864,
+1024,
+24,
+24
+],
+"neon_tube_blood_red.png": [
+112,
+1056,
+16,
+16
+],
+"neon_tube_cyan.png": [
+128,
+1056,
+16,
+16
+],
+"neon_tube_purple.png": [
+144,
+1056,
+16,
+16
+],
+"nest.png": [
+192,
+1024,
+32,
+32
+],
+"polymorph_unstable.png": [
+160,
+1056,
+16,
+16
+],
+"porridge.png": [
+224,
+1024,
+32,
+32
+],
+"pus.png": [
+256,
+1024,
+32,
+32
+],
+"rainbow.png": [
+392,
+1056,
+54,
+1
+],
+"rainbow_gas.png": [
+446,
+1056,
+54,
+1
+],
+"rock.png": [
+883,
+912,
+48,
+45
+],
+"rock_cursed.png": [
+192,
+816,
+96,
+96
+],
+"rock_cursed_green.png": [
+288,
+816,
+96,
+96
+],
+"rock_glow.png": [
+931,
+912,
+48,
+45
+],
+"rock_grey.png": [
+512,
+560,
+256,
+256
+],
+"rock_hard.png": [
+0,
+979,
+48,
+45
+],
+"rock_hard_border.png": [
+48,
+979,
+48,
+45
+],
+"rock_poison.png": [
+96,
+979,
+48,
+45
+],
+"rock_radioactive.png": [
+144,
+979,
+48,
+45
+],
+"rock_static_purple.png": [
+384,
+816,
+96,
+96
+],
+"root_growth.png": [
+288,
+1024,
+32,
+32
+],
+"rust.png": [
+352,
+1056,
+8,
+8
+],
+"salt.png": [
+320,
+1024,
+32,
+32
+],
+"sand.png": [
+480,
+816,
+96,
+96
+],
+"sand_blue.png": [
+176,
+1056,
+16,
+16
+],
+"sand_petrify.png": [
+192,
+979,
+48,
+45
+],
+"sand_surface.png": [
+576,
+816,
+96,
+96
+],
+"silver.png": [
+360,
+1056,
+8,
+8
+],
+"skullrock.png": [
+195,
+912,
+64,
+64
+],
+"slime.png": [
+192,
+1056,
+16,
+16
+],
+"slime_green.png": [
+352,
+1024,
+32,
+32
+],
+"slush.png": [
+672,
+816,
+96,
+96
+],
+"snow.png": [
+768,
+816,
+96,
+96
+],
+"snowrock.png": [
+240,
+979,
+48,
+45
+],
+"soil.png": [
+384,
+1024,
+32,
+32
+],
+"soil_dead.png": [
+416,
+1024,
+32,
+32
+],
+"soil_lush.png": [
+448,
+1024,
+32,
+32
+],
+"soil_lush_dark.png": [
+480,
+1024,
+32,
+32
+],
+"static_magic_material.png": [
+0,
+912,
+67,
+67
+],
+"steel.png": [
+368,
+1056,
+8,
+8
+],
+"steel_rusted.png": [
+864,
+816,
+96,
+96
+],
+"steelpanel.png": [
+499,
+912,
+48,
+48
+],
+"steelpanel_grey.png": [
+547,
+912,
+48,
+48
+],
+"steelpanelfrost.png": [
+595,
+912,
+48,
+48
+],
+"steelpanelmoss.png": [
+643,
+912,
+48,
+48
+],
+"sulphur.png": [
+208,
+1056,
+16,
+16
+],
+"swamp.png": [
+224,
+1056,
+16,
+16
+],
+"templebrick.png": [
+512,
+1024,
+32,
+32
+],
+"templebrick_alt.png": [
+544,
+1024,
+32,
+32
+],
+"templebrick_broken.png": [
+576,
+1024,
+32,
+32
+],
+"templebrick_diamond.png": [
+608,
+1024,
+32,
+32
+],
+"templebrick_golden.png": [
+640,
+1024,
+32,
+32
+],
+"templebrick_red.png": [
+672,
+1024,
+32,
+32
+],
+"templebrick_ruined.png": [
+704,
+1024,
+32,
+32
+],
+"templerock.png": [
+736,
+1024,
+32,
+32
+],
+"templeslab.png": [
+768,
+1024,
+32,
+32
+],
+"test_vine.png": [
+0,
+0,
+797,
+560
+],
+"the_end.png": [
+800,
+1024,
+32,
+32
+],
+"tnt.png": [
+376,
+1056,
+8,
+8
+],
+"vaultrock.png": [
+288,
+979,
+48,
+45
+],
+"vomit.png": [
+384,
+1056,
+8,
+8
+],
+"wax.png": [
+832,
+1024,
+32,
+32
+],
+"wizardstone.png": [
+420,
+979,
+48,
+36
+],
+"wood.png": [
+336,
+979,
+42,
+42
+],
+"wood_vertical.png": [
+378,
+979,
+42,
+42
+],
+"wormmeat.png": [
+240,
+1056,
+16,
+16
+],
+"yellowblood.png": [
+256,
+1056,
+16,
+16
+],
+"yellowblood_gas.png": [
+272,
+1056,
+16,
+16
+]
+},
+"width": 1024
+}

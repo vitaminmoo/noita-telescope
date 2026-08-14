@@ -96,6 +96,42 @@ export function createPaletteTexture(gl, paletteLUT) {
     return tex;
 }
 
+/** RGBA8UI packed materials_gfx atlas (material_atlas.js), sampled with texelFetch. */
+export function createMaterialAtlasTexture(gl, atlas) {
+    const tex = makeTexture(gl);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8UI, atlas.width, atlas.height, 0,
+        gl.RGBA_INTEGER, gl.UNSIGNED_BYTE, atlas.data);
+    return tex;
+}
+
+/** RGBA16UI N x 1 material rects (x, y, w, h) — entry E lives at texel E-1. */
+export function createMaterialMetaTexture(gl, atlas) {
+    const tex = makeTexture(gl);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16UI, atlas.entryCount, 1, 0,
+        gl.RGBA_INTEGER, gl.UNSIGNED_SHORT, atlas.meta);
+    return tex;
+}
+
+/** R8UI 256x1: palette index -> material entry (0 = flat color). */
+export function createPaletteMaterialTexture(gl, table) {
+    const tex = makeTexture(gl);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8UI, PALETTE_SIZE, 1, 0,
+        gl.RED_INTEGER, gl.UNSIGNED_BYTE, table);
+    return tex;
+}
+
+/** R8UI mapWidth x 48: fill chunk -> material entry of its fill material. */
+export function createFillMaterialTexture(gl, table, mapWidth) {
+    const tex = makeTexture(gl);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8UI, mapWidth, table.length / mapWidth, 0,
+        gl.RED_INTEGER, gl.UNSIGNED_BYTE, table);
+    return tex;
+}
+
 /**
  * Uploads a full resource set from buildTerrainResources().
  * @returns {{atlas: WebGLTexture, indirection: WebGLTexture,

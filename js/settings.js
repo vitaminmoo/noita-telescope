@@ -41,6 +41,7 @@ export const appSettings = {
 	fixHolyMountainEdgeNoise: true,
 	rngInfo: false,
 	recolorMaterials: true,
+	materialTextures: true,
 	clearSpawnPixels: false,
 	visitedCoalmineAltShrine: false,
 	excludeTaikasauva: false,
@@ -102,6 +103,7 @@ export function updateSettingsFromUI() {
 		// reached the pixel-scene cache and the terrain stayed recolored. `?? true`
 		// keeps the "no such checkbox" default without overriding an unchecked one.
 		recolorMaterials: document.getElementById('recolor-materials')?.checked ?? true,
+		materialTextures: document.getElementById('material-textures')?.checked ?? true,
 		clearSpawnPixels: document.getElementById('clear-spawn-pixels')?.checked || false,
 		visitedCoalmineAltShrine: document.getElementById('visited-coalmine-alt-shrine')?.checked || false,
 		excludeTaikasauva: document.getElementById('exclude-taikasauva')?.checked || true,

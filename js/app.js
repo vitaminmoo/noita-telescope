@@ -549,6 +549,11 @@ export const app = {
 			this.saveSettings();
 			reloadPixelSceneCache().then(() => this.generate(true, true));
 		};
+		document.getElementById('material-textures').onchange = () => {
+			// Shader uniform only: no regeneration, not even a resource rebuild.
+			this.saveSettings();
+			this.draw();
+		};
 		document.getElementById('debug-biome-overlay-mode').onchange = () => {
 			this.saveSettings();
 			this.tileOverlaysByPW = {}; // Clear cached overlays so they will be regenerated with the new mode
@@ -2319,6 +2324,9 @@ export const app = {
 			pw: this.pw,
 			pwVertical: this.pwVertical,
 			edgeNoise: appSettings.enableEdgeNoise,
+			// Per-cell material textures only mean anything once wang colors
+			// resolve to their material, which is what recolorMaterials does.
+			materialTextures: appSettings.materialTextures && appSettings.recolorMaterials,
 		});
 		if (!glCanvas) return null;
 
@@ -3583,6 +3591,7 @@ export const app = {
 			visitedCoalmineAltShrine: document.getElementById('visited-coalmine-alt-shrine').checked,
 			excludeTaikasauva: document.getElementById('exclude-taikasauva').checked,
 			recolorMaterials: document.getElementById('recolor-materials').checked,
+			materialTextures: document.getElementById('material-textures').checked,
 			clearSpawnPixels: document.getElementById('clear-spawn-pixels').checked,
 			customArt: document.getElementById('custom-art').checked,
 			enableStaticPixelScenes: document.getElementById('enable-static-pixel-scenes').value,
@@ -3673,6 +3682,9 @@ export const app = {
 				document.getElementById('visited-coalmine-alt-shrine').checked = settings.visitedCoalmineAltShrine || false;
 				document.getElementById('exclude-taikasauva').checked = settings.excludeTaikasauva || false;
 				document.getElementById('recolor-materials').checked = settings.recolorMaterials || false;
+				// `?? true` so a settings blob saved before this option existed
+				// keeps the checkbox's default-on state.
+				document.getElementById('material-textures').checked = settings.materialTextures ?? true;
 				document.getElementById('clear-spawn-pixels').checked = settings.clearSpawnPixels || false;
 				document.getElementById('custom-art').checked = settings.customArt || false;
 				document.getElementById('enable-static-pixel-scenes').value = settings.enableStaticPixelScenes || 'none';

@@ -22,8 +22,11 @@
 // displacement run in float32 (the JS reference is float64 — the spike measured
 // ~0.0025% biome flips from that, confined to seam pixels).
 //
-// Not ported: per-cell grain (PERF_PLAN.md 2.4, blocked on an external
-// reference) — grays and materials paint flat, exactly as the CPU bake does.
+// Per-cell material texture (u_matDetail, PERF_PLAN.md 2.4) resolves a fill
+// chunk's or a palette index's material through material_atlas.js and samples
+// materials_gfx at the fragment's absolute world coords, reproducing the color
+// the engine bakes per cell. The gray/white class stays flat: it is a per-biome
+// density resolve, not a single material.
 
 import { VISUAL_TILE_OFFSET_X, VISUAL_TILE_OFFSET_Y } from '../constants.js';
 import { EDGE_SIGNS } from '../edge_noise.js';
@@ -52,6 +55,11 @@ uniform highp usampler2D u_indirTex;    // mapW x 48 RG16UI: r = region slot, g 
 uniform highp isampler2D u_regionTex;   // 2 x N RGBA32I region metadata
 uniform highp usampler2D u_atlasTex;    // R8UI palette-index atlas of every layer buffer
 uniform sampler2D u_paletteTex;         // 256x1 RGBA8: rgb = color, a = paint mode
+uniform highp usampler2D u_matAtlasTex; // RGBA8UI packed materials_gfx textures
+uniform highp usampler2D u_matMetaTex;  // N x 1 RGBA16UI: material rect (x, y, w, h)
+uniform highp usampler2D u_palMatTex;   // 256x1 R8UI: palette index -> material entry
+uniform highp usampler2D u_fgMatTex;    // mapW x 48 R8UI: fill chunk -> material entry
+uniform bool u_matDetail;               // off: every material paints its flat color
 
 // Camera: world coords of screen pixel (0,0) split into an exact integer part
 // and a fraction, so world positions stay exact out to the parallel-world
@@ -102,6 +110,23 @@ bool exceptionAt(ivec2 p) { return (chunkAt(p).a & ${CHUNK_FLAG_EDGE_NOISE_EXCEP
 vec4 chunkForeground(ivec2 p) {
     uvec4 fg = texelFetch(u_fgTex, ivec2(pmod(p.x, u_mapWidth), clamp(p.y, 0, u_maxRow)), 0);
     return vec4(vec3(fg.rgb) / 255.0, 1.0);
+}
+
+// Engine cell color: sample the material texture at absolute world coords,
+// negative-safe modulo (CellFactory_GetCellColor). a==0 texels create no
+// cell in the engine, so they paint nothing.
+bool materialTexel(int entry, ivec2 w, out vec4 color) {
+    uvec4 m = texelFetch(u_matMetaTex, ivec2(entry - 1, 0), 0); // x,y,w,h
+    ivec2 t = ivec2(pmod(w.x, int(m.z)), pmod(w.y, int(m.w)));
+    uvec4 c = texelFetch(u_matAtlasTex, ivec2(int(m.x) + t.x, int(m.y) + t.y), 0);
+    if (c.a == 0u) { color = vec4(0.0); return false; }
+    color = vec4(vec3(c.rgb) / 255.0, 1.0);
+    return true;
+}
+
+// Material entry of a chunk's fill material, on chunkForeground's texel grid.
+uint fillMaterialAt(ivec2 p) {
+    return texelFetch(u_fgMatTex, ivec2(pmod(p.x, u_mapWidth), clamp(p.y, 0, u_maxRow)), 0).r;
 }
 
 // getUnwobbledTileOverlayBiome's cell math (image_processing.js:111-116).
@@ -305,7 +330,17 @@ void main() {
     // because "ignore edge noise" means "use the unwobbled chunk" (which is what
     // overlayBiome leaves in pos), not "paint nothing"; a fill chunk next to a
     // holy-mountain wall is still solid rock in game.
-    if ((cc.a & ${CHUNK_FLAG_FILL}u) != 0u) { outColor = chunkForeground(pos); return; }
+    if ((cc.a & ${CHUNK_FLAG_FILL}u) != 0u) {
+        // Absolute world coords, never the PW-unwrapped sx: the engine bakes each
+        // cell from its own world position, so the pattern runs on across worlds.
+        if (u_matDetail) {
+            uint entry = fillMaterialAt(pos);
+            // A transparent texel leaves outColor at vec4(0) — air, as in game.
+            if (entry > 0u) { materialTexel(int(entry), w, outColor); return; }
+        }
+        outColor = chunkForeground(pos);
+        return;
+    }
     if (ignored) return;
     if ((cc.a & ${CHUNK_FLAG_HAS_TILES}u) == 0u) return;
 
@@ -352,6 +387,10 @@ void main() {
         if ((cc.a & ${CHUNK_FLAG_FG_DEFINED}u) == 0u) return;
         outColor = chunkForeground(pos);
         return;
+    }
+    if (u_matDetail) {
+        uint entry = texelFetch(u_palMatTex, ivec2(int(idx), 0), 0).r;
+        if (entry > 0u) { materialTexel(int(entry), w, outColor); return; }
     }
     outColor = vec4(pal.rgb, 1.0);
 }

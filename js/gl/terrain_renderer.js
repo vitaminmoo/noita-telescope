@@ -26,12 +26,16 @@ import { CHUNK_SIZE, WORLD_CHUNK_CENTER_Y } from '../constants.js';
 import { getWorldCenter, getWorldSize } from '../utils.js';
 import { buildChunkTextures, buildNoiseTable512 } from './chunk_textures.js';
 import { BIOME_MAP_HEIGHT } from './indirection.js';
+import {
+    buildFillMaterialTable, buildPaletteMaterialTable, getMaterialAtlas, initMaterialAtlas,
+} from './material_atlas.js';
 import { buildPaletteLUT } from './palette.js';
 import { TERRAIN_FS, TERRAIN_VS } from './shaders.js';
 import {
-    createChunkTexture, createForegroundTexture, createIndirectionTexture, createNoiseTexture,
-    createPaletteTexture, createRegionAtlasTexture, createRegionMetaTexture, deleteTerrainTextures,
-    maxTextureSize, updatePaletteTexture,
+    createChunkTexture, createFillMaterialTexture, createForegroundTexture, createIndirectionTexture,
+    createMaterialAtlasTexture, createMaterialMetaTexture, createNoiseTexture,
+    createPaletteMaterialTexture, createPaletteTexture, createRegionAtlasTexture,
+    createRegionMetaTexture, deleteTerrainTextures, maxTextureSize, updatePaletteTexture,
 } from './textures.js';
 import { buildTerrainResources } from './terrain_resources.js';
 
@@ -39,6 +43,7 @@ const UNIFORM_NAMES = [
     'u_chunkTex', 'u_fgTex', 'u_noiseTex', 'u_indirTex', 'u_regionTex', 'u_atlasTex', 'u_paletteTex',
     'u_originInt', 'u_originFrac', 'u_invZoom', 'u_screenSize',
     'u_mapWidth', 'u_worldWidth', 'u_centerPx', 'u_baseY', 'u_maxRow', 'u_worldSizeX', 'u_edgeNoise',
+    'u_matAtlasTex', 'u_matMetaTex', 'u_palMatTex', 'u_fgMatTex', 'u_matDetail',
 ];
 
 function compile(gl, type, src) {
@@ -120,6 +125,8 @@ export class GLTerrainRenderer {
         });
         this.canvas = canvas;
         this.gl = gl;
+        // Async; ensureResources' key picks the atlas up on the frame it lands.
+        initMaterialAtlas().catch(err => console.warn('[GL terrain] material atlas unavailable:', err));
         gl.disable(gl.BLEND);
         gl.disable(gl.DEPTH_TEST);
         return true;
@@ -141,7 +148,7 @@ export class GLTerrainRenderer {
         // buildChunkTextures, so the toggle has to reach buildAndUpload or a fill
         // chunk would keep its old color while the CPU bake repainted it.
         const recolorMaterials = opts.lut?.recolorMaterials !== false;
-        const key = `${layers.length}|${isNGP}|${gameMode}|${recolorMaterials}`;
+        const key = `${layers.length}|${isNGP}|${gameMode}|${recolorMaterials}|${!!getMaterialAtlas()}`;
         const same = this.textures && this.sourceKey === key &&
             this.sourceLayers === layers && this.sourceBiomeData === biomeData;
         if (!same) {
@@ -174,6 +181,8 @@ export class GLTerrainRenderer {
             lut: opts.lut,
         });
         const chunkTextures = buildChunkTextures(biomeData, mapWidth);
+        // Null until the atlas fetch lands; the sourceKey then forces a rebuild.
+        const matAtlas = getMaterialAtlas();
 
         deleteTerrainTextures(gl, this.textures);
         this.textures = {
@@ -184,6 +193,12 @@ export class GLTerrainRenderer {
             chunk: createChunkTexture(gl, chunkTextures),
             fg: createForegroundTexture(gl, chunkTextures),
             noise: createNoiseTexture(gl, buildNoiseTable512()),
+            matAtlas: matAtlas && createMaterialAtlasTexture(gl, matAtlas),
+            matMeta: matAtlas && createMaterialMetaTexture(gl, matAtlas),
+            palMat: matAtlas && createPaletteMaterialTexture(gl,
+                buildPaletteMaterialTable(matAtlas, resources.palette)),
+            fgMat: matAtlas && createFillMaterialTexture(gl,
+                buildFillMaterialTable(matAtlas, biomeData, mapWidth), mapWidth),
         };
         this.resources = resources;
 
@@ -222,7 +237,8 @@ export class GLTerrainRenderer {
 
     /**
      * Renders the terrain for one frame.
-     * @param {object} view { width, height, camX, camY, camZ, pw, pwVertical, edgeNoise }
+     * @param {object} view { width, height, camX, camY, camZ, pw, pwVertical, edgeNoise,
+     *                        materialTextures }
      * @returns {HTMLCanvasElement|null} the canvas to blit, or null when unavailable
      */
     render(view) {
@@ -257,6 +273,18 @@ export class GLTerrainRenderer {
             ['u_atlasTex', this.textures.atlas],
             ['u_paletteTex', this.textures.palette],
         ];
+        // The four material textures are one all-or-nothing set: without them
+        // u_matDetail is false and the shader never reaches their texelFetches.
+        const matDetail = !!(view.materialTextures && this.textures.matAtlas && this.textures.matMeta
+            && this.textures.palMat && this.textures.fgMat);
+        if (matDetail) {
+            units.push(
+                ['u_matAtlasTex', this.textures.matAtlas],
+                ['u_matMetaTex', this.textures.matMeta],
+                ['u_palMatTex', this.textures.palMat],
+                ['u_fgMatTex', this.textures.fgMat],
+            );
+        }
         units.forEach(([name, tex], i) => {
             gl.activeTexture(gl.TEXTURE0 + i);
             gl.bindTexture(gl.TEXTURE_2D, tex);
@@ -274,6 +302,7 @@ export class GLTerrainRenderer {
         gl.uniform1i(u.u_maxRow, BIOME_MAP_HEIGHT - 1);
         gl.uniform1i(u.u_worldSizeX, this.worldSizeX);
         gl.uniform1i(u.u_edgeNoise, view.edgeNoise ? 1 : 0);
+        gl.uniform1i(u.u_matDetail, matDetail ? 1 : 0);
 
         gl.drawArrays(gl.TRIANGLES, 0, 3);
         return this.canvas;
