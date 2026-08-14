@@ -2,6 +2,12 @@
 import { injectPixelSceneData, PIXEL_SCENE_DATA, recolorPixelScene, recolorPixelSceneForBiome } from './pixel_scene_generation.js';
 import { createTileOverlaysCheap, createTileOverlays, createTileOverlaysExpanded } from './image_processing.js';
 import { appSettings, updateSettings } from './settings.js';
+import { CHUNK_SIZE } from './constants.js';
+import { EDGE_DECAL_TILE } from './edge_decal_layer.js';
+import { EDGE_DECAL_HALO, initEdgeDecalAtlas, stampEdgeDecals } from './edge_decals.js';
+import { createMaterialField, resolveMaterialRect } from './engine_resolve/material_field.js';
+import { GENERATOR_CONFIG } from './generator_config.js';
+import { getWorldSize } from './utils.js';
 
 let workerBiomeData = null;
 let workerTileLayers = null;
@@ -27,7 +33,62 @@ self.onmessage = async function(e) {
 	else if (data.cmd === 'GENERATE_OVERLAY') {
 		generateOverlayWorker(data.seed, data.ngPlusCount, data.pw, data.pwVertical, data.gameMode);
 	}
+	else if (data.cmd === 'GENERATE_EDGE_DECAL_TILE') {
+		await generateEdgeDecalTileWorker(data);
+	}
 };
+
+// ---------------------------------------------------------------------------
+// Edge decals
+//
+// One world-space RGBA tile per request. The per-pixel material field the stamp
+// reads is a pure function of the world, so it is built once per seed and kept;
+// the 1/10 coverage lattice inside it is the only expensive part (~0.2 s).
+// ---------------------------------------------------------------------------
+let decalField = null;
+let decalFieldKey = null;
+
+async function generateEdgeDecalTileWorker(msg) {
+	const { worldKey, tx, ty, seed, ngPlusCount, gameMode } = msg;
+	let bitmap = null;
+	if (workerTileLayers && workerBiomeData) {
+		await initEdgeDecalAtlas();
+		if (decalFieldKey !== worldKey) {
+			const mapWidth = getWorldSize(ngPlusCount > 0, gameMode);
+			decalField = createMaterialField(workerTileLayers, workerBiomeData,
+				GENERATOR_CONFIG, mapWidth, seed);
+			decalFieldKey = worldKey;
+		}
+		const P = EDGE_DECAL_HALO;
+		const size = EDGE_DECAL_TILE + 2 * P;
+		const x0 = tx * EDGE_DECAL_TILE - P;
+		const y0 = ty * EDGE_DECAL_TILE - P;
+		const mat = resolveMaterialRect(decalField, x0, y0, size, size);
+		// Chunk boundaries sit where (world + grid shift) is a multiple of 512;
+		// both shifts are whole chunks for every shipped map width, but the stamp
+		// clips to its own chunk so pass it rather than assume.
+		const mapWidth = getWorldSize(ngPlusCount > 0, gameMode);
+		const rgba = stampEdgeDecals(mat, size, size, x0, y0, seed, {
+			chunkShiftX: (mapWidth * 256) % CHUNK_SIZE,
+			chunkShiftY: (14 * CHUNK_SIZE) % CHUNK_SIZE,
+		});
+
+		const T = EDGE_DECAL_TILE;
+		const cropped = new Uint8ClampedArray(T * T * 4);
+		for (let row = 0; row < T; row++) {
+			const src = ((row + P) * size + P) * 4;
+			cropped.set(rgba.subarray(src, src + T * 4), row * T * 4);
+		}
+		const canvas = new OffscreenCanvas(T, T);
+		canvas.getContext('2d').putImageData(new ImageData(cropped, T, T), 0, 0);
+		bitmap = canvas.transferToImageBitmap();
+	}
+
+	self.postMessage({
+		type: 'EDGE_DECAL_TILE',
+		worldKey, tx, ty, bitmap,
+	}, bitmap ? [bitmap] : []);
+}
 
 function generatePixelSceneImagesWorker(pixelSceneKeys, variantKeys) {
 	let outputPixelSceneKeys = [];

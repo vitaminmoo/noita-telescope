@@ -1,5 +1,6 @@
 // world_manager.js
 import { app } from './app.js';
+import { putEdgeDecalTile } from './edge_decal_layer.js';
 import { PIXEL_SCENE_DATA, setPixelSceneVariantRebuilder } from './pixel_scene_generation.js';
 import { appSettings, updateSettingsFromUI } from './settings.js';
 
@@ -29,6 +30,9 @@ overlayWorker.onmessage = async (e) => {
 			pendingVariantRebuilds.delete(`${key}/${variantKey}`);
 		}
 		app.draw();
+	}
+	else if (msg.type === 'EDGE_DECAL_TILE') {
+		if (msg.bitmap && putEdgeDecalTile(msg.worldKey, msg.tx, msg.ty, msg.bitmap)) app.draw();
 	}
 	else if (msg.type === 'OVERLAY_GENERATED') {
 		const pwKey = `${msg.pw},${msg.pwVertical}`;
@@ -155,6 +159,19 @@ export function getOrGenerateOverlay(pw, pwVertical) {
 	};
 
 	overlayWorker.postMessage(payload);
+}
+
+/** Asks the worker for one world-space edge-decal tile (edge_decal_layer.js). */
+export function requestEdgeDecalTile(worldKey, tx, ty) {
+	overlayWorker.postMessage({
+		cmd: 'GENERATE_EDGE_DECAL_TILE',
+		worldKey,
+		tx,
+		ty,
+		seed: app.seed,
+		ngPlusCount: app.ngPlusCount,
+		gameMode: app.gameMode
+	});
 }
 
 export function isOverlayPending(pw, pwVertical) {

@@ -21,7 +21,8 @@ import { addStaticPixelScenes } from './static_spawns.js';
 import { NollaPrng } from './nolla_prng.js';
 import { appSettings, updateSettings, updateSpellFlags, updateSpecialFlags, RENDER_LAYERS, readRenderLayersFromUI } from './settings.js';
 import { syncWorldWorkerData, getOrGenerateWorld, syncSettingsToWorldWorker } from './world_manager.js';
-import { syncOverlayWorkerData, getOrGenerateOverlay, syncSettingsToOverlayWorker, recolorPixelScenes, invalidatePendingOverlays } from './overlay_manager.js';
+import { syncOverlayWorkerData, getOrGenerateOverlay, syncSettingsToOverlayWorker, recolorPixelScenes, invalidatePendingOverlays, requestEdgeDecalTile } from './overlay_manager.js';
+import { drawEdgeDecals, invalidateEdgeDecals, pendingEdgeDecalTiles } from './edge_decal_layer.js';
 import { getBiomeModifiers, getStartingWeather } from './misc_generation.js';
 import { getCauldronState, getCauldronVariation } from './cauldron.js';
 import { WAND_TIERS } from './wand_config.js';
@@ -557,6 +558,11 @@ export const app = {
 		document.getElementById('engine-terrain').onchange = () => {
 			// The GL resource key includes the flag, so the next draw builds (or
 			// drops) the engine lattices; no worker regeneration involved.
+			this.saveSettings();
+			this.draw();
+		};
+		document.getElementById('edge-decals').onchange = () => {
+			// Cached tiles stay valid, so turning it back on costs nothing.
 			this.saveSettings();
 			this.draw();
 		};
@@ -1612,6 +1618,7 @@ export const app = {
 			this.pixelScenesByPW = {};
 			this.poisByPW = {};
 			this.tileOverlaysByPW = {};
+			invalidateEdgeDecals();
 			this.worldsInView = new Set(['0,0']);
 			// If generating tiles for the first time, reset the position so that the overlays are actually generated properly!
 			this.pw = 0;
@@ -1726,6 +1733,7 @@ export const app = {
 			this.pixelScenesByPW = {};
 			this.poisByPW = {};
 			this.tileOverlaysByPW = {};
+			invalidateEdgeDecals();
 
 			//console.log("Synching data to workers...");
 			syncSearchWorkerData();
@@ -3001,6 +3009,17 @@ export const app = {
 		}
 		if (prof) markLayer(prof, 'tileOverlays');
 
+		// Layer 4b
+		// Edge decals: the sprite band the engine bakes into cell colors along
+		// material borders. It belongs on the terrain, under the pixel scenes,
+		// because that is where the game puts it. Only the engine-resolved GL
+		// terrain has per-pixel material identity to hang it off, hence the gate.
+		if (L.tileOverlays && appSettings.edgeDecals && appSettings.engineTerrain
+			&& appSettings.terrainRenderer === 'gl' && biomeOverlayMode !== 'none') {
+			drawEdgeDecals(this.ctx, this, viewRect, requestEdgeDecalTile);
+			if (prof) markLayer(prof, 'edgeDecals');
+		}
+
 		// Layer 5
 		// Pixel scenes
 		if (L.pixelScenes) {
@@ -3609,6 +3628,11 @@ export const app = {
 		return null;
 	},
 
+	// Exposed for the render harness: how many decal tiles are still in flight.
+	edgeDecalsPending() {
+		return pendingEdgeDecalTiles();
+	},
+
 	saveSettings() {
 		const settings = {
 			//seed: document.getElementById('seed').value,
@@ -3625,6 +3649,7 @@ export const app = {
 			recolorMaterials: document.getElementById('recolor-materials').checked,
 			materialTextures: document.getElementById('material-textures').checked,
 			engineTerrain: document.getElementById('engine-terrain').checked,
+			edgeDecals: document.getElementById('edge-decals').checked,
 			clearSpawnPixels: document.getElementById('clear-spawn-pixels').checked,
 			customArt: document.getElementById('custom-art').checked,
 			enableStaticPixelScenes: document.getElementById('enable-static-pixel-scenes').value,
@@ -3719,6 +3744,7 @@ export const app = {
 				// keeps the checkbox's default-on state.
 				document.getElementById('material-textures').checked = settings.materialTextures ?? true;
 				document.getElementById('engine-terrain').checked = settings.engineTerrain || false;
+				document.getElementById('edge-decals').checked = settings.edgeDecals ?? true;
 				document.getElementById('clear-spawn-pixels').checked = settings.clearSpawnPixels || false;
 				document.getElementById('custom-art').checked = settings.customArt || false;
 				document.getElementById('enable-static-pixel-scenes').value = settings.enableStaticPixelScenes || 'none';
