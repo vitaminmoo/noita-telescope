@@ -97,7 +97,11 @@ export function updateSettingsFromUI() {
 		blockEdgeSpawns: document.getElementById('debug-block-edge-spawns')?.checked || false,
 		fixHolyMountainEdgeNoise: document.getElementById('fix-holy-mountain-edge-noise')?.checked || true,
 		rngInfo: document.getElementById('rng-info')?.checked || false,
-		recolorMaterials: document.getElementById('recolor-materials')?.checked || true,
+		// `|| true` here read "false means missing" and pinned the setting on: every
+		// generate() calls this (world_manager.js:93), so unchecking the box only
+		// reached the pixel-scene cache and the terrain stayed recolored. `?? true`
+		// keeps the "no such checkbox" default without overriding an unchecked one.
+		recolorMaterials: document.getElementById('recolor-materials')?.checked ?? true,
 		clearSpawnPixels: document.getElementById('clear-spawn-pixels')?.checked || false,
 		visitedCoalmineAltShrine: document.getElementById('visited-coalmine-alt-shrine')?.checked || false,
 		excludeTaikasauva: document.getElementById('exclude-taikasauva')?.checked || true,

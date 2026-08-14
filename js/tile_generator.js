@@ -3,7 +3,6 @@ import { stbhw_generate_image, stbhw_build_tileset_from_image, StbhwTileset, stb
 import { applyMainBiomeHack, applyCoalmineHack, applyPostprocessingHacks, undoCoalmineHack } from './biome_hacks.js';
 import { blockOutRooms } from './pixel_scene_generation.js';
 import { findMinPath, getPathStartSegment, usesMinesTemplate } from './pathfinding.js';
-import { terrainFillColor } from './image_processing.js';
 import { CHUNK_SIZE, TILE_SIZE } from './constants.js';
 
 //import { spawnWandAltar, spawnPotionAltar, spawnChest, spawnHeart } from './spell_generator.js';
@@ -275,7 +274,6 @@ function generateFillLayer(biomeName, config, cx, cy) {
         buffer: null,
         isFill: true,
         fillMaterial: config.fillMaterial,
-        fillColor: terrainFillColor(config.color & 0xffffff),
         width: width,
         mapH: height,
         tileIndices: null,

@@ -39,7 +39,9 @@ export const CHUNK_FLAG_FG_DEFINED = 1 << 3;
  * Which chunks those are, and what they paint, comes from GENERATOR_CONFIG's
  * `fillMaterial` (FILL_BIOME_COLORS) and image_processing's terrainFillColor —
  * the same two things the CPU bake reads, so the renderers cannot diverge on
- * either the set or the color.
+ * either the set or the color. terrainFillColor follows recolorMaterials, so
+ * this texture is only valid for the setting it was built under, which is why
+ * terrain_renderer's rebuild key carries it.
  *
  * Game data (e.g. data/biome/solid_wall.xml, data/biome/tower/solid_wall_tower.xml):
  * these biomes do not set `noise_biome_edges` (default 1 -> wobbles) or

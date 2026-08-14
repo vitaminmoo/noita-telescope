@@ -135,7 +135,13 @@ export class GLTerrainRenderer {
         if (!layers || !layers.length || !biomeData) return false;
 
         const { isNGP = false, gameMode = 'normal' } = opts;
-        const key = `${layers.length}|${isNGP}|${gameMode}`;
+        // recolorMaterials is in the key because the per-chunk fg texture bakes
+        // terrainFillColor, which follows the setting. Unlike the palette LUT
+        // (one 1 KiB re-upload, updateLUT below) that texture is only written by
+        // buildChunkTextures, so the toggle has to reach buildAndUpload or a fill
+        // chunk would keep its old color while the CPU bake repainted it.
+        const recolorMaterials = opts.lut?.recolorMaterials !== false;
+        const key = `${layers.length}|${isNGP}|${gameMode}|${recolorMaterials}`;
         const same = this.textures && this.sourceKey === key &&
             this.sourceLayers === layers && this.sourceBiomeData === biomeData;
         if (!same) {

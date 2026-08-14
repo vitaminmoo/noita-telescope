@@ -1,7 +1,7 @@
 import { BIOME_EDGE_NOISE_EXTENT, BIOME_EDGE_NOISE_PADDING_TILES, CHUNK_SIZE, TILE_SIZE, WORLD_CHUNK_CENTER_Y } from "./constants.js";
 import { BIOME_COLOR_TO_NAME, BIOME_COLORS_WITH_TERRAIN, FILL_BIOME_MATERIALS, GENERATOR_CONFIG } from "./generator_config.js";
 import { loadPNG } from "./png_sanitizer.js";
-import { MATERIAL_COLOR_CONVERSION, TEXTURE_COLORS } from "./potion_config.js";
+import { MATERIAL_COLOR_CONVERSION, MATERIAL_WANG_COLORS } from "./potion_config.js";
 import { appSettings } from "./settings.js";
 import { bandBiomeMap, getBiomeAtWorldCoordinates, getWorldSize, tileToWorldCoordinates } from "./utils.js";
 
@@ -66,32 +66,32 @@ if (typeof process === 'undefined' || !process?.versions?.node) {
     await initBiomeColors();
 }
 
-/**
- * How far biome_map_foreground.png may sit from the fill material's own texture
- * color and still be treated as a deliberate, hand-tuned rendition of it.
- *
- * The foreground map is unauthored for most tileless biomes: its pixel is either
- * a copy of the biome-map color (lava #ff6a02, robot_egg #9e4302) or a sample of
- * whatever was above the chunk (roadblock #60b8ff is sky). Painting a fill with
- * those would be wrong, and for the sky-sampled ones absurd. But where the
- * author *did* pick a color it is within a few units of the material -- 4 for
- * solid_wall, 12 for solid_wall_tower, 13 for solid_wall_temple -- and keeping
- * it means fills recolor consistently with every other chunk on the map.
- *
- * So: the authored color wins when it is recognisably the material, otherwise
- * the material's own texture_color does. At 24 that splits 22 fill biomes into
- * 17 authored and 5 material (boss_arena, roadblock, robot_egg, temple_wall,
- * water) -- exactly the ones whose foreground pixel is demonstrably not the
- * material.
- */
-const FILL_COLOR_AUTHORED_TOLERANCE = 24;
-
 export const channelDistance = (a, b) => Math.max(
     Math.abs(((a >> 16) & 0xff) - ((b >> 16) & 0xff)),
     Math.abs(((a >> 8) & 0xff) - ((b >> 8) & 0xff)),
     Math.abs((a & 0xff) - (b & 0xff)));
 
+/**
+ * The color telescope draws one material with, under the current
+ * recolorMaterials setting.
+ *
+ * This is the map's one material -> color rule, lifted out of the three places
+ * that already implemented it: createTileOverlays* below and
+ * recolorPixelSceneForBiome (pixel_scene_generation.js) both take a wang color
+ * out of a buffer and paint MATERIAL_COLOR_CONVERSION's answer when the setting
+ * is on and the raw wang color when it is off, and gl/palette.js:buildPaletteLUT
+ * bakes the same rule into the LUT. A fill biome has no buffer to read a wang
+ * color out of -- it has a material name -- so it goes in through
+ * MATERIAL_WANG_COLORS instead and comes out the same side.
+ */
+export function materialDisplayColor(material) {
+    const wangColor = parseInt(MATERIAL_WANG_COLORS[material], 16) & 0xffffff;
+    if (!appSettings.recolorMaterials) return wangColor;
+    return MATERIAL_COLOR_CONVERSION[wangColor] ?? wangColor;
+}
+
 const fillColorCache = new Map();
+let fillColorCacheRecolor = null;
 
 /**
  * The color a constant-material fill biome paints, or undefined for any biome
@@ -100,19 +100,27 @@ const fillColorCache = new Map();
  * Single source of truth for the CPU bake, the GL chunk texture, the pixel-scene
  * recolor and the hover readout, so none of them can paint a fill chunk
  * differently from the others.
+ *
+ * It deliberately ignores the biome's biome_map_foreground.png pixel. That map
+ * is unauthored for the tileless biomes -- it is a copy of the biome-map color
+ * (lava #ff6a02, robot_egg #9e4302), a sample of whatever was above the chunk
+ * (roadblock #60b8ff is sky), or a darkened near-miss of the material -- so
+ * honoring it painted one material many different colors: rock_hard_border
+ * ("extremely dense rock") came out nine, #2b1914 in solid_wall, #2b2214 in
+ * dragoncave, #37211b in the friend rooms, against the #271612 every pixel scene
+ * paints it; templebrickdark_static came out seventeen. None of them moved when
+ * the user turned recolorMaterials off.
  */
 export function terrainFillColor(biomeColor) {
     const material = FILL_BIOME_MATERIALS[biomeColor];
     if (material === undefined) return undefined;
+    if (fillColorCacheRecolor !== appSettings.recolorMaterials) {
+        fillColorCache.clear();
+        fillColorCacheRecolor = appSettings.recolorMaterials;
+    }
     let color = fillColorCache.get(biomeColor);
     if (color === undefined) {
-        // Same table MATERIAL_COLOR_CONVERSION recolors wang materials through,
-        // so a fill and a wang tile of the same material come out identical.
-        const textureColor = parseInt(TEXTURE_COLORS[material], 16) & 0xffffff;
-        const authored = TILE_FOREGROUND_COLORS[biomeColor];
-        color = (authored !== undefined && channelDistance(authored, textureColor) <= FILL_COLOR_AUTHORED_TOLERANCE)
-            ? authored
-            : textureColor;
+        color = materialDisplayColor(material);
         fillColorCache.set(biomeColor, color);
     }
     return color;
