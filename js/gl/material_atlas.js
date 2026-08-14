@@ -77,6 +77,31 @@ export function getMaterialAtlas() {
     return _atlas;
 }
 
+/** Material entry index (1-based, 0 = no texture) for a material name. */
+export function materialAtlasEntry(atlas, name) {
+    return (atlas && name && atlas.entryByMaterial.get(name)) || 0;
+}
+
+/** Negative-safe modulo, as the engine's texel wrap does it. */
+const pmod = (v, m) => ((v % m) + m) % m;
+
+/**
+ * The engine's baked cell color for a textured material at absolute world
+ * coordinates: materials_gfx/<texture>.png[(x mod w + w) mod w, ...], the same
+ * rule the fragment shader's materialTexel() runs (CellFactory_GetCellColor
+ * @0x007044a0).
+ *
+ * Returns 0xRRGGBB, or -1 for a transparent texel — the engine creates no cell
+ * there, so the caller must paint nothing rather than paint black.
+ */
+export function materialTexelRGB(atlas, entry, worldX, worldY) {
+    const m = (entry - 1) * 4;
+    const rx = atlas.meta[m], ry = atlas.meta[m + 1], rw = atlas.meta[m + 2], rh = atlas.meta[m + 3];
+    const o = ((ry + pmod(worldY, rh)) * atlas.width + (rx + pmod(worldX, rw))) * 4;
+    if (atlas.data[o + 3] === 0) return -1;
+    return (atlas.data[o] << 16) | (atlas.data[o + 1] << 8) | atlas.data[o + 2];
+}
+
 /** Material entry index for a raw 0xRRGGBB wang color (0 = no texture). */
 function entryForWangColor(atlas, raw) {
     const name = MATERIAL_COLOR_LOOKUP[raw.toString(16).padStart(6, '0')];
