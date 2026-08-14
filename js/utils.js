@@ -173,14 +173,23 @@ const PROBE_Y = new Int32Array(8);
 
 const colorIneligible = (color) => biomeEdgeNoiseFlag(color, 'noise_biome_edges') === 0;
 
+// Picks the biome map for a world Y: the map itself, or one of the two row
+// broadcasts standing in for the engine's vertical clamp.
+//
+// BiomeGrid_GetChunkAt clamps the chunk row to [0, 47], so everything above the
+// map resolves to row 0 and everything below it to row 47 -- which is exactly what
+// biome_generator.js bakes into heavenPixels / hellPixels. Map row y covers world
+// Y (y - 14) * 512 ... + 511, so the map owns world Y -7168 ... 17407 and 17408 is
+// the *first* row of the hell band. The old `> 34 * 512` test left that one pixel
+// row on the main map, where the modulo wrap sent it back to map row 0.
+export function bandBiomeMap(biomeData, worldY) {
+    if (worldY < -WORLD_CHUNK_CENTER_Y * CHUNK_SIZE) return biomeData.heavenPixels;
+    if (worldY >= (48 - WORLD_CHUNK_CENTER_Y) * CHUNK_SIZE) return biomeData.hellPixels;
+    return biomeData.pixels;
+}
+
 export function getBiomeAtWorldCoordinates(biomeData, worldX, worldY, isNGP = false, gameMode = 'normal', useEdgeNoise = false) {
-    let biomeMap = biomeData.pixels;
-    if (worldY < -14*512) {
-        biomeMap = biomeData.heavenPixels;
-    }
-    else if (worldY > 34*512) {
-        biomeMap = biomeData.hellPixels;
-    }
+    const biomeMap = bandBiomeMap(biomeData, worldY);
     const mapWidth = getWorldSize(isNGP, gameMode);
     // Convert to positions mod world size
     const worldSize = mapWidth * 512;
@@ -303,9 +312,7 @@ export function getResolvedBiome(biomeData, worldX, worldY, isNGP = false, gameM
     // and a simplified +/- chunk-offset path aimed at general biome lookup.
     // getResolvedBiome computes the wobble target chunk directly from the noise
     // branch after eligibility checks.
-    let biomeMap = biomeData.pixels;
-    if (worldY < -14 * 512) biomeMap = biomeData.heavenPixels;
-    else if (worldY > 34 * 512) biomeMap = biomeData.hellPixels;
+    const biomeMap = bandBiomeMap(biomeData, worldY);
 
     const mapWidth = getWorldSize(isNGP, gameMode);
     const mapHeight = 48;

@@ -3,7 +3,7 @@ import { BIOME_COLOR_TO_NAME, BIOME_COLORS_WITH_TERRAIN, FILL_BIOME_MATERIALS, G
 import { loadPNG } from "./png_sanitizer.js";
 import { MATERIAL_COLOR_CONVERSION, TEXTURE_COLORS } from "./potion_config.js";
 import { appSettings } from "./settings.js";
-import { getBiomeAtWorldCoordinates, getWorldSize, tileToWorldCoordinates } from "./utils.js";
+import { bandBiomeMap, getBiomeAtWorldCoordinates, getWorldSize, tileToWorldCoordinates } from "./utils.js";
 
 // Used for setting background color...
 
@@ -158,13 +158,7 @@ export const transparentBackgroundExceptions = new Set([
 const isEdgeNoiseOverlayException = (biome) => edgeNoiseOverlayExceptions.has(biome);
 
 export function getUnwobbledTileOverlayBiome(biomeData, worldX, worldY, isNGP, gameMode) {
-    let biomeMap = biomeData.pixels;
-    if (worldY < -14 * CHUNK_SIZE) {
-        biomeMap = biomeData.heavenPixels;
-    }
-    else if (worldY > 34 * CHUNK_SIZE) {
-        biomeMap = biomeData.hellPixels;
-    }
+    const biomeMap = bandBiomeMap(biomeData, worldY);
 
     const mapWidth = getWorldSize(isNGP, gameMode);
     const worldWidth = mapWidth * CHUNK_SIZE;
