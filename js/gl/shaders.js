@@ -25,6 +25,7 @@
 // Not ported: per-cell grain (PERF_PLAN.md 2.4, blocked on an external
 // reference) — grays and materials paint flat, exactly as the CPU bake does.
 
+import { VISUAL_TILE_OFFSET_X, VISUAL_TILE_OFFSET_Y } from '../constants.js';
 import { EDGE_SIGNS } from '../edge_noise.js';
 import { CHUNK_FLAG_EDGE_NOISE_EXCEPTION, CHUNK_FLAG_FG_DEFINED, CHUNK_FLAG_FILL, CHUNK_FLAG_HAS_TILES, CHUNK_FLAG_NOISE_INELIGIBLE } from './chunk_textures.js';
 import { NO_REGION } from './indirection.js';
@@ -70,6 +71,11 @@ uniform bool u_edgeNoise;
 
 const int CHUNK = 512;
 const int TILE = 10;
+// constants.js VISUAL_TILE_OFFSET_*: every layer anchor satisfies
+// worldX = -u_centerPx + VIS_X + 10*rasterTile (verified for all 70x48 chunk
+// bases x {normal,nightmare} x {NG0,NG+}), which is what rasterChunk inverts.
+const int VIS_X = ${VISUAL_TILE_OFFSET_X};
+const int VIS_Y = ${VISUAL_TILE_OFFSET_Y};
 const int BAND = 42;        // BIOME_EDGE_NOISE_EXTENT
 // GetTrueChunkPosIdAt hardcodes 70 even in NG+ (edge_noise.js:124 "Actually
 // this makes no difference anyway"). Deliberately NOT u_mapWidth.
@@ -184,8 +190,28 @@ ivec2 biomeOffset(int wx, int wy) {
     return ivec2(dX * sX, dY * sY);
 }
 
+// Chunk that OWNS the region-buffer content at a world coordinate.
+//
+// Region buffers are masked chunk by chunk on the engine's *tile raster* grid
+// (image_processing.js chunkRasterStart = trunc(51.2 * chunk), applyMasking's
+// 51/51/51/51/52 column runs), not on the 512-px chunk grid. Because every
+// layer anchor satisfies  worldX = -u_centerPx + VISUAL_TILE_OFFSET + 10*raster,
+// chunk c's unmasked content begins 2*(c mod 5) px *before* c's true 512-px
+// boundary. Picking the region on the 512-px grid therefore samples chunk c-1's
+// region inside that 0..8 px sliver, where applyMasking already zeroed the
+// buffer -> a dead-straight transparent seam at every region border (visible as
+// gaps along the rainforest / rainforest_open borders). The CPU bake has no such
+// seam: it picks the layer with chunkAtRasterTile and only the *colors* with
+// getTileOverlayBiome, so the region lookup below uses this grid while the whole
+// biome/wobble chain stays on the true grid.
+int rasterChunk(int world, int base, int visualOffset) {
+    int t = fdiv(world + base - visualOffset, TILE);
+    // chunkAtRasterTile (image_processing.js:178-180).
+    return t >= 0 ? ((t + 1) * TILE + CHUNK - 1) / CHUNK - 1 : fdiv(t * TILE, CHUNK);
+}
+
 // getBiomeAtWorldCoordinates with useEdgeNoise = true
-void biomeAt(int wx, int wy, out ivec2 fpos, out ivec2 opos) {
+void biomeAt(int wx, int wy, out ivec2 fpos, out ivec2 opos, out ivec2 applied) {
     ivec2 o = unwob(wx, wy);
     int sbx = pmod(wx, CHUNK);
     int sby = pmod(wy, CHUNK);
@@ -225,16 +251,20 @@ void biomeAt(int wx, int wy, out ivec2 fpos, out ivec2 opos) {
         }
         if (pc > 0 && !found) skip = true;
     }
-    if (skip) { bX = o.x; bY = o.y; }
+    if (skip) { bX = o.x; bY = o.y; off = ivec2(0); }
     fpos = ivec2(bX, bY);
     opos = o;
+    // The wobble in *chunk* units, so the region lookup can apply the same shift
+    // to the raster-grid chunk. Y is clamped, X wraps, so report what landed.
+    applied = ivec2(off.x, clamp(o.y + off.y, 0, u_maxRow) - o.y);
 }
 
 // getTileOverlayBiome. u_edgeNoise is per layer on the CPU; here the layer is
 // whatever region covers the resolved chunk, so an exception biome under the
 // fragment is the same condition (image_processing.js:331).
-void overlayBiome(int wx, int wy, out ivec2 pos, out bool ignored) {
+void overlayBiome(int wx, int wy, out ivec2 pos, out bool ignored, out ivec2 applied) {
     ignored = false;
+    applied = ivec2(0);
     pos = unwob(wx, wy);
     if (!u_edgeNoise) return;
     int scx = pmod(wx, CHUNK);
@@ -251,8 +281,9 @@ void overlayBiome(int wx, int wy, out ivec2 pos, out bool ignored) {
 
     ivec2 fpos;
     ivec2 opos;
-    biomeAt(wx, wy, fpos, opos);
-    if (!exceptionAt(fpos) && !exceptionAt(opos)) { pos = fpos; return; }
+    ivec2 foff;
+    biomeAt(wx, wy, fpos, opos, foff);
+    if (!exceptionAt(fpos) && !exceptionAt(opos)) { pos = fpos; applied = foff; return; }
     ignored = true;
 }
 
@@ -270,7 +301,8 @@ void main() {
 
     ivec2 pos;
     bool ignored;
-    overlayBiome(w.x, w.y, pos, ignored);
+    ivec2 wobbleOff;
+    overlayBiome(w.x, w.y, pos, ignored, wobbleOff);
 
     uvec4 cc = chunkAt(pos);
     // Constant-material fill biome: every cell the engine paints there is the
@@ -283,15 +315,20 @@ void main() {
     if (ignored) return;
     if ((cc.a & ${CHUNK_FLAG_HAS_TILES}u) == 0u) return;
 
-    uint slot = texelFetch(u_indirTex, pos, 0).r;
+    // The engine's whole-image mod-wrap, in the parallel world's own frame:
+    // region anchors are PW-0 world coords, so undo the PW stride first.
+    int sx = w.x - pwX * u_worldSizeX;
+
+    // Region ownership follows the buffers' own masking grid (rasterChunk), not
+    // the 512-px chunk grid, shifted by the same wobble the biome chain applied.
+    ivec2 rpos = ivec2(pmod(rasterChunk(sx, u_centerPx, VIS_X) + wobbleOff.x, u_mapWidth),
+                       clamp(rasterChunk(w.y, u_baseY, VIS_Y) + wobbleOff.y, 0, u_maxRow));
+    uint slot = texelFetch(u_indirTex, rpos, 0).r;
     if (slot == ${NO_REGION}u) return;
 
     ivec4 m0 = texelFetch(u_regionTex, ivec2(0, int(slot)), 0);  // atlasX, atlasY, width, mapH
     ivec4 m1 = texelFetch(u_regionTex, ivec2(1, int(slot)), 0);  // originX, originY, flags, biomeColor
 
-    // The engine's whole-image mod-wrap, in the parallel world's own frame:
-    // region anchors are PW-0 world coords, so undo the PW stride first.
-    int sx = w.x - pwX * u_worldSizeX;
     int lx = pmod(fdiv(sx - m1.x, TILE), m0.z);
     int ly = pmod(fdiv(w.y - m1.y, TILE), m0.w);
     uint idx = texelFetch(u_atlasTex, ivec2(m0.x + lx, m0.y + ly), 0).r;
