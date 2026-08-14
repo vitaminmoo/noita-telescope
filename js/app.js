@@ -31,6 +31,19 @@ import { setupProgressUI, updateUsedSpellProgress } from './progress.js';
 import { renderStars } from './star_decorations.js';
 import { getFungalShifts } from './fungal_shifts.js';
 import { pickAlchemyMaterials } from './alchemy.js';
+import { BACKGROUND_VOID, backgroundLayerColor } from './biome_backgrounds.js';
+
+// Paint one cell of a recolor-map canvas. `color` is either an RGB int or
+// BACKGROUND_VOID, which the engine leaves empty (biomes with no
+// background_image) and which we write as fully transparent so the canvas
+// backdrop shows through.
+function writeBackgroundPixel(imageData, i, color) {
+	const isVoid = color === BACKGROUND_VOID;
+	imageData.data[i*4+0] = isVoid ? 0 : (color >> 16) & 0xFF;
+	imageData.data[i*4+1] = isVoid ? 0 : (color >> 8) & 0xFF;
+	imageData.data[i*4+2] = isVoid ? 0 : color & 0xFF;
+	imageData.data[i*4+3] = isVoid ? 0 : 255;
+}
 
 function getPoiRadius(poi, zoom) {
 	let radius = POI_RADIUS;
@@ -1833,6 +1846,15 @@ export const app = {
 	},
 
 	renderRecolorMap() {
+		// The recolorOffscreen* canvases and the recolorOffscreen*Buffer arrays
+		// deliberately hold *different* colors:
+		//   * the buffers keep the per-biome BIOME_COLOR_LOOKUP color, because they
+		//     are the reference data for tile overlays (image_processing.js) and
+		//     pixel-scene gray fills (pixel_scene_generation.js), which want biome
+		//     identity;
+		//   * the canvases are only read by the biomeBackground draw, so they get the
+		//     engine's keying: one color per background_image, void where the biome
+		//     has none. See js/biome_backgrounds.js.
 		// Since we can't use getImageData, we can recreate a buffer as well...
 		this.recolorOffscreenBuffer = new Uint8Array(this.w * this.h * 3); // RGB only, no alpha needed since it's always 255
 		this.recolorOffscreenHeavenBuffer = new Uint8Array(this.w * this.h * 3);
@@ -1855,8 +1877,12 @@ export const app = {
 		const surfaceLevel = 14;
 		
 		for (let i = 0; i < this.biomeData.pixels.length; i++) {
-			let color = this.biomeData.pixels[i] & 0xFFFFFF;
+			const biomeColor = this.biomeData.pixels[i] & 0xFFFFFF;
+			let color = biomeColor;
 			let isSurfaceBiome = false;
+			// Set when the cell resolved to telescope's fake sky, which has no engine
+			// counterpart in the chunk-background grid and so keeps its own color.
+			let isSky = false;
 			if (surfaceBiomes.includes(color)) isSurfaceBiome = true;
 			if (BIOME_COLOR_LOOKUP[color]) {
 				if (isSurfaceBiome) {
@@ -1873,20 +1899,18 @@ export const app = {
 						let b = 0xeb;
 
 						color = (r << 16) | (g << 8) | b;
+						isSky = true;
 					}
 				}
 				else {
 					color = BIOME_COLOR_LOOKUP[color];
 				}
-				
-				
+
+
 			}
-			
-			
-			id.data[i*4+0] = (color >> 16) & 0xFF;
-			id.data[i*4+1] = (color >> 8) & 0xFF;
-			id.data[i*4+2] = color & 0xFF;
-			id.data[i*4+3] = 255;
+
+
+			writeBackgroundPixel(id, i, isSky ? color : backgroundLayerColor(biomeColor) ?? color);
 			this.recolorOffscreenBuffer[i*3+0] = (color >> 16) & 0xFF;
 			this.recolorOffscreenBuffer[i*3+1] = (color >> 8) & 0xFF;
 			this.recolorOffscreenBuffer[i*3+2] = color & 0xFF;
@@ -1904,10 +1928,10 @@ export const app = {
 			heavenData.data[i*4+0] = id.data[(i*4+0)%(this.w*4)];
 			heavenData.data[i*4+1] = id.data[(i*4+1)%(this.w*4)];
 			heavenData.data[i*4+2] = id.data[(i*4+2)%(this.w*4)];
-			heavenData.data[i*4+3] = 255;
-			this.recolorOffscreenHeavenBuffer[i*3+0] = id.data[(i*4+0)%(this.w*4)];
-			this.recolorOffscreenHeavenBuffer[i*3+1] = id.data[(i*4+1)%(this.w*4)];
-			this.recolorOffscreenHeavenBuffer[i*3+2] = id.data[(i*4+2)%(this.w*4)];
+			heavenData.data[i*4+3] = id.data[(i*4+3)%(this.w*4)];
+			this.recolorOffscreenHeavenBuffer[i*3+0] = this.recolorOffscreenBuffer[(i*3+0)%(this.w*3)];
+			this.recolorOffscreenHeavenBuffer[i*3+1] = this.recolorOffscreenBuffer[(i*3+1)%(this.w*3)];
+			this.recolorOffscreenHeavenBuffer[i*3+2] = this.recolorOffscreenBuffer[(i*3+2)%(this.w*3)];
 		}
 		ctxHeaven.putImageData(heavenData, 0, 0);
 		
@@ -1918,10 +1942,7 @@ export const app = {
 		for (let i = 0; i < this.biomeData.hellPixels.length; i++) {
 			const color = this.biomeData.hellPixels[i] & 0xFFFFFF;
 			const recolor = BIOME_COLOR_LOOKUP[color] || color;
-			hellData.data[i*4+0] = (recolor >> 16) & 0xFF;
-			hellData.data[i*4+1] = (recolor >> 8) & 0xFF;
-			hellData.data[i*4+2] = recolor & 0xFF;
-			hellData.data[i*4+3] = 255;
+			writeBackgroundPixel(hellData, i, backgroundLayerColor(color) ?? recolor);
 			this.recolorOffscreenHellBuffer[i*3+0] = (recolor >> 16) & 0xFF;
 			this.recolorOffscreenHellBuffer[i*3+1] = (recolor >> 8) & 0xFF;
 			this.recolorOffscreenHellBuffer[i*3+2] = recolor & 0xFF;
