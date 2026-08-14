@@ -157,13 +157,14 @@ function edgeWinner(a, b) {
 
 // Precompute every boundary strip for one biome-map layer, bucketed by chunk row
 // so the per-frame draw only walks the visible rows. Coordinates are map-local
-// pixels; `skyCells` (optional, one byte per cell) marks the cells telescope
-// paints as its fake sky, which has no engine background and so no strips.
-export function buildBackgroundEdges(pixels, w, h, skyCells) {
+// pixels; `skipCells` (optional, one byte per cell) marks cells telescope paints
+// no background into -- its fake sky in the main world, the columns that generate
+// nothing in the vertical bands -- which therefore have no strips either.
+export function buildBackgroundEdges(pixels, w, h, skipCells) {
 	const rows = Array.from({ length: h }, () => []);
 	const wrapX = (cx) => ((cx % w) + w) % w; // parallel worlds tile horizontally
 	const at = (cx, cy) => (cy < 0 || cy >= h) ? null : BY_COLOR.get(pixels[cy * w + wrapX(cx)] & 0xffffff) ?? null;
-	const isSky = (cx, cy) => !!skyCells && cy >= 0 && cy < h && skyCells[cy * w + wrapX(cx)] === 1;
+	const isSkipped = (cx, cy) => !!skipCells && cy >= 0 && cy < h && skipCells[cy * w + wrapX(cx)] === 1;
 	const same = (a, b) => imagePathOf(a) === imagePathOf(b);
 
 	for (let cy = 0; cy < h; cy++) {
@@ -172,12 +173,12 @@ export function buildBackgroundEdges(pixels, w, h, skyCells) {
 			// DrawWeatherLayers returns before it looks at either boundary when the
 			// chunk has no background image, so an empty chunk never decorates its
 			// own left or top edge.
-			if (!me || me.imageIndex < 0 || isSky(cx, cy)) continue;
+			if (!me || me.imageIndex < 0 || isSkipped(cx, cy)) continue;
 
 			// Left boundary: this chunk's *_left art sits outside it, the left
 			// neighbour's *_right art sits inside it.
 			const west = at(cx - 1, cy);
-			if (west && !same(me, west) && !isSky(cx - 1, cy)) {
+			if (west && !same(me, west) && !isSkipped(cx - 1, cy)) {
 				const mine = edgeWinner(me, west) === me;
 				const mask = mine ? me.edges.left : west.edges.right;
 				if (mask) {
@@ -197,7 +198,7 @@ export function buildBackgroundEdges(pixels, w, h, skyCells) {
 			// Top boundary: this chunk's *_top art sits above it, the north
 			// neighbour's *_bottom art sits below the line, inside this chunk.
 			const north = at(cx, cy - 1);
-			if (north && !same(me, north) && !isSky(cx, cy - 1)) {
+			if (north && !same(me, north) && !isSkipped(cx, cy - 1)) {
 				const mine = edgeWinner(me, north) === me;
 				const mask = mine ? me.edges.top : north.edges.bottom;
 				if (mask) {

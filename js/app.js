@@ -3,7 +3,7 @@ import { loadPNG, loadPNGBitmap} from './png_sanitizer.js';
 import { getDisplayName, loadTranslations } from './translations.js';
 import { UNLOCKABLES, UNLOCK_DISPLAY_NAMES, setUnlocks } from './unlocks.js';
 import { toggleTooltipPinned, updateTooltip } from './tooltip_generator.js';
-import { FILL_BIOME_MATERIALS, GENERATOR_CONFIG } from './generator_config.js';
+import { BIOME_COLORS_WITH_TERRAIN, FILL_BIOME_MATERIALS, GENERATOR_CONFIG } from './generator_config.js';
 import { generateBiomeTiles } from './tile_generator.js';
 import { scanSpawnFunctions, getSpecialPoIs, prescanSpawnFunctions } from './poi_scanner.js';
 import { performSearch, navigateSearch, cancelSearch, isSearchActive, clearHighlights, performLocalSearch, syncSearchWorkerData, activeLocalSearchArea, syncSettingsToSearchWorker, continueSearchSequence } from './search_manager.js';
@@ -39,6 +39,28 @@ const STRIP_WORLD_PX = 64;
 // BACKGROUND_VOID, which the engine leaves empty (biomes with no
 // background_image) and which we write as fully transparent so the canvas
 // backdrop shows through.
+// Whether a vertical parallel world generates anything in this biome-map column.
+//
+// There is no heaven/hell biome map: BiomeGrid_GetChunkAt wraps X and *clamps* Y
+// to [0, 47], so every chunk above the map resolves to map row 0 and every chunk
+// below it to row 47 (telescope materialises that as heavenPixels / hellPixels).
+// What decides whether the clamped-in biome puts anything there is its own
+// topology, not the lookup:
+//   * the constant-material fill biomes (solid_wall, solid_wall_tower, lava, the
+//     temple walls...) have `_EMPTY_` topology with `limit_y="0"`, i.e. no surface
+//     line and no y limit, so they are solid at *any* Y -- this is why the world
+//     edge columns run infinitely up and down;
+//   * the_sky and the_end are wang-tile biomes and keep producing terrain;
+//   * the surface biomes (lake, winter, hills, desert, empty) are gradient +
+//     BitmapCaves topologies whose surface line is tens of thousands of pixels
+//     away, so they evaluate to air.
+// Which is exactly "telescope generates terrain for this biome", so the band
+// background paints those columns and leaves the rest transparent instead of
+// flooding the whole band with a biome color.
+function bandColumnPaints(biomeColor) {
+	return BIOME_COLORS_WITH_TERRAIN.has(biomeColor & 0xffffff);
+}
+
 function writeBackgroundPixel(imageData, i, color) {
 	const isVoid = color === BACKGROUND_VOID;
 	imageData.data[i*4+0] = isVoid ? 0 : (color >> 16) & 0xFF;
@@ -1934,16 +1956,21 @@ export const app = {
 		const heavenData = ctxHeaven.createImageData(this.w, this.h);
 		// Just use the top row pixels of the main recolor map for heaven
 		for (let i = 0; i < this.biomeData.heavenPixels.length; i++) {
-			heavenData.data[i*4+0] = id.data[(i*4+0)%(this.w*4)];
-			heavenData.data[i*4+1] = id.data[(i*4+1)%(this.w*4)];
-			heavenData.data[i*4+2] = id.data[(i*4+2)%(this.w*4)];
-			heavenData.data[i*4+3] = id.data[(i*4+3)%(this.w*4)];
+			if (bandColumnPaints(this.biomeData.heavenPixels[i])) {
+				const src = (i % this.w) * 4;
+				heavenData.data[i*4+0] = id.data[src+0];
+				heavenData.data[i*4+1] = id.data[src+1];
+				heavenData.data[i*4+2] = id.data[src+2];
+				heavenData.data[i*4+3] = id.data[src+3];
+			}
+			// else: nothing is generated in this column, so the band is empty sky
+			// and the pixel stays fully transparent.
 			this.recolorOffscreenHeavenBuffer[i*3+0] = this.recolorOffscreenBuffer[(i*3+0)%(this.w*3)];
 			this.recolorOffscreenHeavenBuffer[i*3+1] = this.recolorOffscreenBuffer[(i*3+1)%(this.w*3)];
 			this.recolorOffscreenHeavenBuffer[i*3+2] = this.recolorOffscreenBuffer[(i*3+2)%(this.w*3)];
 		}
 		ctxHeaven.putImageData(heavenData, 0, 0);
-		
+
 		this.recolorOffscreenHell.width = this.w;
 		this.recolorOffscreenHell.height = this.h;
 		const ctxHell = this.recolorOffscreenHell.getContext('2d');
@@ -1951,7 +1978,9 @@ export const app = {
 		for (let i = 0; i < this.biomeData.hellPixels.length; i++) {
 			const color = this.biomeData.hellPixels[i] & 0xFFFFFF;
 			const recolor = BIOME_COLOR_LOOKUP[color] || color;
-			writeBackgroundPixel(hellData, i, backgroundLayerColor(color) ?? recolor);
+			if (bandColumnPaints(color)) {
+				writeBackgroundPixel(hellData, i, backgroundLayerColor(color) ?? recolor);
+			}
 			this.recolorOffscreenHellBuffer[i*3+0] = (recolor >> 16) & 0xFF;
 			this.recolorOffscreenHellBuffer[i*3+1] = (recolor >> 8) & 0xFF;
 			this.recolorOffscreenHellBuffer[i*3+2] = recolor & 0xFF;
@@ -1961,13 +1990,18 @@ export const app = {
 		// Ragged 64px strips along the chunk lines where two backgrounds actually
 		// differ. Built once per generation (~1400 entries for the whole world) and
 		// bucketed by chunk row, so drawNow only walks the visible rows.
-		// Heaven repeats the top map row, so its sky mask is that row repeated too;
-		// hell repeats the bottom row, which is never sky.
-		const heavenSky = new Uint8Array(this.w * this.h);
-		for (let i = 0; i < heavenSky.length; i++) heavenSky[i] = skyCells[i % this.w];
+		// In the bands the skipped cells are the ones the loops above left
+		// transparent: an empty column has no background to decorate, and its
+		// neighbour has nothing to bleed into.
+		const heavenSkip = new Uint8Array(this.w * this.h);
+		const hellSkip = new Uint8Array(this.w * this.h);
+		for (let i = 0; i < heavenSkip.length; i++) {
+			heavenSkip[i] = bandColumnPaints(this.biomeData.heavenPixels[i]) ? 0 : 1;
+			hellSkip[i] = bandColumnPaints(this.biomeData.hellPixels[i]) ? 0 : 1;
+		}
 		this.backgroundEdges = buildBackgroundEdges(this.biomeData.pixels, this.w, this.h, skyCells);
-		this.backgroundEdgesHeaven = buildBackgroundEdges(this.biomeData.heavenPixels, this.w, this.h, heavenSky);
-		this.backgroundEdgesHell = buildBackgroundEdges(this.biomeData.hellPixels, this.w, this.h, null);
+		this.backgroundEdgesHeaven = buildBackgroundEdges(this.biomeData.heavenPixels, this.w, this.h, heavenSkip);
+		this.backgroundEdgesHell = buildBackgroundEdges(this.biomeData.hellPixels, this.w, this.h, hellSkip);
 	},
 
 	async getSurfaceOverlays() {
