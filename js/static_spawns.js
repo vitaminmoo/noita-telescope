@@ -37,8 +37,6 @@ export const STATIC_PIXEL_SCENES = [
 	{name: "overworld/music_machine_stand", x: 14650, y: -34},
 	{name: "overworld/music_machine_stand", x: -1953, y: -1360},
 	{name: "general/huussi", x: 9000, y: -1900},
-	{name: "general/lavalake_pit", x: 7*512, y: 5*512},
-	{name: "general/lavalake_pit_cracked", x: 7*512, y: 4*512},
 	{name: "general/cauldron", x: 7*512, y: 10*512},
 	// entities...
 ];
@@ -117,6 +115,13 @@ export const PIXEL_SCENE_BIOMES = {
 	0xff0da899: {biome: "boss_arena_top", name: "boss_arena_top"},
 	0xff3d3e41: {biome: "solid_wall_tower_10", name: "essenceroom"},
 	0xff4118d6: {biome: "lavalake_racing", name: "lavalake_racing"},
+	// data/scripts/biomes/lavalake_pit.lua stamps every one of the four map cells
+	// (3584, 1024/1536/2048/2560) and picks the variant from the cell's absolute y:
+	// `if y > 2000 and y < 2400 then lavalake_pit_cracked else lavalake_pit`.
+	// Two of the four used to be hardcoded in STATIC_PIXEL_SCENES, which left the
+	// upper two cells bare.
+	0xff3d5a4f: {biome: "lavalake_pit", name: "lavalake_pit",
+		nameAtCell: (x, y) => (y > 2000 && y < 2400) ? "lavalake_pit_cracked" : "lavalake_pit"},
 
 }
 
@@ -178,11 +183,16 @@ export function addStaticPixelScenes(ws, ng, pwIndex, pwIndexVertical, biomeData
 						if (PIXEL_SCENE_BIOMES[biomeColor]) {
 							const biomePixelSceneInfo = PIXEL_SCENE_BIOMES[biomeColor];
 							const biomeName = biomePixelSceneInfo.biome;
-							const biomePixelSceneName = biomePixelSceneInfo.name;
 							const offsetX = biomePixelSceneInfo.offsetX || 0;
 							const offsetY = biomePixelSceneInfo.offsetY || 0;
 							const adjX = x * 512 - mapWidth * 256 + pwIndex * mapWidth * 512 + offsetX;
 							const adjY = y * 512 - 14*512 + pwIndexVertical * 48 * 512 + offsetY;
+							// The game's biome init(x, y, w, h) gets the cell's world
+							// origin, so a room whose scene depends on where the cell
+							// sits picks per cell rather than per biome.
+							const biomePixelSceneName = biomePixelSceneInfo.nameAtCell
+								? biomePixelSceneInfo.nameAtCell(adjX, adjY)
+								: biomePixelSceneInfo.name;
 							const pixelScene = loadPixelScene(biomeData, biomeName, biomePixelSceneName, ws, ng, adjX, adjY, skipCosmeticPixelScenes, false, gameMode);
 							//console.log(`Biome color ${biomeColor.toString(16)} at (${x}, ${y}) corresponds to biome ${biomeName} and pixel scene ${biomePixelSceneName}`);
 							if (pixelScene) {
