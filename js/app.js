@@ -3,7 +3,7 @@ import { loadPNG, loadPNGBitmap} from './png_sanitizer.js';
 import { getDisplayName, loadTranslations } from './translations.js';
 import { UNLOCKABLES, UNLOCK_DISPLAY_NAMES, setUnlocks } from './unlocks.js';
 import { toggleTooltipPinned, updateTooltip } from './tooltip_generator.js';
-import { BIOME_COLORS_WITH_TERRAIN, FILL_BIOME_MATERIALS, GENERATOR_CONFIG } from './generator_config.js';
+import { BIOME_COLORS_WITH_TERRAIN, FILL_LAYER_MATERIALS, GENERATOR_CONFIG, SCENE_ONLY_COLORS } from './generator_config.js';
 import { generateBiomeTiles } from './tile_generator.js';
 import { scanSpawnFunctions, getSpecialPoIs, prescanSpawnFunctions } from './poi_scanner.js';
 import { performSearch, navigateSearch, cancelSearch, isSearchActive, clearHighlights, performLocalSearch, syncSearchWorkerData, activeLocalSearchArea, syncSettingsToSearchWorker, continueSearchSequence } from './search_manager.js';
@@ -1525,9 +1525,11 @@ export const app = {
 			}
 			// Fill biomes (solid_wall etc.) have no layer.buffer to sample, so
 			// answer from the wobble-resolved chunk color. Last so real layer or
-			// pixel-scene content always wins.
+			// pixel-scene content always wins. FILL_LAYER_MATERIALS, not
+			// FILL_BIOME_MATERIALS: a `sceneOnly` room's chunk is air wherever its
+			// scene does not cover it, so naming its material there would be a lie.
 			if (!material && biomeResult) {
-				material = FILL_BIOME_MATERIALS[biomeResult.colorInt] ?? null;
+				material = FILL_LAYER_MATERIALS[biomeResult.colorInt] ?? null;
 			}
 			if (material) {
 				materialName = `<br>Material: ${getDisplayName(material)}`;
@@ -2208,6 +2210,11 @@ export const app = {
 	//
 	// Constant-material fill biomes have chunk-sized layers of their own, so both
 	// renderers paint them and the generic validChunks pass below covers them.
+	//
+	// The `sceneOnly` rooms have no layer by design -- the engine paints no terrain
+	// in their chunk (generator_config.js SCENE_ONLY_COLORS) -- but they are not a
+	// gap in telescope: air is the answer, and the room's pixel scene supplies
+	// everything else. Checkerboarding them would flag 38 correct chunks as missing.
 	buildUnpaintedMask() {
 		this.unpaintedMask = null;
 		this.unpaintedChunkCount = 0;
@@ -2234,6 +2241,11 @@ export const app = {
 						covered[cy * w + cx] = 1;
 					}
 				}
+			}
+		}
+		if (this.biomeData && this.biomeData.pixels) {
+			for (let i = 0; i < w * h && i < this.biomeData.pixels.length; i++) {
+				if (SCENE_ONLY_COLORS.has(this.biomeData.pixels[i] & 0xffffff)) covered[i] = 1;
 			}
 		}
 		const canvas = document.createElement('canvas');

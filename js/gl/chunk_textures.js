@@ -18,7 +18,7 @@
 //
 // Flag bits 0 and 1 keep the values indirection.js already assigns them.
 
-import { BIOME_COLOR_TO_NAME, BIOME_COLORS_WITH_TILES, FILL_BIOME_COLORS } from '../generator_config.js';
+import { BIOME_COLOR_TO_NAME, BIOME_COLORS_WITH_TILES, FILL_LAYER_COLORS } from '../generator_config.js';
 import { edgeNoiseOverlayExceptions, terrainFillColor, TILE_FOREGROUND_COLORS } from '../image_processing.js';
 import { biomeEdgeNoiseFlag } from '../wobble_flags.js';
 import { EDGE_NOISE } from '../edge_noise.js';
@@ -37,7 +37,8 @@ export const CHUNK_FLAG_FG_DEFINED = 1 << 3;
  * u_fgTex for exactly these chunks.
  *
  * Which chunks those are, and what they paint, comes from GENERATOR_CONFIG's
- * `fillMaterial` (FILL_BIOME_COLORS) and image_processing's terrainFillColor —
+ * `fillMaterial` minus its `sceneOnly` rooms (FILL_LAYER_COLORS) and
+ * image_processing's terrainFillColor —
  * the same two things the CPU bake reads, so the renderers cannot diverge on
  * either the set or the color. terrainFillColor follows recolorMaterials, so
  * this texture is only valid for the setting it was built under, which is why
@@ -75,7 +76,7 @@ export function buildChunkTextures(biomeData, mapWidth) {
         if (fgColor !== undefined) flags |= CHUNK_FLAG_FG_DEFINED;
         // The fill color IS the foreground color, so a fill biome without one
         // would paint black; leave it transparent instead.
-        if (fgColor !== undefined && FILL_BIOME_COLORS.has(color)) flags |= CHUNK_FLAG_FILL;
+        if (fgColor !== undefined && FILL_LAYER_COLORS.has(color)) flags |= CHUNK_FLAG_FILL;
         chunk[i * 4] = (color >> 16) & 0xff;
         chunk[i * 4 + 1] = (color >> 8) & 0xff;
         chunk[i * 4 + 2] = color & 0xff;

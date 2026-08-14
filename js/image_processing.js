@@ -1,5 +1,5 @@
 import { BIOME_EDGE_NOISE_EXTENT, BIOME_EDGE_NOISE_PADDING_TILES, CHUNK_SIZE, TILE_SIZE, WORLD_CHUNK_CENTER_Y } from "./constants.js";
-import { BIOME_COLOR_TO_NAME, BIOME_COLORS_WITH_TERRAIN, FILL_BIOME_MATERIALS, GENERATOR_CONFIG } from "./generator_config.js";
+import { BIOME_COLOR_TO_NAME, BIOME_COLORS_WITH_TERRAIN, FILL_BIOME_MATERIALS, FILL_LAYER_MATERIALS, GENERATOR_CONFIG } from "./generator_config.js";
 import { loadPNG } from "./png_sanitizer.js";
 import { MATERIAL_COLOR_CONVERSION, MATERIAL_WANG_COLORS } from "./potion_config.js";
 import { appSettings } from "./settings.js";
@@ -93,13 +93,32 @@ export function materialDisplayColor(material) {
 const fillColorCache = new Map();
 let fillColorCacheRecolor = null;
 
+/** materialDisplayColor, memoized per material and invalidated by recolorMaterials. */
+function cachedMaterialColor(material) {
+    if (fillColorCacheRecolor !== appSettings.recolorMaterials) {
+        fillColorCache.clear();
+        fillColorCacheRecolor = appSettings.recolorMaterials;
+    }
+    let color = fillColorCache.get(material);
+    if (color === undefined) {
+        color = materialDisplayColor(material);
+        fillColorCache.set(material, color);
+    }
+    return color;
+}
+
 /**
- * The color a constant-material fill biome paints, or undefined for any biome
- * that is not a fill biome.
+ * The color a constant-material fill biome paints its chunk, or undefined for any
+ * biome that does not fill its chunk.
  *
- * Single source of truth for the CPU bake, the GL chunk texture, the pixel-scene
- * recolor and the hover readout, so none of them can paint a fill chunk
- * differently from the others.
+ * "Does not fill" includes the `sceneOnly` rooms (generator_config.js
+ * FILL_LAYER_MATERIALS): they have a fillMaterial, but the engine paints nothing
+ * in their chunk, so nothing here may paint it either. Use
+ * sceneMaterialFillColorForBiome for the other job that material answers — what a
+ * stamped scene's density-1.0 white resolves to.
+ *
+ * Single source of truth for the CPU bake, the GL chunk texture and the hover
+ * readout, so none of them can paint a fill chunk differently from the others.
  *
  * It deliberately ignores the biome's biome_map_foreground.png pixel. That map
  * is unauthored for the tileless biomes -- it is a copy of the biome-map color
@@ -112,24 +131,30 @@ let fillColorCacheRecolor = null;
  * the user turned recolorMaterials off.
  */
 export function terrainFillColor(biomeColor) {
-    const material = FILL_BIOME_MATERIALS[biomeColor];
-    if (material === undefined) return undefined;
-    if (fillColorCacheRecolor !== appSettings.recolorMaterials) {
-        fillColorCache.clear();
-        fillColorCacheRecolor = appSettings.recolorMaterials;
-    }
-    let color = fillColorCache.get(biomeColor);
-    if (color === undefined) {
-        color = materialDisplayColor(material);
-        fillColorCache.set(biomeColor, color);
-    }
-    return color;
+    const material = FILL_LAYER_MATERIALS[biomeColor];
+    return material === undefined ? undefined : cachedMaterialColor(material);
 }
 
-/** terrainFillColor by biome name, for the pixel-scene recolor. */
+/** terrainFillColor by biome name: "does this biome's chunk paint itself solid". */
 export function terrainFillColorForBiome(biomeName) {
     const conf = GENERATOR_CONFIG[biomeName];
     return conf ? terrainFillColor(conf.color & 0xffffff) : undefined;
+}
+
+/**
+ * The color a pixel scene's white/gray (density 1.0) pixels take in this biome.
+ *
+ * Unlike terrainFillColor this includes the `sceneOnly` rooms, whose chunk is air
+ * but whose scenes still carry density pixels: the engine feeds density 1.0 to the
+ * biome's <MaterialComponent> bands whatever the topology is (an essenceroom's
+ * white really does come out templebrickdark_static/rock_hard, a lavalake's white
+ * really does come out rock_hard_border). Only the pixel-scene recolor wants this.
+ */
+export function sceneMaterialFillColorForBiome(biomeName) {
+    const conf = GENERATOR_CONFIG[biomeName];
+    if (!conf) return undefined;
+    const material = FILL_BIOME_MATERIALS[conf.color & 0xffffff];
+    return material === undefined ? undefined : cachedMaterialColor(material);
 }
 
 // Non-Wang biomes whose tile overlays must ignore edge noise on both sides of a

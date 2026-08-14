@@ -5,7 +5,7 @@ import { getBiomeAtWorldCoordinates } from './utils.js';
 import { biomeEdgeNoiseFlag } from './wobble_flags.js';
 import { loadPNG } from './png_sanitizer.js';
 import { prescanPixelScene } from './poi_scanner.js';
-import { BIOME_BACKGROUND_COLORS, TILE_OVERLAY_COLORS, channelDistance, makeBlackTransparent, terrainFillColorForBiome } from './image_processing.js';
+import { BIOME_BACKGROUND_COLORS, TILE_OVERLAY_COLORS, channelDistance, makeBlackTransparent, sceneMaterialFillColorForBiome, terrainFillColorForBiome } from './image_processing.js';
 import { GENERATOR_CONFIG } from './generator_config.js';
 import { appSettings } from './settings.js';
 
@@ -622,6 +622,9 @@ export function recolorPixelSceneForBiome(sceneName, sourceData, targetBiome) {
 	const at = targetBiome.indexOf('@');
 	const underlyingBiome = at < 0 ? null : targetBiome.slice(at + 1);
 	if (at >= 0) targetBiome = targetBiome.slice(0, at);
+	// "the chunk under this scene is solid material", NOT merely "the biome has a
+	// fillMaterial": a `sceneOnly` room has one (its scenes' white resolves through
+	// it) but its chunk is air, so the scene's air must stay transparent there.
 	const fillBiomeUnderScene = (underlyingBiome && terrainFillColorForBiome(underlyingBiome) !== undefined)
 		? underlyingBiome : null;
 
@@ -635,9 +638,9 @@ export function recolorPixelSceneForBiome(sceneName, sourceData, targetBiome) {
 	// visibly the orb rooms, whose whole floor is that class. Falling back to the
 	// biome under the scene answers it exactly: those pixels are "fill with the
 	// chunk's own material", which is what the suffix names.
-	let targetColor = terrainFillColorForBiome(targetBiome)
+	let targetColor = sceneMaterialFillColorForBiome(targetBiome)
 		?? TILE_OVERLAY_COLORS[targetBiome]
-		?? (underlyingBiome ? terrainFillColorForBiome(underlyingBiome) ?? TILE_OVERLAY_COLORS[underlyingBiome] : undefined)
+		?? (underlyingBiome ? sceneMaterialFillColorForBiome(underlyingBiome) ?? TILE_OVERLAY_COLORS[underlyingBiome] : undefined)
 		?? 0xff00ff;
 	let bgColor = BIOME_BACKGROUND_COLORS[targetBiome]
 		?? (underlyingBiome ? BIOME_BACKGROUND_COLORS[underlyingBiome] : undefined)
@@ -709,6 +712,11 @@ export function recolorPixelSceneForBiome(sceneName, sourceData, targetBiome) {
 			// carved room filled in and invisible -- the scene has to punch the
 			// hole itself, in the color the background layer would have shown.
 			// Hiisi base is the hand-found instance of the same rule.
+			//
+			// Both tests ask "does this chunk actually emit a fill layer", so a
+			// `sceneOnly` room falls through to the transparent branch below: its
+			// chunk is air, and the scene's air must read as the cave background the
+			// game shows there, not as an opaque plug.
 			if (targetBiome === "snowcastle" || fillBiomeUnderScene
 				|| terrainFillColorForBiome(targetBiome) !== undefined) {
 				outData[i + 3] = 0xff;

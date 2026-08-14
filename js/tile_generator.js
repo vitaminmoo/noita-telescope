@@ -367,7 +367,13 @@ export async function generateBiomeTiles(biomePixels, width, height, biomeConfig
         if (!conf.wangFile) {
             // Constant-material fill biomes get a chunk-sized layer each; every
             // other tileless biome still produces nothing.
-            if (!conf.fillMaterial) continue;
+            //
+            // `sceneOnly` biomes have a fillMaterial but emit no layer: they are
+            // BIOME_WANG_TILE with an empty template, so the generator paints
+            // nothing and the chunk is air under whatever its pixel scene stamps.
+            // Their fillMaterial only answers "what does this scene's density-1.0
+            // white resolve to" (generator_config.js FILL_BIOME_MATERIALS).
+            if (!conf.fillMaterial || conf.sceneOnly) continue;
             for (let i = 0; i < biomePixels.length; i++) {
                 if (biomePixels[i] !== conf.color) continue;
                 layers.push(generateFillLayer(biomeName, conf, i % width, Math.floor(i / width)));
