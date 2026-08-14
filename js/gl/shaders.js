@@ -211,7 +211,7 @@ int rasterChunk(int world, int base, int visualOffset) {
 }
 
 // getBiomeAtWorldCoordinates with useEdgeNoise = true
-void biomeAt(int wx, int wy, out ivec2 fpos, out ivec2 opos, out ivec2 applied) {
+void biomeAt(int wx, int wy, out ivec2 fpos, out ivec2 opos) {
     ivec2 o = unwob(wx, wy);
     int sbx = pmod(wx, CHUNK);
     int sby = pmod(wy, CHUNK);
@@ -251,20 +251,16 @@ void biomeAt(int wx, int wy, out ivec2 fpos, out ivec2 opos, out ivec2 applied) 
         }
         if (pc > 0 && !found) skip = true;
     }
-    if (skip) { bX = o.x; bY = o.y; off = ivec2(0); }
+    if (skip) { bX = o.x; bY = o.y; }
     fpos = ivec2(bX, bY);
     opos = o;
-    // The wobble in *chunk* units, so the region lookup can apply the same shift
-    // to the raster-grid chunk. Y is clamped, X wraps, so report what landed.
-    applied = ivec2(off.x, clamp(o.y + off.y, 0, u_maxRow) - o.y);
 }
 
 // getTileOverlayBiome. u_edgeNoise is per layer on the CPU; here the layer is
 // whatever region covers the resolved chunk, so an exception biome under the
 // fragment is the same condition (image_processing.js:331).
-void overlayBiome(int wx, int wy, out ivec2 pos, out bool ignored, out ivec2 applied) {
+void overlayBiome(int wx, int wy, out ivec2 pos, out bool ignored) {
     ignored = false;
-    applied = ivec2(0);
     pos = unwob(wx, wy);
     if (!u_edgeNoise) return;
     int scx = pmod(wx, CHUNK);
@@ -281,9 +277,8 @@ void overlayBiome(int wx, int wy, out ivec2 pos, out bool ignored, out ivec2 app
 
     ivec2 fpos;
     ivec2 opos;
-    ivec2 foff;
-    biomeAt(wx, wy, fpos, opos, foff);
-    if (!exceptionAt(fpos) && !exceptionAt(opos)) { pos = fpos; applied = foff; return; }
+    biomeAt(wx, wy, fpos, opos);
+    if (!exceptionAt(fpos) && !exceptionAt(opos)) { pos = fpos; return; }
     ignored = true;
 }
 
@@ -301,8 +296,7 @@ void main() {
 
     ivec2 pos;
     bool ignored;
-    ivec2 wobbleOff;
-    overlayBiome(w.x, w.y, pos, ignored, wobbleOff);
+    overlayBiome(w.x, w.y, pos, ignored);
 
     uvec4 cc = chunkAt(pos);
     // Constant-material fill biome: every cell the engine paints there is the
@@ -320,9 +314,27 @@ void main() {
     int sx = w.x - pwX * u_worldSizeX;
 
     // Region ownership follows the buffers' own masking grid (rasterChunk), not
-    // the 512-px chunk grid, shifted by the same wobble the biome chain applied.
-    ivec2 rpos = ivec2(pmod(rasterChunk(sx, u_centerPx, VIS_X) + wobbleOff.x, u_mapWidth),
-                       clamp(rasterChunk(w.y, u_baseY, VIS_Y) + wobbleOff.y, 0, u_maxRow));
+    // the 512-px chunk grid — and it is NOT shifted by the wobble. The CPU bake
+    // never moves wang content across a chunk border: every layer draws its own
+    // buffer at its own fixed world position (image_processing.js
+    // createTileOverlaysExpanded, "Central area"), so the *only* layer that can
+    // paint a world pixel is the one owning that pixel's raster chunk. Edge noise
+    // enters through the colors alone — the gray/foreground class and the
+    // suppression rules read the wobbled chunk (pos, above), which is exactly
+    // what getTileOverlayBiome feeds the CPU bake.
+    //
+    // Shifting this lookup by the wobble (as the pre-fix shader did, both on the
+    // true grid and on the raster grid) samples a *different region's* buffer
+    // inside every 42-px chunk-border band. Where neighbouring chunks share one
+    // region that is invisible; where biomes alternate chunk by chunk it is not.
+    // Seed 786433191's underground jungle (rows 27-29, cols 30-36: rainforest /
+    // rainforest_open / fungicave in a checkerboard) showed it plainly: on a
+    // 19k-sample lattice over x[-2700..-1500] y[7300..7550], the shifted lookup
+    // left 299 samples sampling *outside* the chosen region's extent (whole-image
+    // mod-wrap garbage) and 322 more painting air where the CPU paints terrain;
+    // unshifted, all 18963 samples agree with the CPU's layer and palette index.
+    ivec2 rpos = ivec2(pmod(rasterChunk(sx, u_centerPx, VIS_X), u_mapWidth),
+                       clamp(rasterChunk(w.y, u_baseY, VIS_Y), 0, u_maxRow));
     uint slot = texelFetch(u_indirTex, rpos, 0).r;
     if (slot == ${NO_REGION}u) return;
 
