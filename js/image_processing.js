@@ -1,5 +1,5 @@
-import { BIOME_EDGE_NOISE_EXTENT, BIOME_EDGE_NOISE_PADDING_TILES, CHUNK_SIZE, TILE_SIZE } from "./constants.js";
-import { BIOME_COLOR_TO_NAME, BIOME_COLORS_WITH_TILES, GENERATOR_CONFIG } from "./generator_config.js";
+import { BIOME_EDGE_NOISE_EXTENT, BIOME_EDGE_NOISE_PADDING_TILES, CHUNK_SIZE, TILE_SIZE, WORLD_CHUNK_CENTER_Y } from "./constants.js";
+import { BIOME_COLOR_TO_NAME, BIOME_COLORS_WITH_TERRAIN, FILL_BIOME_COLORS, GENERATOR_CONFIG } from "./generator_config.js";
 import { loadPNG } from "./png_sanitizer.js";
 import { MATERIAL_COLOR_CONVERSION } from "./potion_config.js";
 import { appSettings } from "./settings.js";
@@ -64,6 +64,18 @@ export function initBiomeColors() {
 }
 if (typeof process === 'undefined' || !process?.versions?.node) {
     await initBiomeColors();
+}
+
+/**
+ * The color a constant-material fill biome paints, or undefined for any biome
+ * that is not a fill biome (or has no color defined for it).
+ *
+ * Single source of truth for the CPU bake, the GL chunk texture and the hover
+ * readout, so the two renderers cannot paint a fill chunk differently.
+ */
+export function terrainFillColor(biomeColor) {
+    if (!FILL_BIOME_COLORS.has(biomeColor)) return undefined;
+    return TILE_FOREGROUND_COLORS[biomeColor];
 }
 
 // Non-Wang biomes whose tile overlays must ignore edge noise on both sides of a
@@ -179,6 +191,140 @@ export const chunkAtRasterTile = (tile) => tile >= 0
     ? Math.ceil((tile + 1) * TILE_SIZE / CHUNK_SIZE) - 1
     : Math.floor(tile * TILE_SIZE / CHUNK_SIZE);
 
+// ---------------------------------------------------------------------------
+// Constant-material fill biomes
+//
+// A fill layer carries no buffer (tile_generator.js generateFillLayer); its
+// content is "every cell of this chunk is the biome's fill material". So what it
+// paints is a pure function of the chunk each pixel *resolves* to, which is
+// exactly what the GL shader does — gl/shaders.js checks CHUNK_FLAG_FILL on the
+// resolved chunk before any region lookup — and is what keeps the two renderers
+// painting the same thing.
+//
+// The wobble is the only complication: within 42px of a chunk border a pixel can
+// resolve into a neighbour, so a fill chunk paints nothing where it wobbles out
+// into a wang biome, and paints up to BIOME_EDGE_NOISE_PADDING_TILES past its own
+// border where a neighbour wobbles in. When a chunk's whole 8-neighbourhood
+// shares its color no probe can ever find a differing neighbour
+// (utils.js:271-273), so the wobble provably cannot fire: the chunk is one flat
+// rectangle and its padding is redundant (the identically-colored neighbours have
+// fill layers of their own). That is the common case inside solid_wall, and it is
+// what keeps ~1300 chunk layers cheap.
+// ---------------------------------------------------------------------------
+
+/** Packs 0xRRGGBB into the little-endian RGBA word an ImageData Uint32Array wants. */
+const rgbaWord = (color) => (255 << 24) | ((color & 0xff) << 16) | (color & 0xff00) | ((color >> 16) & 0xff);
+
+export function createFillOverlay(layer, biomeData, biomeMap, pwIndex, pwIndexVertical, isNGP, gameMode, padTiles) {
+    const mapWidth = getWorldSize(isNGP, gameMode);
+    const worldWidth = mapWidth * CHUNK_SIZE;
+    const width = layer.width;
+    const mapH = layer.mapH;
+    const outWidth = width + 2 * padTiles;
+    const outHeight = mapH + 2 * padTiles;
+
+    const canvas = new OffscreenCanvas(outWidth, outHeight);
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const outImageData = ctx.createImageData(outWidth, outHeight);
+    const out32 = new Uint32Array(outImageData.data.buffer);
+
+    // Vertical parallel worlds read the heaven/hell maps, where this chunk may
+    // hold a different biome than the layer's, so every color comes from the map
+    // the caller selected rather than from the layer's own biome.
+    const colorAtCell = (cx, cy) => (cy < 0 || cy >= 48)
+        ? -1
+        : biomeMap[cy * mapWidth + (((cx % mapWidth) + mapWidth) % mapWidth)] & 0xffffff;
+
+    const words = new Map();
+    const wordForColor = (color) => {
+        let word = words.get(color);
+        if (word === undefined) {
+            const fillColor = terrainFillColor(color);
+            word = fillColor === undefined ? 0 : rgbaWord(fillColor);
+            words.set(color, word);
+        }
+        return word;
+    };
+
+    const ownColor = colorAtCell(layer.minX, layer.minY);
+    const ownWord = wordForColor(ownColor);
+
+    let uniformNeighborhood = ownWord !== 0;
+    for (let dy = -1; dy <= 1 && uniformNeighborhood; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+            if (colorAtCell(layer.minX + dx, layer.minY + dy) !== ownColor) { uniformNeighborhood = false; break; }
+        }
+    }
+
+    if (uniformNeighborhood) {
+        for (let y = 0; y < mapH; y++) {
+            const row = (y + padTiles) * outWidth + padTiles;
+            for (let x = 0; x < width; x++) out32[row + x] = ownWord;
+        }
+        ctx.putImageData(outImageData, 0, 0);
+        return canvas;
+    }
+
+    const originCoords = tileToWorldCoordinates(layer.minX, layer.minY, 0, 0, pwIndex, pwIndexVertical, isNGP, gameMode);
+    const useEdgeNoise = appSettings.enableEdgeNoise;
+
+    // Per-column / per-row constants: world position, owning chunk cell, and
+    // whether the pixel is inside the 42px band where the wobble can reach.
+    const worldXs = new Float64Array(outWidth);
+    const cellXs = new Int32Array(outWidth);
+    const bandX = new Uint8Array(outWidth);
+    for (let outX = 0; outX < outWidth; outX++) {
+        const worldX = originCoords.x + (outX - padTiles) * TILE_SIZE;
+        worldXs[outX] = worldX;
+        cellXs[outX] = Math.floor((((worldX + worldWidth / 2) % worldWidth) + worldWidth) % worldWidth / CHUNK_SIZE);
+        const subX = ((worldX % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+        bandX[outX] = (subX < BIOME_EDGE_NOISE_EXTENT || subX > CHUNK_SIZE - BIOME_EDGE_NOISE_EXTENT) ? 1 : 0;
+    }
+
+    // Exception status of the *pixel's own* chunk, cached per cell. The shader
+    // reads it the same way (shaders.js overlayBiome: `if (exceptionAt(pos))`),
+    // where the CPU's wang layers use their layer's biome instead.
+    const exceptions = new Map();
+    const exceptionAtCell = (cx, cy) => {
+        const key = cy * mapWidth + cx;
+        let value = exceptions.get(key);
+        if (value === undefined) {
+            const name = BIOME_COLOR_TO_NAME[colorAtCell(cx, cy)];
+            value = !!name && isEdgeNoiseOverlayException(name);
+            exceptions.set(key, value);
+        }
+        return value;
+    };
+
+    for (let outY = 0; outY < outHeight; outY++) {
+        const worldY = originCoords.y + (outY - padTiles) * TILE_SIZE;
+        // Padding above row 0 / below row 47 would wrap into the opposite end of
+        // the map; there is no terrain there to paint.
+        const cellY = Math.floor((worldY + WORLD_CHUNK_CENTER_Y * CHUNK_SIZE) / CHUNK_SIZE);
+        if (cellY < 0 || cellY >= 48) continue;
+        const subY = ((worldY % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+        const inBandY = subY < BIOME_EDGE_NOISE_EXTENT || subY > CHUNK_SIZE - BIOME_EDGE_NOISE_EXTENT;
+        const rowIdx = outY * outWidth;
+
+        for (let outX = 0; outX < outWidth; outX++) {
+            const cellX = cellXs[outX];
+            let word;
+            if (!useEdgeNoise || (!inBandY && !bandX[outX])) {
+                word = wordForColor(colorAtCell(cellX, cellY));
+            }
+            else {
+                const resolved = getTileOverlayBiome(biomeData, worldXs[outX], worldY, isNGP, gameMode,
+                    !exceptionAtCell(cellX, cellY));
+                word = wordForColor(biomeMap[resolved.pos.y * mapWidth + resolved.pos.x] & 0xffffff);
+            }
+            if (word !== 0) out32[rowIdx + outX] = word;
+        }
+    }
+
+    ctx.putImageData(outImageData, 0, 0);
+    return canvas;
+}
+
 export function createTileOverlaysCheap(biomeData, layers, pwIndex, pwIndexVertical, isNGP, gameMode='normal') {
     const recolorMaterials = appSettings.recolorMaterials; //document.getElementById('recolor-materials').checked;
     const clearSpawnPixels = appSettings.clearSpawnPixels; //document.getElementById('clear-spawn-pixels').checked;
@@ -198,6 +344,7 @@ export function createTileOverlaysCheap(biomeData, layers, pwIndex, pwIndexVerti
     for (let i = 0; i < layers.length; i++) {
         const layer = layers[i];
 		const buffer = layer.buffer;
+		if (layer.isFill) { overlays.push(createFillOverlay(layer, biomeData, biomeMap, pwIndex, pwIndexVertical, isNGP, gameMode, 0)); continue; }
 		if (!buffer) { overlays.push(null); continue; } // Skip layers without pixel data (shouldn't happen but just in case)
 		const width = layer.width;
 		const mapH = layer.mapH;
@@ -229,8 +376,15 @@ export function createTileOverlaysCheap(biomeData, layers, pwIndex, pwIndexVerti
 					// Find this pixel in the biome map and get the color...
 					const biomeColor = biomeMap[roundedY * mapWidth + roundedX] & 0xffffff; // Mask out alpha if present
 					const foregroundColor = TILE_FOREGROUND_COLORS[biomeColor];
+					const fillColor = terrainFillColor(biomeColor);
 
-                    if (BIOME_COLORS_WITH_TILES.has(biomeColor) && foregroundColor) {
+                    if (fillColor !== undefined) {
+                        // A fill biome under this pixel is solid material whatever
+                        // the layer's own buffer says (gl/shaders.js paints the
+                        // fill before it ever looks at a region).
+                        out32[targetIdx] = rgbaWord(fillColor);
+                    }
+                    else if (BIOME_COLORS_WITH_TERRAIN.has(biomeColor) && foregroundColor) {
                         //const bColor = TILE_OVERLAY_COLORS[layer.biomeName] || 0xff00ff;
                         const r = (foregroundColor >> 16) & 0xff;
                         const g = (foregroundColor >> 8) & 0xff;
@@ -247,17 +401,21 @@ export function createTileOverlaysCheap(biomeData, layers, pwIndex, pwIndexVerti
                         const spawnRoundedX = (Math.floor((spawnCoordX + mapWidth*512/2)/512) % mapWidth + mapWidth) % mapWidth;
                         const spawnRoundedY = (Math.floor((spawnCoordY + 14*512)/512) % mapHeight + mapHeight) % mapHeight;
                         const spawnBiomeColor = biomeMap[spawnRoundedY * mapWidth + spawnRoundedX] & 0xffffff; // Mask out alpha if present
+                        const spawnFillColor = terrainFillColor(spawnBiomeColor);
 
-                        if (!clearSpawnPixels) {
+                        if (spawnFillColor !== undefined) {
+                            out32[targetIdx] = rgbaWord(spawnFillColor);
+                        }
+                        if (spawnFillColor === undefined && !clearSpawnPixels) {
                             // Still need to check it's in bounds of the biome...
-                            if (BIOME_COLORS_WITH_TILES.has(spawnBiomeColor)) {
+                            if (BIOME_COLORS_WITH_TERRAIN.has(spawnBiomeColor)) {
                                 out32[targetIdx] = (255 << 24) | (buffer[srcIdx + 2] << 16) | (buffer[srcIdx + 1] << 8) | buffer[srcIdx];
                             }
                         }
-                        if (recolorMaterials) {
+                        if (spawnFillColor === undefined && recolorMaterials) {
                             const biomeColor = spawnBiomeColor;
                             // Check if it's in a region with tiles
-                            if (biomeColor && BIOME_COLORS_WITH_TILES.has(biomeColor)) {
+                            if (biomeColor && BIOME_COLORS_WITH_TERRAIN.has(biomeColor)) {
                                 // Look up color in materials table
                                 const wangColor = (buffer[srcIdx] << 16) | (buffer[srcIdx + 1] << 8) | buffer[srcIdx + 2];
                                 const materialColor = MATERIAL_COLOR_CONVERSION[wangColor]; // Fallback to original color if not found in conversion table
@@ -324,7 +482,8 @@ export function createTileOverlays(biomeData, recolorOffscreen, layers, pwIndex,
     for (let i = 0; i < layers.length; i++) {
         const layer = layers[i];
         const buffer = layer.buffer;
-        if (!buffer) { overlays.push(null); continue; } 
+        if (layer.isFill) { overlays.push(createFillOverlay(layer, biomeData, biomeMap, pwIndex, pwIndexVertical, isNGP, gameMode, 0)); continue; }
+        if (!buffer) { overlays.push(null); continue; }
         const width = layer.width;
         const mapH = layer.mapH;
 
@@ -371,9 +530,18 @@ export function createTileOverlays(biomeData, recolorOffscreen, layers, pwIndex,
                     }
                     const biomeColor = rawColor !== undefined ? rawColor & 0xffffff : 0x000000;
                     
+                    // A fill biome under this pixel is solid material regardless of
+                    // what this layer's buffer holds, and regardless of the
+                    // exclusion rules below — the same order gl/shaders.js uses.
+                    const fillColor = terrainFillColor(biomeColor);
+                    if (fillColor !== undefined) {
+                        out32[targetIdx] = rgbaWord(fillColor);
+                        continue;
+                    }
+
                     // EXCLUSION FIX: Block tiles that drift into an exclusion biome or a tileless biome
                     const inExclusionList = biomeResult.biome && biomeResult.biome !== layer.biomeName && isEdgeNoiseOverlayException(biomeResult.biome);
-                    const shouldExclude = biomeResult.edgeNoiseIgnored || !BIOME_COLORS_WITH_TILES.has(biomeColor) || inExclusionList;
+                    const shouldExclude = biomeResult.edgeNoiseIgnored || !BIOME_COLORS_WITH_TERRAIN.has(biomeColor) || inExclusionList;
 
                     if (r === g && g === b) {
                         if (!shouldExclude) {
@@ -475,6 +643,10 @@ export function createTileOverlaysExpanded(biomeData, recolorOffscreen, layers, 
     for (let i = 0; i < layers.length; i++) {
         const layer = layers[i];
         const buffer = layer.buffer;
+        if (layer.isFill) {
+            overlays.push(createFillOverlay(layer, biomeData, biomeMap, pwIndex, pwIndexVertical, isNGP, gameMode, edgeThreshold));
+            continue;
+        }
         if (!buffer) { overlays.push(null); continue; }
 
         const width = layer.width;
@@ -633,6 +805,15 @@ export function createTileOverlaysExpanded(biomeData, recolorOffscreen, layers, 
                         biomeResult = getTileOverlayBiome(biomeData, worldX, worldY, isNGP, gameMode, useLayerEdgeNoise);
                         biomeColor = getSafeBiomeColor(biomeResult.pos, y);
 
+                        // A fill biome under this pixel is solid material whatever
+                        // this layer's buffer holds, and ahead of the exclusion
+                        // rules below — the same order gl/shaders.js uses.
+                        const fillColor = terrainFillColor(biomeColor);
+                        if (fillColor !== undefined) {
+                            out32[targetIdx] = rgbaWord(fillColor);
+                            continue;
+                        }
+
                         // EXCLUSION FIX: Check if the tile drifted into an excluded biome
                         const inExclusionList = biomeResult.biome && biomeResult.biome !== layer.biomeName && isEdgeNoiseOverlayException(biomeResult.biome);
 
@@ -643,7 +824,7 @@ export function createTileOverlaysExpanded(biomeData, recolorOffscreen, layers, 
                             }
                             
                             const foregroundColor = TILE_FOREGROUND_COLORS[biomeColor];
-                            if (BIOME_COLORS_WITH_TILES.has(biomeColor) && foregroundColor !== undefined) {
+                            if (BIOME_COLORS_WITH_TERRAIN.has(biomeColor) && foregroundColor !== undefined) {
                                 const or = (foregroundColor >> 16) & 0xff;
                                 const og = (foregroundColor >> 8) & 0xff;
                                 const ob = foregroundColor & 0xff;
@@ -656,7 +837,7 @@ export function createTileOverlaysExpanded(biomeData, recolorOffscreen, layers, 
                         }
                         else if (!inExclusionList) {
                             // Only process material pixels if they are not inside an excluded biome
-                            if (!BIOME_COLORS_WITH_TILES.has(biomeColor)) {
+                            if (!BIOME_COLORS_WITH_TERRAIN.has(biomeColor)) {
                                 writeReferenceBackground(out32, targetIdx, biomeResult, y);
                                 pixelWritten = true;
                             }
@@ -700,14 +881,21 @@ export function createTileOverlaysExpanded(biomeData, recolorOffscreen, layers, 
                             biomeResult = getTileOverlayBiome(biomeData, worldX, worldY, isNGP, gameMode, useLayerEdgeNoise);
                             biomeColor = getSafeBiomeColor(biomeResult.pos, y);
                         }
-                        
+
+                        // Wobbled into a fill biome: solid material, not a seam.
+                        const seamFillColor = terrainFillColor(biomeColor);
+                        if (seamFillColor !== undefined) {
+                            out32[targetIdx] = rgbaWord(seamFillColor);
+                            continue;
+                        }
+
                         const originalBiomeColor = getSafeBiomeColor(biomeResult.originalPos, y);
                         
                         // EXCLUSION FIX: Extend edgeNoiseIgnored to block seam rendering inside excluded biomes
                         const inExclusionListSeam = biomeResult.biome && biomeResult.biome !== layer.biomeName && isEdgeNoiseOverlayException(biomeResult.biome);
                         let edgeNoiseIgnored = biomeResult.edgeNoiseIgnored || !useLayerEdgeNoise || inExclusionListSeam;
                         
-                        let expandsIntoNonWang = !BIOME_COLORS_WITH_TILES.has(originalBiomeColor);
+                        let expandsIntoNonWang = !BIOME_COLORS_WITH_TERRAIN.has(originalBiomeColor);
                         const subChunkX = subChunkXByOutput[outX];
 
                         if (subChunkX < BIOME_EDGE_NOISE_EXTENT) {
@@ -721,13 +909,13 @@ export function createTileOverlaysExpanded(biomeData, recolorOffscreen, layers, 
                         if (!expandsIntoNonWang && subChunkX > CHUNK_SIZE - BIOME_EDGE_NOISE_EXTENT) {
                             const rightResult = getBiomeAtWorldCoordinates(biomeData, worldX + CHUNK_SIZE - subChunkX, worldY, isNGP, gameMode, false);
                             const rightColor = getSafeBiomeColor(rightResult.pos, y);
-                            expandsIntoNonWang = !BIOME_COLORS_WITH_TILES.has(rightColor);
+                            expandsIntoNonWang = !BIOME_COLORS_WITH_TERRAIN.has(rightColor);
                             edgeNoiseIgnored ||= isEdgeNoiseOverlayException(rightResult.biome) || isEdgeNoiseOverlayException(rightResult.origBiome);
                         }
                         if (!expandsIntoNonWang && subChunkY > CHUNK_SIZE - BIOME_EDGE_NOISE_EXTENT) {
                             const bottomResult = getBiomeAtWorldCoordinates(biomeData, worldX, worldY + CHUNK_SIZE - subChunkY, isNGP, gameMode, false);
                             const bottomColor = getSafeBiomeColor(bottomResult.pos, y);
-                            expandsIntoNonWang = !BIOME_COLORS_WITH_TILES.has(bottomColor);
+                            expandsIntoNonWang = !BIOME_COLORS_WITH_TERRAIN.has(bottomColor);
                             edgeNoiseIgnored ||= isEdgeNoiseOverlayException(bottomResult.biome) || isEdgeNoiseOverlayException(bottomResult.origBiome);
                         }
 
@@ -738,7 +926,7 @@ export function createTileOverlaysExpanded(biomeData, recolorOffscreen, layers, 
                                 writeLayerBackground(targetIdx, biomeResult, y);
                             }
                         }
-                        else if (!edgeNoiseIgnored && !BIOME_COLORS_WITH_TILES.has(biomeColor)) {
+                        else if (!edgeNoiseIgnored && !BIOME_COLORS_WITH_TERRAIN.has(biomeColor)) {
                             writeReferenceBackground(out32, targetIdx, biomeResult, y);
                         }
                         else if (!edgeNoiseIgnored && isNearSeam && sourceChunkIsInLayer) {
@@ -788,7 +976,7 @@ export function createBiomeMapAlphaMask(biomeData, width, height) {
         for (let x = 0; x < width; x++) {
             const idx = (y * width + x) * 4;
             const biomeColor = biomeData.pixels[y * width + x] & 0xffffff;
-            if (BIOME_COLORS_WITH_TILES.has(biomeColor) && !alphaMaskExceptions.has(biomeColor)) {
+            if (BIOME_COLORS_WITH_TERRAIN.has(biomeColor) && !alphaMaskExceptions.has(biomeColor)) {
                 const overlayColor = BIOME_COLOR_LOOKUP[biomeColor] || 0xff00ff;
                 data[idx] = (overlayColor >> 16) & 0xff;
                 data[idx + 1] = (overlayColor >> 8) & 0xff;

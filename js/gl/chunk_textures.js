@@ -18,8 +18,8 @@
 //
 // Flag bits 0 and 1 keep the values indirection.js already assigns them.
 
-import { BIOME_COLOR_TO_NAME, BIOME_COLORS_WITH_TILES } from '../generator_config.js';
-import { edgeNoiseOverlayExceptions, TILE_FOREGROUND_COLORS } from '../image_processing.js';
+import { BIOME_COLOR_TO_NAME, BIOME_COLORS_WITH_TILES, FILL_BIOME_COLORS } from '../generator_config.js';
+import { edgeNoiseOverlayExceptions, terrainFillColor, TILE_FOREGROUND_COLORS } from '../image_processing.js';
 import { biomeEdgeNoiseFlag } from '../wobble_flags.js';
 import { EDGE_NOISE } from '../edge_noise.js';
 import { CHUNK_FLAG_EDGE_NOISE_EXCEPTION, CHUNK_FLAG_HAS_TILES, BIOME_MAP_HEIGHT } from './indirection.js';
@@ -33,47 +33,21 @@ export const CHUNK_FLAG_FG_DEFINED = 1 << 3;
  * Constant-material fill biome: no wang tiles, every cell the biome paints is
  * the biome's fill material. The shader paints these chunks with the same
  * per-chunk `u_fgTex` color the gray/white class uses, so no new texture and no
- * new encoding is needed — see FILL_BIOME_COLORS below.
- */
-export const CHUNK_FLAG_FILL = 1 << 4;
-
-/**
- * The biome-map colors the game fills with one material and telescope has no
- * generator for. Verified against the biome maps (2026-08): these are the only
- * two colors in biome_map.png / _newgame_plus / _nightmare that have no
- * `wangFile`, are not in `edgeNoiseOverlayExceptions`, and cover more than a
- * handful of chunks (solid_wall 941/677/696, solid_wall_tower 155/83/0).
+ * new encoding is needed — buildChunkTextures below writes the fill color into
+ * u_fgTex for exactly these chunks.
  *
- * Game data (data/biome/solid_wall.xml, data/biome/tower/solid_wall_tower.xml):
- * neither sets `noise_biome_edges` (default 1 -> wobbles) or
- * `big_noise_biome_edges` (default 1); both set `fat_biome_edges="0"`. So they
+ * Which chunks those are, and what they paint, comes from GENERATOR_CONFIG's
+ * `fillMaterial` (FILL_BIOME_COLORS) and image_processing's terrainFillColor —
+ * the same two things the CPU bake reads, so the renderers cannot diverge on
+ * either the set or the color.
+ *
+ * Game data (e.g. data/biome/solid_wall.xml, data/biome/tower/solid_wall_tower.xml):
+ * these biomes do not set `noise_biome_edges` (default 1 -> wobbles) or
+ * `big_noise_biome_edges` (default 1); they set `fat_biome_edges="0"`. So they
  * are ordinary wobble sources *and* targets, which the resolver chain above
  * already handles — nothing here short-circuits them.
- *
- *   0x3d3d3d solid_wall        <MaterialComponent> rock_hard ("dense rock",
- *                              material_index 10) + rock_hard_border
- *                              ("extremely dense rock", material_index 9)
- *   0x3f3d3e solid_wall_tower  a single <MaterialComponent> rock_static_cursed
- *
- * The painted color comes from TILE_FOREGROUND_COLORS (biome_map_foreground.png),
- * which already carries 0x2b1914 for solid_wall and 0x815455 for
- * solid_wall_tower — within a few units of the game's own material base colors
- * (rock_hard_border texture_color 0x271612, rock_static_cursed 0x754f4f) and,
- * unlike a hardcoded material color, consistent with how every other chunk's
- * foreground fill is recolored.
- *
- * FILL_BIOME_MATERIALS is the mouseover answer for these chunks (they have no
- * layer.buffer to sample). One material per biome: the one whose texture_color
- * matches the painted fill (rock_hard_border 0x271612, rock_static_cursed
- * 0x754f4f); the true rock_hard/rock_hard_border split inside solid_wall
- * depends on the engine's density field, which telescope doesn't simulate.
  */
-export const FILL_BIOME_MATERIALS = {
-    0x3d3d3d: 'rock_hard_border', // solid_wall
-    0x3f3d3e: 'rock_static_cursed', // solid_wall_tower
-};
-
-export const FILL_BIOME_COLORS = new Set(Object.keys(FILL_BIOME_MATERIALS).map(Number));
+export const CHUNK_FLAG_FILL = 1 << 4;
 
 /**
  * Builds both mapWidth x 48 RGBA8UI chunk textures in one pass.
@@ -89,7 +63,9 @@ export function buildChunkTextures(biomeData, mapWidth) {
     for (let i = 0; i < count; i++) {
         const color = (biomeData.pixels[i] ?? 0) & 0xffffff;
         const name = BIOME_COLOR_TO_NAME[color];
-        const fgColor = TILE_FOREGROUND_COLORS[color];
+        // A fill chunk's foreground IS its fill material color: the shader reads
+        // u_fgTex for both the fill branch and the gray/white class.
+        const fgColor = terrainFillColor(color) ?? TILE_FOREGROUND_COLORS[color];
         let flags = 0;
         if (BIOME_COLORS_WITH_TILES.has(color)) flags |= CHUNK_FLAG_HAS_TILES;
         if (name && edgeNoiseOverlayExceptions.has(name)) flags |= CHUNK_FLAG_EDGE_NOISE_EXCEPTION;

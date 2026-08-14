@@ -392,9 +392,11 @@ export function getMaterialAtWorldCoordinates(tileLayers, pixelScenes, worldX, w
             const localX = Math.floor((adjustedWorldX - layer.correctedX) / 10);
             const localY = Math.floor((adjustedWorldY - layer.correctedY) / 10);
 
-            // 3. Access the raw buffer (skipping the 4-pixel header)
+            // 3. Access the raw buffer (skipping the 4-pixel header). Fill layers
+            // have none: their material is answered from the biome map instead
+            // (app.js), and they must not shadow a pixel scene carved into them.
             const buffer = layer.buffer;
-            if (!buffer) return null;
+            if (!buffer) continue;
 
             // Index: (y + offset) * width + x, then * 3 for RGB
             const idx = ((localY + 4) * layer.width + localX) * 3;

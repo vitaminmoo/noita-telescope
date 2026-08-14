@@ -37,9 +37,9 @@ export const GENERATOR_CONFIG = {
     // Extra biomes that don't have wang tiles
     'excavationsite_cube_chamber': { color: 0xff24888a, name: "Meditation Cube" },
     'snowcave_secret_chamber': { color: 0xff18a0d6, name: "Snowcave Secret Chamber" },
-    'snowcastle_cavern': { color: 0xff775ddb, name: "Hiisi Hourglass Shop" },
+    'snowcastle_cavern': { color: 0xff775ddb, fillMaterial: 'rock_hard_border', name: "Hiisi Hourglass Shop" },
     'snowcastle_hourglass_chamber': { color: 0xff18d6d6, name: "Eye Room" },
-    'robot_egg': { color: 0xff9e4302, name: "Robot Egg" },
+    'robot_egg': { color: 0xff9e4302, fillMaterial: 'lava', name: "Robot Egg" },
     'pyramid_hallway': { color: 0xff167f5f, hasStuff: false, name: "Pyramid (Hallway)" },
     'pyramid_right': { color: 0xff968f96, hasStuff: false, name: "Pyramid (Right)" },
     'pyramid_entrance': { color: 0xff967f5f, hasStuff: false, name: "Pyramid (Entrance)" },
@@ -47,7 +47,7 @@ export const GENERATOR_CONFIG = {
     'pyramid_top': { color: 0xffc88f5f, name: "Pyramid (Top)"},
     'secret_lab': { color: 0xffbaa345, name: "Abandoned Alchemy Lab" },
     'wizardcave_entrance': { color: 0xff804169, name: "Triangle Boss"},
-    'dragoncave': { color: 0xff364d24, name: "Dragoncave" },
+    'dragoncave': { color: 0xff364d24, fillMaterial: 'rock_hard_border', name: "Dragoncave" },
     'roboroom': { color: 0xff9d893d, name: "Mecha Kolmi Boss Room" },
     'meatroom': { color: 0xff796620, name: "Meatball Boss Room" },
     'ghost_secret': { color: 0xff1F3B64, hasStuff: false, name: "Forgotten Boss Room" },
@@ -58,10 +58,10 @@ export const GENERATOR_CONFIG = {
     'temple_altar_right_snowcave': { color: 0xff93cb4f, hasStuff: false, name: "Holy Mountain (Snowy Depths Exit)" }, // note: not used in NG, for some reason
     'temple_altar_right_snowcastle': { color: 0xff93cb5a, hasStuff: false, name: "Holy Mountain (Hiisi Base Exit)" }, // note: not used in NG+, for some reason
     'temple_wall_ending': { color: 0xff5a9628, hasStuff: false, name: "Holy Mountain Basin (End)" },
-    'temple_wall': { color: 0xff6dcb28, hasStuff: false, name: "Holy Mountain Basin" },
-    'solid_wall_temple': { color: 0xffB8A928, hasStuff: false, name: "Holy Mountain (Solid)" },
+    'temple_wall': { color: 0xff6dcb28, fillMaterial: 'rock_hard_border', hasStuff: false, name: "Holy Mountain Basin" },
+    'solid_wall_temple': { color: 0xffB8A928, fillMaterial: 'templebrick_static', hasStuff: false, name: "Holy Mountain (Solid)" },
     // Empty HM variants excluded since they only apply to daily practice run mod
-    'boss_arena': { color: 0xff14EED7, hasStuff: false, name: "The Laboratory" },
+    'boss_arena': { color: 0xff14EED7, fillMaterial: 'rock_hard_border', hasStuff: false, name: "The Laboratory" },
     'boss_arena_top': { color: 0xff0da899, hasStuff: false, name: "The Laboratory (Top)" },
     // Surface and other kind of useless ones
     'hills': { color: 0xff36d517, hasStuff: false, name: "Hills" },
@@ -71,13 +71,13 @@ export const GENERATOR_CONFIG = {
     'winter': { color: 0xffD6D8E3, hasStuff: false, name: "Snowy Wasteland" },
     'lake': { color: 0xff1133F1, hasStuff: false, name: "Lake (Surface)" },
     'lake_statue': { color: 0xff11A3FC, hasStuff: false, name: "Lake (Island)" },
-    'lava': { color: 0xffFF6A02, hasStuff: false, name: "Volcanic Lake" },
-    'lava_90percent': { color: 0xffFFA717, hasStuff: false, name: "Volcanic Lake (90%)" },
-    'gold': { color: 0xffFFFF00, hasStuff: false, name: "Gold" }, // Functionally useful but not for this
-    'water': { color: 0xff0000FF, hasStuff: false, name: "Water" }, // Literally useless and yet very mysterious!
-    'solid_wall': { color: 0xff3d3d3d, hasStuff: false, name: "EDR" },
+    'lava': { color: 0xffFF6A02, fillMaterial: 'lava', hasStuff: false, name: "Volcanic Lake" },
+    'lava_90percent': { color: 0xffFFA717, fillMaterial: 'lava', hasStuff: false, name: "Volcanic Lake (90%)" },
+    'gold': { color: 0xffFFFF00, fillMaterial: 'gold', hasStuff: false, name: "Gold" }, // Functionally useful but not for this
+    'water': { color: 0xff0000FF, fillMaterial: 'water', hasStuff: false, name: "Water" }, // Literally useless and yet very mysterious!
+    'solid_wall': { color: 0xff3d3d3d, fillMaterial: 'rock_hard_border', hasStuff: false, name: "EDR" },
     //'solid_wall_damage': { color: 0xff684C4C, hasStuff: false, name: "Cursed Rock" }, // Actually got this mixed up, I don't know if this one is used
-    'solid_wall_tower': { color: 0xff3f3d3e, hasStuff: false, name: "Cursed Rock" },
+    'solid_wall_tower': { color: 0xff3f3d3e, fillMaterial: 'rock_static_cursed', hasStuff: false, name: "Cursed Rock" },
     // Orb rooms
     'orbroom_00': { color: 0xffffd100, hasStuff: false, name: "Orb Room (0)" },
     'orbroom_01': { color: 0xffffd101, hasStuff: false, name: "Orb Room (1)" },
@@ -110,20 +110,20 @@ export const GENERATOR_CONFIG = {
     'mountain_top': { color: 0xffC08080, hasStuff: false, name: "Mountain (Top)" },
     'mountain_floating_island': { color: 0xffC08082, hasStuff: false, name: "Mountain (Floating Island)" },
     'mountain_tree': { color: 0xff14E1D7, hasStuff: false, name: "Tree" },
-    'solid_wall_hidden_cavern': { color: 0xff42244d, hasStuff: false, name: "Hidden Cavern" },
+    'solid_wall_hidden_cavern': { color: 0xff42244d, fillMaterial: 'rock_hard_border', hasStuff: false, name: "Hidden Cavern" },
     'solid_wall_tower_10': { color: 0xff3d3e41, name: "Tower (Reward)" },
     'bridge': { color: 0xffad8111, hasStuff: false, name: "Bridge" },
     'empty': { color: 0xff48E311, hasStuff: false, name: "Empty" },
     'snowcave_tunnel': { color: 0xff7be311, hasStuff: false, name: "Snowcave Tunnel" },
-    'watercave': { color: 0xff3046c1, hasStuff: false, name: "Dark Cave" },
+    'watercave': { color: 0xff3046c1, fillMaterial: 'rock_static', hasStuff: false, name: "Dark Cave" },
     'sky_light_injector': { color: 0xfffe0000, hasStuff: false, name: "Sky Light Injector" },
-    'teleroom': { color: 0xff5f8fab, hasStuff: false, name: "Teleport Room" },
-    'friend_1': { color: 0xff6db55a, hasStuff: false, name: "Friend Room (1)" },
-    'friend_2': { color: 0xff6db55b, hasStuff: false, name: "Friend Room (2)" },
-    'friend_3': { color: 0xff6db55c, hasStuff: false, name: "Friend Room (3)" },
-    'friend_4': { color: 0xff6db55d, hasStuff: false, name: "Friend Room (4)" },
-    'friend_5': { color: 0xff6db55e, hasStuff: false, name: "Friend Room (5)" },
-    'friend_6': { color: 0xff6db55f, hasStuff: false, name: "Friend Room (6)" },
+    'teleroom': { color: 0xff5f8fab, fillMaterial: 'rock_hard_border', hasStuff: false, name: "Teleport Room" },
+    'friend_1': { color: 0xff6db55a, fillMaterial: 'rock_hard_border', hasStuff: false, name: "Friend Room (1)" },
+    'friend_2': { color: 0xff6db55b, fillMaterial: 'rock_hard_border', hasStuff: false, name: "Friend Room (2)" },
+    'friend_3': { color: 0xff6db55c, fillMaterial: 'rock_hard_border', hasStuff: false, name: "Friend Room (3)" },
+    'friend_4': { color: 0xff6db55d, fillMaterial: 'rock_hard_border', hasStuff: false, name: "Friend Room (4)" },
+    'friend_5': { color: 0xff6db55e, fillMaterial: 'rock_hard_border', hasStuff: false, name: "Friend Room (5)" },
+    'friend_6': { color: 0xff6db55f, fillMaterial: 'rock_hard_border', hasStuff: false, name: "Friend Room (6)" },
     'gun_room': { color: 0xff39a760, hasStuff: false, name: "Gun Room" },
     'null_room': { color: 0xffe17e32, hasStuff: false, name: "Nullification Altar" },
     'rock_room': { color: 0xff326655, hasStuff: false, name: "Rock Room" },
@@ -139,7 +139,7 @@ export const GENERATOR_CONFIG = {
     'essenceroom_hell': { color: 0xff157cb5, hasStuff: false, name: "Essence of Water" },
     'essenceroom_alc': { color: 0xff157cb6, hasStuff: false, name: "Essence of Spirits" },
     'mystery_teleport': { color: 0xff157cb7, hasStuff: false, name: "Mystery Teleport" },
-    'roadblock': { color: 0xfff0d517, hasStuff: false, name: "Roadblock" },
+    'roadblock': { color: 0xfff0d517, fillMaterial: 'rock_hard_border', hasStuff: false, name: "Roadblock" },
 };
 
 Object.values(GENERATOR_CONFIG).forEach(conf => {
@@ -153,8 +153,34 @@ Object.entries(GENERATOR_CONFIG).forEach(([biomeName, conf]) => {
     BIOME_COLOR_TO_NAME[conf.color & 0xffffff] = biomeName;
 });
 
-// Only the ones with wang tiles
+// Only the ones with wang tiles. This means "has a generated buffer / an atlas
+// region", which is what the GL region tables key off — do NOT widen it to cover
+// fill biomes; use BIOME_COLORS_WITH_TERRAIN for "the game paints something here".
 export const BIOME_COLORS_WITH_TILES = new Set(Object.values(GENERATOR_CONFIG).filter(conf => conf.wangFile != null).map(conf => conf.color & 0xffffff));
+
+/**
+ * Constant-material fill biomes: biome-map color -> the material the game fills
+ * the whole chunk with. `fillMaterial` is set on a biome whose <MaterialComponent>
+ * density ranges cover the entire domain (data/biome/*.xml), so the engine leaves
+ * no air behind and telescope needs no generator for it — just a constant.
+ *
+ * Where two components overlap (solid_wall's rock_hard index 10 + rock_hard_border
+ * index 9, watercave's rock_hard + rock_static) the lower material_index wins,
+ * which is also what the hand-authored biome_map_foreground colors agree with.
+ *
+ * One source of truth: the CPU bake (image_processing.js), the GL chunk texture
+ * (gl/chunk_textures.js) and the hover readout (app.js) all resolve fills from
+ * here, so the two renderers cannot disagree about which chunks are filled.
+ */
+export const FILL_BIOME_MATERIALS = {};
+Object.values(GENERATOR_CONFIG).forEach(conf => {
+    if (conf.fillMaterial) FILL_BIOME_MATERIALS[conf.color & 0xffffff] = conf.fillMaterial;
+});
+
+export const FILL_BIOME_COLORS = new Set(Object.keys(FILL_BIOME_MATERIALS).map(Number));
+
+/** Every biome the renderers paint terrain for: wang buffers plus constant fills. */
+export const BIOME_COLORS_WITH_TERRAIN = new Set([...BIOME_COLORS_WITH_TILES, ...FILL_BIOME_COLORS]);
 
 // Used to generate the holy mountain basin material variants
 export const HOLY_MOUNTAIN_BASIN_COLORS = new Set([

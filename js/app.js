@@ -3,7 +3,7 @@ import { loadPNG, loadPNGBitmap} from './png_sanitizer.js';
 import { getDisplayName, loadTranslations } from './translations.js';
 import { UNLOCKABLES, UNLOCK_DISPLAY_NAMES, setUnlocks } from './unlocks.js';
 import { toggleTooltipPinned, updateTooltip } from './tooltip_generator.js';
-import { GENERATOR_CONFIG } from './generator_config.js';
+import { FILL_BIOME_MATERIALS, GENERATOR_CONFIG } from './generator_config.js';
 import { generateBiomeTiles } from './tile_generator.js';
 import { scanSpawnFunctions, getSpecialPoIs, prescanSpawnFunctions } from './poi_scanner.js';
 import { performSearch, navigateSearch, cancelSearch, isSearchActive, clearHighlights, performLocalSearch, syncSearchWorkerData, activeLocalSearchArea, syncSettingsToSearchWorker, continueSearchSequence } from './search_manager.js';
@@ -16,7 +16,6 @@ import { COALMINE_ALT_SCENES } from './pixel_scene_config.js';
 import { debugBiomeEdgeNoise } from './edge_noise.js';
 import { drawBiomeBoundaryContour } from './biome_boundary.js';
 import { GLTerrainRenderer } from './gl/terrain_renderer.js';
-import { FILL_BIOME_COLORS, FILL_BIOME_MATERIALS } from './gl/chunk_textures.js';
 import { getPixelSceneCanvas, pixelSceneMipLevel, loadPixelSceneData, reloadPixelSceneCache, PIXEL_SCENE_DATA } from './pixel_scene_generation.js';
 import { addStaticPixelScenes } from './static_spawns.js';
 import { NollaPrng } from './nolla_prng.js';
@@ -496,7 +495,7 @@ export const app = {
 		document.getElementById('debug-layer-timings').onchange = () => {this.saveSettings(); this.draw();};
 		// The GL renderer paints the fill biomes and the CPU bake does not, so the
 		// unpainted-chunk mask depends on which one is selected.
-		document.getElementById('debug-terrain-renderer').onchange = () => {this.saveSettings(); this.buildUnpaintedMask(); this.draw();};
+		document.getElementById('debug-terrain-renderer').onchange = () => {this.saveSettings(); this.draw();};
 		document.getElementById('debug-pixel-scene-budget').onchange = () => {this.saveSettings(); this.draw();};
 		for (const layer of RENDER_LAYERS) {
 			document.getElementById(layer.id).onchange = () => {this.saveSettings(); this.draw();};
@@ -2137,10 +2136,8 @@ export const app = {
 	// biomes with no generator, empty map areas - is left uncovered so it can be
 	// checkerboarded instead of showing the raw biome map color.
 	//
-	// The GL terrain renderer additionally paints the constant-material fill biomes
-	// (FILL_BIOME_COLORS), so those chunks count as covered while it is selected. The
-	// CPU bake still paints nothing there, so they stay checkerboarded in 'cpu' mode -
-	// which is why the terrain-renderer setting rebuilds this mask.
+	// Constant-material fill biomes have chunk-sized layers of their own, so both
+	// renderers paint them and the generic validChunks pass below covers them.
 	buildUnpaintedMask() {
 		this.unpaintedMask = null;
 		this.unpaintedChunkCount = 0;
@@ -2167,12 +2164,6 @@ export const app = {
 						covered[cy * w + cx] = 1;
 					}
 				}
-			}
-		}
-		if (appSettings.terrainRenderer === 'gl' && this.biomeData?.pixels) {
-			const pixels = this.biomeData.pixels;
-			for (let i = 0; i < w * h && i < pixels.length; i++) {
-				if (FILL_BIOME_COLORS.has(pixels[i] & 0xffffff)) covered[i] = 1;
 			}
 		}
 		const canvas = document.createElement('canvas');

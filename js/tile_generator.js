@@ -3,6 +3,7 @@ import { stbhw_generate_image, stbhw_build_tileset_from_image, StbhwTileset, stb
 import { applyMainBiomeHack, applyCoalmineHack, applyPostprocessingHacks, undoCoalmineHack } from './biome_hacks.js';
 import { blockOutRooms } from './pixel_scene_generation.js';
 import { findMinPath, getPathStartSegment, usesMinesTemplate } from './pathfinding.js';
+import { terrainFillColor } from './image_processing.js';
 import { CHUNK_SIZE, TILE_SIZE } from './constants.js';
 
 //import { spawnWandAltar, spawnPotionAltar, spawnChest, spawnHeart } from './spell_generator.js';
@@ -238,6 +239,60 @@ function applyMasking(pixels, imgData, mapW, bbox, validChunks, offsetY = 4) {
     }
 }
 
+/**
+ * A constant-material fill biome's layer (GENERATOR_CONFIG `fillMaterial`): the
+ * game fills every cell of the chunk with one material, so there is nothing to
+ * generate — no wang tileset, no PRNG, no pathfinding, no blockOutRooms.
+ *
+ * Deliberately buffer-less. A real buffer would have to hold the material's wang
+ * color for every tile, which for solid_wall's single 68x48-chunk region is
+ * ~25 MB that gets structured-cloned into the overlay and world workers; worse,
+ * every pixel would then be fed to prescanSpawnFunctions. With `buffer: null`
+ * the scanner skips the layer outright (poi_scanner.js:269), so fills provably
+ * cannot move a single spawn. The color is synthesized at paint time instead,
+ * from the same shared table the GL renderer reads.
+ *
+ * One layer per biome-map chunk rather than one per flood-filled region: the
+ * regions are enormous but sparse (solid_wall's bbox is 3264 chunks for 941 of
+ * its own), and a per-chunk layer keeps every overlay canvas chunk-sized instead
+ * of allocating one 3480x2457 canvas per parallel world.
+ */
+function generateFillLayer(biomeName, config, cx, cy) {
+    const { width, height } = calculateMapDimensions([cx, cy, cx, cy]);
+    const correctedX = Math.floor(cx / 5) * 5 * CHUNK_SIZE + (cx % 5) * 51 * TILE_SIZE;
+    const correctedY = Math.floor(cy / 5) * 5 * CHUNK_SIZE + (cy % 5) * 51 * TILE_SIZE;
+
+    return {
+        biomeName: biomeName,
+        x: cx * CHUNK_SIZE,
+        y: cy * CHUNK_SIZE,
+        correctedX,
+        correctedY,
+        w: width * TILE_SIZE,
+        h: height * TILE_SIZE,
+        path: null,
+        // No pixel data: `isFill` plus the biome's fillMaterial is the whole layer.
+        buffer: null,
+        isFill: true,
+        fillMaterial: config.fillMaterial,
+        fillColor: terrainFillColor(config.color & 0xffffff),
+        width: width,
+        mapH: height,
+        tileIndices: null,
+        xmax: null,
+        ymax: null,
+        tileSize: null,
+        numHTiles: null,
+        numVTiles: null,
+        chunkBasePos: {x: cx, y: cy},
+        minX: cx,
+        minY: cy,
+        validChunks: new Set([`${cx},${cy}`]),
+        poisByPW: {},
+        pixelSceneRooms: null
+    };
+}
+
 function generateStaticTile(biomeName, config, bbox) {
     //const wangFile = config.wangFile;
     // For static tiles, we can just load the image and convert it to the same format as the generated buffers
@@ -310,8 +365,17 @@ export async function generateBiomeTiles(biomePixels, width, height, biomeConfig
 
     for (let biomeName of Object.keys(biomeConfig)) {
         const conf = biomeConfig[biomeName];
-        if (!conf.wangFile) continue; // Not sure why I didn't have this before.
         if (!conf.enabled) continue;
+        if (!conf.wangFile) {
+            // Constant-material fill biomes get a chunk-sized layer each; every
+            // other tileless biome still produces nothing.
+            if (!conf.fillMaterial) continue;
+            for (let i = 0; i < biomePixels.length; i++) {
+                if (biomePixels[i] !== conf.color) continue;
+                layers.push(generateFillLayer(biomeName, conf, i % width, Math.floor(i / width)));
+            }
+            continue;
+        }
 
         const offsetY = (conf.offsetY !== undefined) ? conf.offsetY : DEFAULT_OFFSET_Y;
         const { regions, bboxes } = findBiomeRegions(biomePixels, width, height, conf.color);
