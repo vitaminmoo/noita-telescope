@@ -112,19 +112,64 @@ function buildPixelSceneEntry(pixelSceneKey, variantKey, cacheKey) {
 	return entry;
 }
 
+function readBitmapPixels(bitmap) {
+	const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+	const ctx = canvas.getContext('2d');
+	ctx.drawImage(bitmap, 0, 0);
+	return ctx.getImageData(0, 0, bitmap.width, bitmap.height);
+}
+
+// Halve an image the way a cutout sprite wants to be halved: point sampling, but never
+// losing coverage.
+//
+// Scene alpha is binary - a pixel is either painted material or air - and the seam
+// between a scene and whatever it sits on is often one pixel thin. Averaging the 2x2
+// block (a box filter) turns that seam into partial alpha, so the dark world behind
+// shows through as a hairline crack along the scene edge; plain point sampling drops the
+// seam outright and opens the same crack, wider. So the output takes the point sample
+// (the block's lower-right pixel, which is what a nearest-neighbour downscale picks) and
+// falls back to whichever of the other three is painted when that one is air. Painted
+// area can only grow, never perforate, and alpha stays binary all the way down.
+function halveWithoutHoles(img) {
+	const sw = img.width, sh = img.height, s = img.data;
+	// Round up, so an odd-sized level keeps its last row/column instead of dropping it -
+	// that trailing row is exactly the kind of one-pixel edge this reduction exists to keep.
+	const w = Math.max(1, Math.ceil(sw / 2)), h = Math.max(1, Math.ceil(sh / 2));
+	const out = new ImageData(w, h);
+	const d = out.data;
+	for (let y = 0; y < h; y++) {
+		const rowLo = Math.min(y * 2 + 1, sh - 1) * sw;
+		const rowHi = y * 2 * sw;
+		for (let x = 0; x < w; x++) {
+			const colLo = Math.min(x * 2 + 1, sw - 1);
+			const colHi = x * 2;
+			let p = (rowLo + colLo) * 4;
+			if (s[p + 3] !== 255) {
+				const b = (rowLo + colHi) * 4, c = (rowHi + colLo) * 4, e = (rowHi + colHi) * 4;
+				if (s[b + 3] > s[p + 3]) p = b;
+				if (s[c + 3] > s[p + 3]) p = c;
+				if (s[e + 3] > s[p + 3]) p = e;
+			}
+			const o = (y * w + x) * 4;
+			d[o] = s[p]; d[o + 1] = s[p + 1]; d[o + 2] = s[p + 2]; d[o + 3] = s[p + 3];
+		}
+	}
+	return out;
+}
+
 function buildPixelSceneMips(entry, level) {
-	// Each level is filtered from the one above it rather than resampled from the base,
-	// which is both cheaper and closer to a proper mip chain.
-	for (let l = 1; l <= level; l++) {
-		if (entry.levels[l]) continue;
-		const src = entry.levels[l - 1];
-		const w = Math.max(1, src.width >> 1);
-		const h = Math.max(1, src.height >> 1);
-		const canvas = new OffscreenCanvas(w, h);
-		const ctx = canvas.getContext('2d');
-		ctx.imageSmoothingEnabled = true;
-		ctx.imageSmoothingQuality = 'high';
-		ctx.drawImage(src, 0, 0, w, h);
+	// Each level is reduced from the one above it rather than resampled from the base,
+	// which is both cheaper and closer to a proper mip chain. Levels are always built in
+	// order, so the first missing one has its parent already in the cache; its pixels are
+	// read back once and the rest of the chain is reduced from that copy.
+	let first = 1;
+	while (first <= level && entry.levels[first]) first++;
+	if (first > level) return entry.levels[level];
+	let pixels = readBitmapPixels(entry.levels[first - 1]);
+	for (let l = first; l <= level; l++) {
+		pixels = halveWithoutHoles(pixels);
+		const canvas = new OffscreenCanvas(pixels.width, pixels.height);
+		canvas.getContext('2d').putImageData(pixels, 0, 0);
 		addPixelSceneBitmap(entry, l, canvas.transferToImageBitmap());
 	}
 	return entry.levels[level];
