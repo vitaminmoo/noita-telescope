@@ -255,10 +255,33 @@ export const MATERIAL_DATA = await fetchSafeJson('../data/material_data.json');
 export const MATERIAL_WANG_COLORS = {};
 export const POTION_COLORS = {};
 export const TEXTURE_COLORS = {};
+
+/**
+ * `texture_color` for a material with NO texture is a straight copy of the
+ * engine's raw `color` field, which the engine loads into CellData+0x64 as
+ * **ABGR** — R and B swapped from the order the hex string reads. That is the
+ * byte order the game actually paints with (gl/shaders.js engMaterialColor and
+ * engine_data.js MATERIAL_FLAT_RGB_BY_ID both already undo it), so reading the
+ * string as RGB gave every untextured liquid/powder a byte-swapped color: oil
+ * #3d3728 against the game's #28373d, radioactive_liquid #b4ff10 against
+ * #10ffb4, water #376259 against #596237.
+ *
+ * A *textured* material's `texture_color` is a different quantity — the average
+ * of its materials_gfx texels, already in RGB order (rock.png averages 292b31
+ * against texture_color FF292A30, templebrick.png 4e4730 against FF4D4630), so
+ * the swap must not touch it. `texture == null` is exactly the boundary.
+ */
+function displayTextureColor(material) {
+	if (material.texture) return material.texture_color;
+	const v = parseInt(material.texture_color, 16) >>> 0;
+	const swapped = (v & 0xff000000) | ((v & 0x0000ff) << 16) | (v & 0x00ff00) | ((v >>> 16) & 0xff);
+	return (swapped >>> 0).toString(16).padStart(8, '0').toUpperCase();
+}
+
 for (const material of MATERIAL_DATA) {
 	MATERIAL_WANG_COLORS[material.name] = material.wang;
 	POTION_COLORS[material.name] = material.color;
-	TEXTURE_COLORS[material.name] = material.texture_color;
+	TEXTURE_COLORS[material.name] = displayTextureColor(material);
 }
 
 // Use texture colors in this
