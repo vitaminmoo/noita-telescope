@@ -2281,10 +2281,11 @@ export const app = {
 		return (pwY) => terrain.rendersWorld(pwY);
 	},
 
-	// Stamps the checkerboard over every uncovered chunk of every world in view. The mask
-	// is drawn through the camera transform (so it lines up with the biome background,
-	// per parallel world, in the vertical worlds too), but the checker squares themselves
-	// are filled in screen space so they stay 8px at any zoom.
+	// Stamps the checkerboard over every uncovered chunk of every horizontal parallel
+	// world in view (the vertical bands do not use the main map's coverage, see below).
+	// The mask is drawn through the camera transform so it lines up with the biome
+	// background, but the checker squares themselves are filled in screen space so they
+	// stay 8px at any zoom.
 	// The engine's ragged background boundary art: one hand-drawn 64px strip
 	// straddling each chunk line where the two chunks' background_image differ,
 	// drawn by the winning side so its background bleeds into the neighbour. We
@@ -2336,7 +2337,12 @@ export const app = {
 		sctx.save();
 		this.setupCamera(sctx);
 		for (let worldKey of this.worldsInView) {
-			const { shiftX, shiftY } = worldOffsets[worldKey];
+			const { pwY, shiftX, shiftY } = worldOffsets[worldKey];
+			// The mask is the main map's chunk coverage. A vertical band is the clamped
+			// edge row repeated, so main-world coverage says nothing about what a band
+			// chunk holds -- stamping it there checkerboarded the sky in the shape of
+			// main-world biome regions.
+			if (pwY !== 0) continue;
 			sctx.drawImage(this.unpaintedMask, shiftX, shiftY, this.w * 512, this.h * 512);
 		}
 		sctx.restore();
