@@ -1,4 +1,4 @@
-import { HOLY_MOUNTAIN_BASIN_COLORS } from "./generator_config.js";
+import { HOLY_MOUNTAIN_BASIN_COLORS, SCENE_ONLY_COLORS } from "./generator_config.js";
 import { NollaPrng } from "./nolla_prng.js";
 import { loadPixelScene } from "./pixel_scene_generation.js";
 import { getWorldCenter, getWorldSize } from "./utils.js";
@@ -174,30 +174,34 @@ export function addStaticPixelScenes(ws, ng, pwIndex, pwIndexVertical, biomeData
 				newPixelScenes.push(pixelScene);
 			}
 		}
-		if (pixelSceneOption === 'all') {
-			// Chunk based pixel scenes (none of these are in vertical PWs, at least not in NG... Though NG+3 does have the infinite orb room tower, TODO)
-			if (pwIndexVertical === 0) {
-				for (let x = 0; x < mapWidth; x++) {
-					for (let y = 0; y < 48; y++) {
-						const biomeColor = biomeData.pixels[y * mapWidth + x];
-						if (PIXEL_SCENE_BIOMES[biomeColor]) {
-							const biomePixelSceneInfo = PIXEL_SCENE_BIOMES[biomeColor];
-							const biomeName = biomePixelSceneInfo.biome;
-							const offsetX = biomePixelSceneInfo.offsetX || 0;
-							const offsetY = biomePixelSceneInfo.offsetY || 0;
-							const adjX = x * 512 - mapWidth * 256 + pwIndex * mapWidth * 512 + offsetX;
-							const adjY = y * 512 - 14*512 + pwIndexVertical * 48 * 512 + offsetY;
-							// The game's biome init(x, y, w, h) gets the cell's world
-							// origin, so a room whose scene depends on where the cell
-							// sits picks per cell rather than per biome.
-							const biomePixelSceneName = biomePixelSceneInfo.nameAtCell
-								? biomePixelSceneInfo.nameAtCell(adjX, adjY)
-								: biomePixelSceneInfo.name;
-							const pixelScene = loadPixelScene(biomeData, biomeName, biomePixelSceneName, ws, ng, adjX, adjY, skipCosmeticPixelScenes, false, gameMode);
-							//console.log(`Biome color ${biomeColor.toString(16)} at (${x}, ${y}) corresponds to biome ${biomeName} and pixel scene ${biomePixelSceneName}`);
-							if (pixelScene) {
-								newPixelScenes.push(pixelScene);
-							}
+		// Chunk based pixel scenes (none of these are in vertical PWs, at least not in NG... Though NG+3 does have the infinite orb room tower, TODO)
+		if (pwIndexVertical === 0) {
+			for (let x = 0; x < mapWidth; x++) {
+				for (let y = 0; y < 48; y++) {
+					const biomeColor = biomeData.pixels[y * mapWidth + x];
+					// A `sceneOnly` room paints no terrain of its own, so its scene
+					// is not decoration -- it is the entire contents of the chunk,
+					// and without it the room reads as a hole in the world. Those
+					// count as 'required' the way STATIC_PIXEL_SCENES' flagged
+					// entries do; everything else still waits for 'all'.
+					if (pixelSceneOption !== 'all' && !SCENE_ONLY_COLORS.has(biomeColor & 0xffffff)) continue;
+					if (PIXEL_SCENE_BIOMES[biomeColor]) {
+						const biomePixelSceneInfo = PIXEL_SCENE_BIOMES[biomeColor];
+						const biomeName = biomePixelSceneInfo.biome;
+						const offsetX = biomePixelSceneInfo.offsetX || 0;
+						const offsetY = biomePixelSceneInfo.offsetY || 0;
+						const adjX = x * 512 - mapWidth * 256 + pwIndex * mapWidth * 512 + offsetX;
+						const adjY = y * 512 - 14*512 + pwIndexVertical * 48 * 512 + offsetY;
+						// The game's biome init(x, y, w, h) gets the cell's world
+						// origin, so a room whose scene depends on where the cell
+						// sits picks per cell rather than per biome.
+						const biomePixelSceneName = biomePixelSceneInfo.nameAtCell
+							? biomePixelSceneInfo.nameAtCell(adjX, adjY)
+							: biomePixelSceneInfo.name;
+						const pixelScene = loadPixelScene(biomeData, biomeName, biomePixelSceneName, ws, ng, adjX, adjY, skipCosmeticPixelScenes, false, gameMode);
+						//console.log(`Biome color ${biomeColor.toString(16)} at (${x}, ${y}) corresponds to biome ${biomeName} and pixel scene ${biomePixelSceneName}`);
+						if (pixelScene) {
+							newPixelScenes.push(pixelScene);
 						}
 					}
 				}
@@ -332,11 +336,11 @@ export function addStaticPixelScenes(ws, ng, pwIndex, pwIndexVertical, biomeData
 	// Just set biome as "spliced" and don't deal with this bs
 	if (pixelSceneOption !== 'off') {
 		const splicedScenes = [
-			{name: "boss_arena", x: 3*512, y: 24*512, inNGP: true, inNightmare: true},
-			{name: "gourd_room", x: -33*512, y: -14*512, inNGP: true},
+			{name: "boss_arena", required: true, x: 3*512, y: 24*512, inNGP: true, inNightmare: true},
+			{name: "gourd_room", required: true, x: -33*512, y: -14*512, inNGP: true},
 			{name: "lake_statue", x: -29*512, y: 0, inNGP: true, inNightmare: true},
 			{name: "lavalake_pit_bottom", x: 5*512, y: 6*512}, // TODO: Says this is in nightmare but it doesn't appear to be?
-			{name: "lavalake2", x: 4*512, y: 0},
+			{name: "lavalake2", required: true, x: 4*512, y: 0},
 			{name: "moon", x: 0, y: -51*512, inNGP: true, required: true, inNightmare: true},
 			{name: "moon_dark", x: 0, y: 73*512 + 136, inNGP: true, required: true},
 			{name: "mountain_lake", x: 5*512, y: 0, inNightmare: true}, // TODO: Top of this changes in NG vs NGP, also it's flat and missing in PWs...
