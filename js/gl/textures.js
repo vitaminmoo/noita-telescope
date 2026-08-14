@@ -60,6 +60,33 @@ export function createRegionMetaTexture(gl, regions) {
     return tex;
 }
 
+/** RGBA8UI chunk lookup (rgb = biome-map color, a = chunk flags), from buildChunkTextures. */
+export function createChunkTexture(gl, chunkTextures) {
+    const tex = makeTexture(gl);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8UI, chunkTextures.width, chunkTextures.height, 0,
+        gl.RGBA_INTEGER, gl.UNSIGNED_BYTE, chunkTextures.chunk);
+    return tex;
+}
+
+/** RGBA8UI per-chunk TILE_FOREGROUND_COLORS (a = 255 when the chunk has one). */
+export function createForegroundTexture(gl, chunkTextures) {
+    const tex = makeTexture(gl);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8UI, chunkTextures.width, chunkTextures.height, 0,
+        gl.RGBA_INTEGER, gl.UNSIGNED_BYTE, chunkTextures.fg);
+    return tex;
+}
+
+/** R8UI 512x1 edge-noise permutation table (buildNoiseTable512). */
+export function createNoiseTexture(gl, table) {
+    const tex = makeTexture(gl);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8UI, table.length, 1, 0,
+        gl.RED_INTEGER, gl.UNSIGNED_BYTE, table);
+    return tex;
+}
+
 /** RGBA8 256x1 palette LUT (index -> color; alpha carries the paint mode). */
 export function createPaletteTexture(gl, paletteLUT) {
     const tex = makeTexture(gl);

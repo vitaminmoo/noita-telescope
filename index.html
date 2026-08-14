@@ -1203,6 +1203,13 @@
                     <option value="expanded">Expanded (slow)</option>
                 </select>
             </label>
+            <label class="debug-opt" title="Which renderer draws the terrain (tile overlay) layer. CPU uses the baked overlay images, one per region per parallel world. GL evaluates the biome edge noise per screen pixel on the GPU and samples the region images directly, which is faster and more accurate at biome seams, but is still being validated. GL needs WebGL2 and falls back to the CPU renderer without it, as well as for the heaven and hell parallel worlds.">
+                Terrain Renderer
+                <select id="debug-terrain-renderer">
+                    <option value="cpu" selected>CPU (baked)</option>
+                    <option value="gl">GL (experimental)</option>
+                </select>
+            </label>
             <label class="debug-opt" title="Show tile bounds for each region, with numerical values of the tile indices shown."><input type="checkbox" id="debug-show-tile-bounds"> Show Tile Bounds</label>
             <label class="debug-opt" title="Show the calculated pathfinding validation step for the region. This may not be exactly the same as the path the game uses, and is definitely not the shortest path or anything, it's just a verification that there is some path to the bottom of the biome. If it seems broken and nonsensical sometimes, it's because the way the game does it is too."><input type="checkbox" id="debug-show-path"> Show Paths</label>
             <label class="debug-opt" title="Show enemy spawns. Will make generation/searching/panning slightly slower. Might still be buggy."><input type="checkbox" id="show-enemy-spawns"> Show Enemy Spawns</label>

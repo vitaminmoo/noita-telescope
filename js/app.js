@@ -15,6 +15,7 @@ import { BIOME_COLOR_LOOKUP, createBiomeMapAlphaMask, createTileOverlays, create
 import { COALMINE_ALT_SCENES } from './pixel_scene_config.js';
 import { debugBiomeEdgeNoise } from './edge_noise.js';
 import { drawBiomeBoundaryContour } from './biome_boundary.js';
+import { GLTerrainRenderer } from './gl/terrain_renderer.js';
 import { getPixelSceneCanvas, pixelSceneMipLevel, loadPixelSceneData, reloadPixelSceneCache, PIXEL_SCENE_DATA } from './pixel_scene_generation.js';
 import { addStaticPixelScenes } from './static_spawns.js';
 import { NollaPrng } from './nolla_prng.js';
@@ -179,6 +180,9 @@ export const app = {
 	checkerPattern: null,
 	// Per-layer render profiling state (see markLayer above)
 	layerProfile: null,
+	// WebGL2 terrain renderer (settings.terrainRenderer === 'gl'), built lazily on
+	// the first GL frame and rebuilt whenever tileLayers/biomeData are replaced
+	glTerrain: null,
 
 	w: 0, h: 0, 
 	biomeData: null,
@@ -470,6 +474,7 @@ export const app = {
 		document.getElementById('debug-unpainted-checkerboard').onchange = () => {this.saveSettings(); this.draw();};
 		document.getElementById('debug-biome-boundary-contour').onchange = () => {this.saveSettings(); this.draw();};
 		document.getElementById('debug-layer-timings').onchange = () => {this.saveSettings(); this.draw();};
+		document.getElementById('debug-terrain-renderer').onchange = () => {this.saveSettings(); this.draw();};
 		document.getElementById('debug-pixel-scene-budget').onchange = () => {this.saveSettings(); this.draw();};
 		for (const layer of RENDER_LAYERS) {
 			document.getElementById(layer.id).onchange = () => {this.saveSettings(); this.draw();};
@@ -2140,6 +2145,54 @@ export const app = {
 		return this.checkerPattern;
 	},
 
+	// Renders the terrain layer with the WebGL2 pass and blits it over the whole
+	// viewport at the layer-4 position, replacing the per-region overlay drawImage
+	// loop. The GL canvas is screen sized and already in screen space, so it is drawn
+	// with the camera transform reset (the shader applies the camera itself).
+	//
+	// Returns a predicate telling drawNow which parallel worlds the pass covered, or
+	// null when GL is unavailable (no WebGL2, context loss, resource build failure) —
+	// the CPU bake then draws everything, unchanged.
+	drawTerrainGL() {
+		if (!this.glTerrain) this.glTerrain = new GLTerrainRenderer();
+		const terrain = this.glTerrain;
+		// Nothing to do if every world in view is one the GL pass does not cover.
+		let anyCovered = false;
+		for (const worldKey of this.worldsInView) {
+			if (terrain.rendersWorld(Number(worldKey.split(',')[1]))) { anyCovered = true; break; }
+		}
+		if (!anyCovered) return null;
+
+		const ok = terrain.ensureResources(this.tileLayers, this.biomeData, {
+			isNGP: this.isNGP,
+			gameMode: this.gameMode,
+			// Color-only settings: a 1 KiB LUT re-upload, never an atlas rebuild.
+			lut: {
+				recolorMaterials: appSettings.recolorMaterials,
+				clearSpawnPixels: appSettings.clearSpawnPixels,
+			},
+		});
+		if (!ok) return null;
+
+		const glCanvas = terrain.render({
+			width: this.canvas.width,
+			height: this.canvas.height,
+			camX: this.cam.x,
+			camY: this.cam.y,
+			camZ: this.cam.z,
+			pw: this.pw,
+			pwVertical: this.pwVertical,
+			edgeNoise: appSettings.enableEdgeNoise,
+		});
+		if (!glCanvas) return null;
+
+		this.ctx.save();
+		this.ctx.setTransform(1, 0, 0, 1, 0, 0);
+		this.ctx.drawImage(glCanvas, 0, 0);
+		this.ctx.restore();
+		return (pwY) => terrain.rendersWorld(pwY);
+	},
+
 	// Stamps the checkerboard over every uncovered chunk of every world in view. The mask
 	// is drawn through the camera transform (so it lines up with the biome background,
 	// per parallel world, in the vertical worlds too), but the checker squares themselves
@@ -2622,8 +2675,18 @@ export const app = {
 		// Tile data
 
 		if (L.tileOverlays) {
+			// GL terrain renderer: one full-screen WebGL2 pass replaces the per-region
+			// overlay blits for every world it covers (all but heaven/hell, see
+			// GLTerrainRenderer.rendersWorld). Returns null when GL is off or
+			// unavailable, in which case the CPU bake below draws everything.
+			const glCovers = (biomeOverlayMode !== 'none' && appSettings.terrainRenderer === 'gl')
+				? this.drawTerrainGL()
+				: null;
+			if (prof) markLayer(prof, 'terrainGL');
+
 			for (let worldKey of this.worldsInView) {
 				const { pwX, pwY, shiftX, shiftY } = worldOffsets[worldKey];
+				if (glCovers && glCovers(pwY)) continue;
 
 				// Hack PW offsets
 				let pwOffset = 0;
@@ -3335,6 +3398,7 @@ export const app = {
 			scaleHighlightedPoisWithZoom: document.getElementById('debug-highlight-pois-zoom').checked,
 			originalBiomeMap: document.getElementById('debug-original-biome-map').checked,
 			renderLayers: readRenderLayersFromUI(),
+			terrainRenderer: document.getElementById('debug-terrain-renderer').value,
 			debugLayerTimings: document.getElementById('debug-layer-timings').checked,
 			checkerboardUnpainted: document.getElementById('debug-unpainted-checkerboard').checked,
 			biomeBoundaryContour: document.getElementById('debug-biome-boundary-contour').checked,
@@ -3431,6 +3495,8 @@ export const app = {
 					document.getElementById(layer.id).checked = settings.renderLayers?.[layer.key] ?? layer.defaultOn;
 				}
 				settings.renderLayers = readRenderLayersFromUI();
+				document.getElementById('debug-terrain-renderer').value = settings.terrainRenderer || 'cpu';
+				settings.terrainRenderer = document.getElementById('debug-terrain-renderer').value;
 				document.getElementById('debug-layer-timings').checked = settings.debugLayerTimings || false;
 				document.getElementById('debug-unpainted-checkerboard').checked = settings.checkerboardUnpainted ?? true;
 				settings.checkerboardUnpainted = document.getElementById('debug-unpainted-checkerboard').checked;

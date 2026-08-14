@@ -67,6 +67,9 @@ export const appSettings = {
 	darksunState: false,
 	// Render debug options (main thread only, but kept here so drawNow() has one source)
 	renderLayers: defaultRenderLayers(),
+	// Which renderer draws the tile-overlay layer: 'cpu' is the baked overlay
+	// canvases (the parity reference), 'gl' is the WebGL2 terrain pass.
+	terrainRenderer: 'cpu',
 	debugLayerTimings: false,
 	checkerboardUnpainted: true,
 	biomeBoundaryContour: false,
@@ -113,6 +116,7 @@ export function updateSettingsFromUI() {
 		highlightPoiScale: parseFloat(document.getElementById('debug-highlight-poi-scale')?.value) || 1,
 		scaleHighlightedPoisWithZoom: document.getElementById('debug-highlight-pois-zoom')?.checked ?? true,
 		renderLayers: readRenderLayersFromUI(),
+		terrainRenderer: document.getElementById('debug-terrain-renderer')?.value || 'cpu',
 		debugLayerTimings: document.getElementById('debug-layer-timings')?.checked || false,
 		checkerboardUnpainted: document.getElementById('debug-unpainted-checkerboard')?.checked ?? true,
 		biomeBoundaryContour: document.getElementById('debug-biome-boundary-contour')?.checked ?? false,
