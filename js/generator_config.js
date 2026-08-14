@@ -112,6 +112,10 @@ export const GENERATOR_CONFIG = {
     'mountain_tree': { color: 0xff14E1D7, hasStuff: false, name: "Tree" },
     'solid_wall_hidden_cavern': { color: 0xff42244d, fillMaterial: 'rock_hard_border', hasStuff: false, name: "Hidden Cavern" },
     'solid_wall_tower_10': { color: 0xff3d3e41, fillMaterial: 'templebrickdark_static', fillApprox: true, name: "Tower (Reward)" },
+    // The two chunks at 53,22 and 55,22 flanking the tower reward room. The game
+    // gives this color no biome of its own: data/biome/_biomes_all.xml:17-20 is a
+    // second <Biome> entry pointing at the same data/biome/hills.xml as #36d517.
+    'hills_tower': { color: 0xff3d3e40, hasStuff: false, name: "Hills (Tower)" },
     'bridge': { color: 0xffad8111, hasStuff: false, name: "Bridge" },
     'empty': { color: 0xff48E311, hasStuff: false, name: "Empty" },
     'snowcave_tunnel': { color: 0xff7be311, fillMaterial: 'rock_hard_border', fillApprox: true, hasStuff: false, name: "Snowcave Tunnel" },

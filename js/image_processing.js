@@ -144,7 +144,7 @@ export const edgeNoiseOverlayExceptions = new Set([
     //'biome_watchtower', 'biome_potion_mimics', 'biome_darkness', 'biome_boss_sky', 'biome_barren',
     //'clouds', 'the_sky'
     // Really wish I didn't have to add these, but they end up looking weird
-    'hills', 'hills2', 'desert', 'winter',
+    'hills', 'hills_tower', 'hills2', 'desert', 'winter',
 ]);
 
 // Wang-tile biomes needing the same edge-noise treatment. Keep these separate
