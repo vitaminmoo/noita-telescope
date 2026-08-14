@@ -98,7 +98,7 @@ uvec4 chunkAt(ivec2 p) { return texelFetch(u_chunkTex, ivec2(pmod(p.x, u_mapWidt
 bool exceptionAt(ivec2 p) { return (chunkAt(p).a & ${CHUNK_FLAG_EDGE_NOISE_EXCEPTION}u) != 0u; }
 
 // TILE_FOREGROUND_COLORS for a chunk: the gray/white class resolves to it, and
-// so does a fill biome's constant material (chunk_textures.js FILL_BIOME_COLORS).
+// so does a fill biome's constant material (chunk_textures.js FILL_LAYER_COLORS).
 vec4 chunkForeground(ivec2 p) {
     uvec4 fg = texelFetch(u_fgTex, ivec2(pmod(p.x, u_mapWidth), clamp(p.y, 0, u_maxRow)), 0);
     return vec4(vec3(fg.rgb) / 255.0, 1.0);
