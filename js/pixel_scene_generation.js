@@ -5,7 +5,7 @@ import { getBiomeAtWorldCoordinates } from './utils.js';
 import { biomeEdgeNoiseFlag } from './wobble_flags.js';
 import { loadPNG } from './png_sanitizer.js';
 import { prescanPixelScene } from './poi_scanner.js';
-import { BIOME_BACKGROUND_COLORS, TILE_OVERLAY_COLORS, makeBlackTransparent, terrainFillColorForBiome } from './image_processing.js';
+import { BIOME_BACKGROUND_COLORS, TILE_OVERLAY_COLORS, channelDistance, makeBlackTransparent, terrainFillColorForBiome } from './image_processing.js';
 import { GENERATOR_CONFIG } from './generator_config.js';
 import { appSettings } from './settings.js';
 
@@ -191,6 +191,12 @@ export function injectPixelSceneSpawnData(cachedData) {
 export function injectPixelSceneData(cachedData) {
     PIXEL_SCENE_DATA = cachedData;
 }
+
+// How close a biome's background color may sit to its fill color before air
+// painted with it would be indistinguishable from the surrounding solid rock,
+// and how far to darken the fill when that happens.
+const AIR_OVER_FILL_TOLERANCE = 24;
+const AIR_OVER_FILL_DARKEN = 0.45;
 
 const SCENES_TO_NOT_RECOLOR = ["wand_altar", "wand_altar_vault", "potion_altar", "potion_altar_vault"]; // It would be a waste to recolor these for every biome
 const PIXEL_SCENE_AIR_TRANSPARENCY_EXCEPTIONS = {
@@ -431,7 +437,7 @@ export function loadPixelScene(biomeData, biomeName, sceneName, ws, ng, x, y, sk
 		biomeName = getBiomeAtWorldCoordinates(biomeData, x + pixelSceneData.width/2, y + pixelSceneData.height/2, ng > 0, gameMode)?.biome || "general";
 	}
 	*/
-	const variantKey = `biome=${biomeName}`;
+	const variantKey = `biome=${biomeName}${fillBiomeUnder(biomeData, biomeName, x, y, pixelSceneData.width, pixelSceneData.height, ng, gameMode)}`;
 	/*
 	if (!PIXEL_SCENE_DATA[pixelSceneKey].variants[variantKey]) {
 		PIXEL_SCENE_DATA[pixelSceneKey].variants[variantKey] = recolorPixelSceneForBiome(sceneName, getPixelSceneVariant(pixelSceneKey, ''), PIXEL_SCENE_DATA[pixelSceneKey].width, PIXEL_SCENE_DATA[pixelSceneKey].height, biomeName, x, y);
@@ -540,7 +546,8 @@ export function loadRandomPixelScene(biomeData, biomeName, scene_list, ws, ng, x
 				}
 			}
 			// Recolor the pixel scene for the biome if needed
-			const finalVariantKey = variantKey + (variantKey !== '' ? '&' : '') + `biome=${biomeName}`;
+			const finalVariantKey = variantKey + (variantKey !== '' ? '&' : '')
+				+ `biome=${biomeName}${fillBiomeUnder(biomeData, biomeName, x, y, pixelSceneData.width, pixelSceneData.height, ng, gameMode)}`;
 			/*
 			if (!PIXEL_SCENE_DATA[pixelSceneKey].variants[finalVariantKey]) {
 				PIXEL_SCENE_DATA[pixelSceneKey].variants[finalVariantKey] = recolorPixelSceneForBiome(scene.name, getPixelSceneVariant(pixelSceneKey, variantKey), biomeName);
@@ -559,6 +566,22 @@ export function loadRandomPixelScene(biomeData, biomeName, scene_list, ws, ng, x
 	return null;
 }
 
+/**
+ * The `@<biome>` suffix a scene's `biome=` variant key carries when it sits over
+ * a constant-material fill, or '' when it does not.
+ *
+ * The recolor target is the scene's *folder* biome, which for everything under
+ * general/ and temple/ is a pseudo-biome shared across the map — so it cannot
+ * answer "is the chunk beneath me solid?". That question decides whether the
+ * scene's air may stay transparent, and the answer belongs in the variant key so
+ * one cached variant per underlying fill biome is all it costs.
+ */
+function fillBiomeUnder(biomeData, biomeName, x, y, width, height, ng, gameMode) {
+	const under = getBiomeAtWorldCoordinates(biomeData, x + width / 2, y + height / 2, ng > 0, gameMode, true)?.biome;
+	if (!under || under === biomeName) return '';
+	return terrainFillColorForBiome(under) === undefined ? '' : `@${under}`;
+}
+
 export function recolorPixelSceneForBiome(sceneName, sourceData, targetBiome) {
 	//const recolorMaterials = document.getElementById('recolor-materials').checked;
 	const recolorMaterials = appSettings.recolorMaterials;
@@ -568,6 +591,11 @@ export function recolorPixelSceneForBiome(sceneName, sourceData, targetBiome) {
 
 	// Some scene name exceptions because this just isn't working
 
+	// `biome=<folder>@<fill biome>`: the folder decides the colors, the suffix
+	// (fillBiomeUnder) says the chunk beneath the scene is solid material.
+	const at = targetBiome.indexOf('@');
+	const fillBiomeUnderScene = at < 0 ? null : targetBiome.slice(at + 1);
+	if (at >= 0) targetBiome = targetBiome.slice(0, at);
 
 	// A scene's gray/white pixels are the engine's "fill with this biome's own
 	// material" class, so in a constant-material biome they must come out as that
@@ -575,7 +603,21 @@ export function recolorPixelSceneForBiome(sceneName, sourceData, targetBiome) {
 	// they take the hand-authored foreground color, which for these biomes equals
 	// the background color and leaves the carved room reading as a flat block.
 	let targetColor = terrainFillColorForBiome(targetBiome) ?? TILE_OVERLAY_COLORS[targetBiome] ?? 0xff00ff;
-	let bgColor = BIOME_BACKGROUND_COLORS[targetBiome] || 0x000000;
+	let bgColor = BIOME_BACKGROUND_COLORS[targetBiome]
+		?? (fillBiomeUnderScene ? BIOME_BACKGROUND_COLORS[fillBiomeUnderScene] : undefined)
+		?? 0x000000;
+
+	// Air over a fill has to punch a visible hole in solid material, so it must
+	// not come out the same color as the fill. For friend_1..6 the biome maps
+	// give foreground and background the same unauthored pixel, so the "correct"
+	// background would erase the room; darken the fill instead, which is roughly
+	// what a background reads as next to its own material anyway.
+	const fillUnder = terrainFillColorForBiome(fillBiomeUnderScene ?? targetBiome);
+	if (fillUnder !== undefined && channelDistance(bgColor, fillUnder) <= AIR_OVER_FILL_TOLERANCE) {
+		bgColor = ((Math.round(((fillUnder >> 16) & 0xFF) * AIR_OVER_FILL_DARKEN) << 16)
+			| (Math.round(((fillUnder >> 8) & 0xFF) * AIR_OVER_FILL_DARKEN) << 8)
+			| Math.round((fillUnder & 0xFF) * AIR_OVER_FILL_DARKEN));
+	}
 	let targetR = (targetColor >> 16) & 0xFF;
 	let targetG = (targetColor >> 8) & 0xFF;
 	let targetB = targetColor & 0xFF;
@@ -624,9 +666,15 @@ export function recolorPixelSceneForBiome(sceneName, sourceData, targetBiome) {
 			outData[i] = bgColorR;
 			outData[i + 1] = bgColorG;
 			outData[i + 2] = bgColorB;
-			// I think I need to set this differently depending on what the scene is, in the case of some of the static pixel scenes.
-			// Hiisi base seems to be an exception in general, not sure how I broke it
-			if (targetBiome === "snowcastle") {
+			// Transparent air is only right when nothing is painted underneath:
+			// it lets whatever is already on the canvas show through, which for a
+			// wang biome is the layer's own terrain. In a constant-material fill
+			// biome the whole chunk is solid, so transparent air would leave the
+			// carved room filled in and invisible -- the scene has to punch the
+			// hole itself, in the color the background layer would have shown.
+			// Hiisi base is the hand-found instance of the same rule.
+			if (targetBiome === "snowcastle" || fillBiomeUnderScene
+				|| terrainFillColorForBiome(targetBiome) !== undefined) {
 				outData[i + 3] = 0xff;
 			}
 			else if (PIXEL_SCENE_AIR_TRANSPARENCY_EXCEPTIONS[sceneName]) {

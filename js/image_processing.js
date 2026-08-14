@@ -86,7 +86,7 @@ if (typeof process === 'undefined' || !process?.versions?.node) {
  */
 const FILL_COLOR_AUTHORED_TOLERANCE = 24;
 
-const channelDistance = (a, b) => Math.max(
+export const channelDistance = (a, b) => Math.max(
     Math.abs(((a >> 16) & 0xff) - ((b >> 16) & 0xff)),
     Math.abs(((a >> 8) & 0xff) - ((b >> 8) & 0xff)),
     Math.abs((a & 0xff) - (b & 0xff)));
