@@ -2,10 +2,10 @@ import { app } from './app.js';
 import { TIME_UNTIL_LOADING } from './constants.js';
 import { isMatch } from './translations.js';
 import { appSettings, updateSettingsFromUI } from './settings.js';
-import { PIXEL_SCENE_DATA, PIXEL_SCENE_SPAWN_DATA } from './pixel_scene_generation.js';
+import { PIXEL_SCENE_SPAWN_DATA } from './pixel_scene_generation.js';
 import { TRANSLATIONS } from './translations.js';
 import { unlockedSpells } from './unlocks.js';
-import { getOrGenerateWorld } from './world_manager.js';
+import { buildPixelSceneMetadata, getOrGenerateWorld } from './world_manager.js';
 import { T10_SPELLS } from './spells.js';
 import { GENERATOR_CONFIG } from './generator_config.js';
 import { getMissingProgressSpells } from './progress.js';
@@ -39,7 +39,7 @@ let syncedKeys = new Set();
 export function syncSearchWorkerData() {
     searchWorker.postMessage({
         cmd: 'SYNC_METADATA',
-        pixelSceneCache: PIXEL_SCENE_DATA,
+        pixelSceneCache: buildPixelSceneMetadata(),
         pixelSceneSpawnDataCache: PIXEL_SCENE_SPAWN_DATA,
         translationsCache: TRANSLATIONS,
         unlockedSpellsCache: unlockedSpells,

@@ -37,35 +37,49 @@ worldWorker.onmessage = async (e) => {
         // Clear it from the pending list
         pendingGenerateRequests.delete(pwKey);
 
-		// Sync any newly generated pixel scene variants to the main thread cache so they can be used in the UI
-        for (const scene of msg.pixelScenes) {
-            // Ensure the variant dictionary exists
-            if (!PIXEL_SCENE_DATA[scene.key].variants) {
-                PIXEL_SCENE_DATA[scene.key].variants = {};
-            }
-            
-            // If the main thread doesn't have this recolored variant yet, save it
-            if (!PIXEL_SCENE_DATA[scene.key].variants[scene.variantKey]) {
-                PIXEL_SCENE_DATA[scene.key].variants[scene.variantKey] = scene.imgElement;
-            }
-        }
-
-		// TODO: After refactoring pixel scene data to separate images and spawn data, do this
-		// Send a message to the overlay worker to recolor the pixel scenes in this world
-		//recolorPixelScenes(msg.pixelScenes);
-
         // Tell the search manager that new data is ready to be filtered
         continueSearchSequence(msg.pw, msg.pwVertical);
 
-		// Recolor pixel scenes from this PW
+		// Recolor pixel scenes from this PW. The world worker returns placements only
+		// (key + variantKey + rect); every recolored image comes from the overlay worker.
 		recolorPixelScenes(msg.pixelScenes);
     }
 };
 
+// Pixel scene metadata without the pixels (PERF_PLAN Step 4).
+//
+// PIXEL_SCENE_DATA carries every scene's full RGBA image in `imgElement` plus its
+// recolored `variants` - a few hundred MB once all scenes are loaded. Only the overlay
+// worker recolors, so it is the only worker that needs those pixels; the generation
+// side (world worker) and the filtering side (search worker) read spawn data plus a
+// handful of scalar fields. Structured cloning the cache wholesale copied the images
+// into those workers for nothing, so they get this projection instead.
+//
+// Keep this in sync with the fields worker-side code reads off PIXEL_SCENE_DATA
+// (pixel_scene_generation.js loadPixelScene / loadRandomPixelScene).
+export function buildPixelSceneMetadata(sceneData = PIXEL_SCENE_DATA) {
+	const metadata = {};
+	for (const key of Object.keys(sceneData)) {
+		const scene = sceneData[key];
+		metadata[key] = {
+			key: scene.key,
+			biome: scene.biome,
+			name: scene.name,
+			width: scene.width,
+			height: scene.height,
+			isCosmetic: scene.isCosmetic,
+			// Same shape as the main thread cache, minus the pixels: no recolored variant
+			// ever exists on these workers.
+			variants: {}
+		};
+	}
+	return metadata;
+}
+
 export function syncWorldWorkerData() {
     worldWorker.postMessage({
         cmd: 'SYNC_METADATA',
-        pixelSceneCache: PIXEL_SCENE_DATA,
+        pixelSceneCache: buildPixelSceneMetadata(),
 		pixelSceneSpawnDataCache: PIXEL_SCENE_SPAWN_DATA,
         translationsCache: TRANSLATIONS,
 		unlockedSpellsCache: unlockedSpells,
