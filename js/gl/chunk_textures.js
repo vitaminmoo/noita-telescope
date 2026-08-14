@@ -61,11 +61,19 @@ export const CHUNK_FLAG_FILL = 1 << 4;
  * (rock_hard_border texture_color 0x271612, rock_static_cursed 0x754f4f) and,
  * unlike a hardcoded material color, consistent with how every other chunk's
  * foreground fill is recolored.
+ *
+ * FILL_BIOME_MATERIALS is the mouseover answer for these chunks (they have no
+ * layer.buffer to sample). One material per biome: the one whose texture_color
+ * matches the painted fill (rock_hard_border 0x271612, rock_static_cursed
+ * 0x754f4f); the true rock_hard/rock_hard_border split inside solid_wall
+ * depends on the engine's density field, which telescope doesn't simulate.
  */
-export const FILL_BIOME_COLORS = new Set([
-    0x3d3d3d, // solid_wall
-    0x3f3d3e, // solid_wall_tower
-]);
+export const FILL_BIOME_MATERIALS = {
+    0x3d3d3d: 'rock_hard_border', // solid_wall
+    0x3f3d3e: 'rock_static_cursed', // solid_wall_tower
+};
+
+export const FILL_BIOME_COLORS = new Set(Object.keys(FILL_BIOME_MATERIALS).map(Number));
 
 /**
  * Builds both mapWidth x 48 RGBA8UI chunk textures in one pass.

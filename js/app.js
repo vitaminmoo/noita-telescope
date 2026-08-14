@@ -16,7 +16,7 @@ import { COALMINE_ALT_SCENES } from './pixel_scene_config.js';
 import { debugBiomeEdgeNoise } from './edge_noise.js';
 import { drawBiomeBoundaryContour } from './biome_boundary.js';
 import { GLTerrainRenderer } from './gl/terrain_renderer.js';
-import { FILL_BIOME_COLORS } from './gl/chunk_textures.js';
+import { FILL_BIOME_COLORS, FILL_BIOME_MATERIALS } from './gl/chunk_textures.js';
 import { getPixelSceneCanvas, pixelSceneMipLevel, loadPixelSceneData, reloadPixelSceneCache, PIXEL_SCENE_DATA } from './pixel_scene_generation.js';
 import { addStaticPixelScenes } from './static_spawns.js';
 import { NollaPrng } from './nolla_prng.js';
@@ -1478,12 +1478,19 @@ export const app = {
 				}
 			}
 			let materialName = '';
+			let material = null;
 			if (this.tileLayers && this.tileLayers.length > 0 && this.pixelScenesByPW && this.pixelScenesByPW[`${this.pw},${this.pwVertical}`]) {
 				// Get material
-				const material = getMaterialAtWorldCoordinates(this.tileLayers, this.pixelScenesByPW[`${this.pw},${this.pwVertical}`], absX, absY, this.pw, this.pwVertical, this.isNGP, this.gameMode);
-				if (material) {
-					materialName = `<br>Material: ${getDisplayName(material)}`;
-				}
+				material = getMaterialAtWorldCoordinates(this.tileLayers, this.pixelScenesByPW[`${this.pw},${this.pwVertical}`], absX, absY, this.pw, this.pwVertical, this.isNGP, this.gameMode);
+			}
+			// Fill biomes (solid_wall etc.) have no layer.buffer to sample, so
+			// answer from the wobble-resolved chunk color. Last so real layer or
+			// pixel-scene content always wins.
+			if (!material && biomeResult) {
+				material = FILL_BIOME_MATERIALS[biomeResult.colorInt] ?? null;
+			}
+			if (material) {
+				materialName = `<br>Material: ${getDisplayName(material)}`;
 			}
 			coordsDiv.innerHTML = `${absX}, ${absY}${biomeName}${materialName}`;
 
