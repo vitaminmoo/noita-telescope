@@ -25,7 +25,7 @@
 // LIVE-ANCHORED 2026-08-14 against seed 786433191 (CELLPROBE r/mn/n + PEEK of the
 // BiomeChunk param block at +0x218..+0x2a8 for solid_wall / temple_wall /
 // watercave / coalmine_alt).
-import { ComputeMagicValueFromDoubles } from './simplex_noise.js';
+import { ComputeMagicValueFromDoubles, SimplexNoise1234 } from './simplex_noise.js';
 import { getModifierGrid, sampleModifier } from './bitmap_caves.js';
 import { carveDensity, carveDensityType3 } from './carve_noise.js';
 import { selectComponentForCell } from './band_select.js';
@@ -114,14 +114,25 @@ export function surfaceLine(cfg, phase, wx) {
 // ---------------------------------------------------------------------------
 // CellNoise_EvaluateCaveBoundary @0x0087e8d0 -> float depth ratio.
 //   wy <= topY -> 0 ; wy >= botY -> 1 ; else float((wy-topY)/(botY-topY))
-// For wy > 380 the pixel's own chunk line is used unblended (the only case that
-// can occur below the overworld).  At/above 380 the engine re-resolves the cell
-// and, inside the first 42px of the cell, blends with the LEFT neighbour's line
-// (factor 1 - subX/41); `leftCfg` supplies that neighbour when the caller has it.
+//
+// Which chunk's surface line is used depends on the depth, and the two answers
+// differ inside the biome-edge wobble band:
+//   wy > 380  the BiomeChunk* the caller resolved -- i.e. the WOBBLED cell --
+//             is used, unblended (the only case below the overworld).
+//   wy <= 380 the function ignores that argument entirely and re-derives the
+//             cell from the raw coordinates: chunkGrid[(y+7168)>>9][(x+w*256)>>9],
+//             UNWOBBLED. Inside the first 42px of that cell, and only when the
+//             cell to its left is a different BiomeChunk, it blends the two
+//             lines by 1 - subX/41.
+// So near the surface the bands still come from the wobbled biome while the
+// depth ratio comes from the physical one: `physCfg` is that physical cell's
+// config and `leftCfg` its left neighbour's. Omitting physCfg keeps the old
+// same-cell behaviour, which is what every non-wobbled pixel resolves to anyway.
 // ---------------------------------------------------------------------------
-export function caveDepthRatio(cfg, phase, wx, wy, leftCfg, subX) {
-	let [topY, botY] = surfaceLine(cfg, phase, wx);
-	if (wy <= K0.SURFACE_BLEND_Y && leftCfg && subX < 42) {
+export function caveDepthRatio(cfg, phase, wx, wy, leftCfg, subX, physCfg = null) {
+	const nearSurface = wy <= K0.SURFACE_BLEND_Y;
+	let [topY, botY] = surfaceLine(nearSurface && physCfg ? physCfg : cfg, phase, wx);
+	if (nearSurface && leftCfg && subX < 42) {
 		const [lTop, lBot] = surfaceLine(leftCfg, phase, wx);
 		const f = F(K0.ONE_F - F(subX / K0.BLEND_DENOM));
 		topY = (lTop - topY) * f + topY;
@@ -134,14 +145,26 @@ export function caveDepthRatio(cfg, phase, wx, wy, leftCfg, subX) {
 }
 
 // ---------------------------------------------------------------------------
-// ProceduralNoise_FBM4Octave2D @0x00873cc0 over EdgeNoise_Simplex2D (type 5).
-// Identical to js/surface_terrain.js::fbmSimplex2D (live-validated there).
+// ProceduralNoise_FBM4Octave2D @0x00873cc0. The accumulator is the same whatever
+// base variant ProceduralNoise_Dispatch is asked for; only `S` changes.
+// Over EdgeNoise_Simplex2D (type 5) this is identical to
+// js/surface_terrain.js::fbmSimplex2D (live-validated there).
 // ---------------------------------------------------------------------------
 const FBM_M0 = F(0.84147);            // 0x3F576A94
 const FBM_M1 = F(0.5403);             // 0x3F0A511A
 const FBM_L = [F(2.02), F(2.33), F(2.01)];
-function fbm4Simplex2D(x, y) {
-	const S = (a, b) => F(ComputeMagicValueFromDoubles(a, b));
+
+/** The base noise for a ProceduralNoise_Dispatch variant id (NoiseImpl_FromString
+ *  @0x004867c6). Only the two `mInsideNoiseType` values the shipped biomes use
+ *  are ported: 5 (the default when the attribute is absent) and 8. */
+function noiseVariant(type) {
+	if (type === 5) return ComputeMagicValueFromDoubles;
+	if (type === 8) return SimplexNoise1234;
+	return null;
+}
+
+function fbm4(x, y, base) {
+	const S = (a, b) => F(base(a, b));
 	let acc = F(S(x, y) * 0.5);
 	const u = F(F(F(FBM_M0 * x) + F(FBM_M1 * y)) * FBM_L[0]);
 	const v = F(F(F(FBM_M1 * x) + F(-FBM_M0 * y)) * FBM_L[0]);
@@ -166,16 +189,11 @@ export function materialNoise(cfg, wx, wy, worldSeed = 0) {
 		sy += (worldSeed | 0) * K0.SEED_MUL_Y;
 	}
 	const fx = F(sx), fy = F(sy);
-	let n;
-	if (cfg.insideFBM) {
-		if (cfg.insideNoiseType !== 5)
-			throw new Error(`topo0: FBM over noise type ${cfg.insideNoiseType} not ported`);
-		n = fbm4Simplex2D(fx, fy);
-	} else {
-		if (cfg.insideNoiseType !== 5)
-			throw new Error(`topo0: noise type ${cfg.insideNoiseType} not ported`);
-		n = F(ComputeMagicValueFromDoubles(fx, fy));
-	}
+	const base = noiseVariant(cfg.insideNoiseType);
+	if (!base)
+		throw new Error(`topo0: noise type ${cfg.insideNoiseType} not ported`);
+	const n0 = cfg.insideFBM ? fbm4(fx, fy, base) : F(base(fx, fy));
+	let n = n0;
 	if (cfg.insideSquared) n = F(n * n);
 	if (cfg.insideClamped) {
 		if (n < cfg.insideScaleMin) n = cfg.insideScaleMin;
@@ -242,7 +260,7 @@ export function densityModifier(cfg, wx, wy, gridOffsetX = 0, worldSeed = 0) {
 export function evaluateCaveAndMaterial(cfg, phase, wx, wy, opts = {}) {
 	const m = densityModifier(cfg, wx, wy, 0, opts.worldSeed || 0);
 	if (m === null) return 0;
-	const r = caveDepthRatio(cfg, phase, wx, wy, opts.leftCfg, opts.subX);
+	const r = caveDepthRatio(cfg, phase, wx, wy, opts.leftCfg, opts.subX, opts.physCfg);
 	let density = F(r * m);
 	if (density <= 0) return 0;
 

@@ -74,13 +74,21 @@ export function createMaterialField(layers, biomeData, generatorConfig, mapWidth
             const mat = selectComponentForCell(biome, x, y, out.density);
             return mat < 0 ? 0 : mat;
         }
-        // topology 0 blends with the LEFT neighbour cell's surface line inside
-        // the first 42px of a chunk, so that neighbour's config is needed too.
-        const leftColor = bmap.colorAt((((cell.cx - 1) % mapWidth) + mapWidth) % mapWidth, cell.cy);
+        // Near the surface the depth ratio comes from the PHYSICAL biome-map cell
+        // and its left neighbour, not from the wobble-resolved cell the bands come
+        // from: CellNoise_EvaluateCaveBoundary @0x0087e8d0 re-derives the cell from
+        // the raw coordinates and ignores the BiomeChunk it was handed.
+        const sx = x + mapWidth * 256;
+        const pcx = ((((sx >> 9) % mapWidth) + mapWidth) % mapWidth);
+        const pcy = Math.min(BIOME_MAP_HEIGHT - 1, Math.max(0, (y + 7168) >> 9));
+        const physBiome = ENGINE_BY_COLOR.get(bmap.colorAt(pcx, pcy));
+        const leftColor = bmap.colorAt((((pcx - 1) % mapWidth) + mapWidth) % mapWidth, pcy);
         const leftBiome = ENGINE_BY_COLOR.get(leftColor);
-        const subX = (((x + mapWidth * 256) % 512) + 512) % 512;
+        const subX = ((sx % 512) + 512) % 512;
         const mat = resolveTopo0Pixel(biome, topo0Config(biome), phase, x, y, {
-            worldSeed, subX, leftCfg: leftBiome ? topo0Config(leftBiome) : null,
+            worldSeed, subX,
+            physCfg: physBiome ? topo0Config(physBiome) : null,
+            leftCfg: leftBiome ? topo0Config(leftBiome) : null,
         });
         return mat < 0 ? 0 : mat;
     }
