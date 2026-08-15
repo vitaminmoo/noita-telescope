@@ -1,6 +1,6 @@
 import { NollaPrng } from './nolla_prng.js';
 import { loadPixelScene, loadRandomPixelScene } from './pixel_scene_generation.js';
-import { PIXEL_SCENE_BIOME_MAP } from './pixel_scene_config.js';
+import { PIXEL_SCENE_BIOME_MAP, PIXEL_SCENE_LIST_OFFSETS } from './pixel_scene_config.js';
 import { spawnChest } from './chest_generation.js';
 import { generateWand, spawnWand, spawnSpecialWand, checkWandAltar, generateNightmareWand } from './wand_generation.js';
 import { spawnJar, checkPotionAltar, createPotion, spawnItem } from './potion_generation.js';
@@ -1073,32 +1073,41 @@ export function spawnSwitch(biomeData, biomeName, functionIndex, ws, ng, x, y, s
 	}
 	// Default pixel scenes (technically only 1 and 2 are, but adding the other reused ones for convenience here)
 	if (PIXEL_SCENE_BIOME_MAP[biomeName]) {
+		// The lua's `load_pixel_sceneN(x, y)` nudges the position for a few biomes
+		// before it rolls, so the offset has to go in here rather than at the stamp
+		// -- it moves the ProceduralRandom seed too (PIXEL_SCENE_LIST_OFFSETS).
+		const offsets = PIXEL_SCENE_LIST_OFFSETS[biomeName] ?? {};
+		const roll = (listName) => {
+			const [dx, dy] = offsets[listName] ?? [0, 0];
+			return loadRandomPixelScene(biomeData, biomeName, scenes[listName], ws, ng,
+				x + dx, y + dy, skipCosmeticScenes, gameMode);
+		};
 		if (PIXEL_SCENE_BIOME_MAP[biomeName]["g_pixel_scene_01"] && func === "load_pixel_scene") {
-			return loadRandomPixelScene(biomeData, biomeName, scenes["g_pixel_scene_01"], ws, ng, x, y, skipCosmeticScenes, gameMode);
+			return roll("g_pixel_scene_01");
 		}
 		else if (PIXEL_SCENE_BIOME_MAP[biomeName]["g_pixel_scene_01_alt"] && func === "load_pixel_scene_alt") {
-			return loadRandomPixelScene(biomeData, biomeName, scenes["g_pixel_scene_01_alt"], ws, ng, x, y, skipCosmeticScenes, gameMode);
+			return roll("g_pixel_scene_01_alt");
 		}
 		else if (PIXEL_SCENE_BIOME_MAP[biomeName]["g_pixel_scene_02"] && func === "load_pixel_scene2") {
-			return loadRandomPixelScene(biomeData, biomeName, scenes["g_pixel_scene_02"], ws, ng, x, y, skipCosmeticScenes, gameMode);
+			return roll("g_pixel_scene_02");
 		}
 		else if (PIXEL_SCENE_BIOME_MAP[biomeName]["g_pixel_scene_03"] && func === "load_pixel_scene3") {
-			return loadRandomPixelScene(biomeData, biomeName, scenes["g_pixel_scene_03"], ws, ng, x, y, skipCosmeticScenes, gameMode);
+			return roll("g_pixel_scene_03");
 		}
 		else if (PIXEL_SCENE_BIOME_MAP[biomeName]["g_pixel_scene_04"] && func === "load_pixel_scene4") {
-			return loadRandomPixelScene(biomeData, biomeName, scenes["g_pixel_scene_04"], ws, ng, x, y, skipCosmeticScenes, gameMode);
+			return roll("g_pixel_scene_04");
 		}
 		else if (PIXEL_SCENE_BIOME_MAP[biomeName]["g_pixel_scene_04_alt"] && func === "load_pixel_scene4_alt") {
-			return loadRandomPixelScene(biomeData, biomeName, scenes["g_pixel_scene_04_alt"], ws, ng, x, y, skipCosmeticScenes, gameMode);
+			return roll("g_pixel_scene_04_alt");
 		}
 		else if (PIXEL_SCENE_BIOME_MAP[biomeName]["g_pixel_scene_05"] && func === "load_pixel_scene5") {
-			return loadRandomPixelScene(biomeData, biomeName, scenes["g_pixel_scene_05"], ws, ng, x, y, skipCosmeticScenes, gameMode);
+			return roll("g_pixel_scene_05");
 		}
 		else if (PIXEL_SCENE_BIOME_MAP[biomeName]["g_pixel_scene_05b"] && func === "load_pixel_scene5b") {
-			return loadRandomPixelScene(biomeData, biomeName, scenes["g_pixel_scene_05b"], ws, ng, x, y, skipCosmeticScenes, gameMode);
+			return roll("g_pixel_scene_05b");
 		}
 		else if (PIXEL_SCENE_BIOME_MAP[biomeName]["g_pixel_scene_05_alt"] && func === "load_pixel_scene5_alt") {
-			return loadRandomPixelScene(biomeData, biomeName, scenes["g_pixel_scene_05_alt"], ws, ng, x, y, skipCosmeticScenes, gameMode);
+			return roll("g_pixel_scene_05_alt");
 		}
 	}
 	return null;

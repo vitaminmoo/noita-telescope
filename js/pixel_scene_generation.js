@@ -490,7 +490,12 @@ export async function loadPixelSceneData() {
 				if (scene.name === "") continue; // Skip the "no scene" option
 				const key = getPixelSceneKey(biome, scene.name);
 				if (!PIXEL_SCENE_DATA[key]) {
-					const alias = getBiomeAlias(biome);
+					// `dir` overrides the folder for the entries whose PNG does not
+					// live under their own biome's name: the pyramid's interior rooms
+					// are data/biome_impl/crypt/*.png (PYRAMID_SCENES). The KEY still
+					// comes from the biome, because a spawn color's index is
+					// per-biome, so the two biomes' copies stay separate records.
+					const alias = scene.dir ?? getBiomeAlias(biome);
 					const url = `../data/pixel_scenes/${alias}/${scene.name}.png`;
 					const imgData = await loadPNG(url);
 					makeBlackTransparent(imgData.data);

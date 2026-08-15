@@ -545,7 +545,31 @@ export const THE_END_SCENES = {
 	]
 };
 
+// The pyramid's interior rooms are the CRYPT's rooms: every magic-pixel scene
+// data/scripts/biomes/pyramid.lua loads names a file under
+// data/biome_impl/crypt/, not data/biome_impl/pyramid/ (which holds only the
+// hand-placed pyramid structure itself, the "extras" below). `dir` says so --
+// the scene key stays `pyramid/<name>` because a spawn color's index is
+// per-biome, but the PNG is read from data/pixel_scenes/crypt/.
+//
+// The lists are pyramid.lua's g_pixel_scene_NN verbatim, which is NOT the same
+// set as crypt.lua's: no polymorphroom in 01, no water_lava in 03.
 export const PYRAMID_SCENES = {
+	"g_pixel_scene_01": [
+		{prob: 1.0, name: "cathedral", dir: "crypt"},
+		{prob: 1.0, name: "mining", dir: "crypt"},
+	],
+	"g_pixel_scene_02": [
+		{prob: 0.5, name: "stairs_right", dir: "crypt"},
+	],
+	"g_pixel_scene_03": [
+		{prob: 1.0, name: "lavaroom", dir: "crypt"},
+		{prob: 1.0, name: "pit", dir: "crypt"},
+		{prob: 1.0, name: "symbolroom", dir: "crypt"},
+	],
+	"g_pixel_scene_04": [
+		{prob: 0.5, name: "stairs_left", dir: "crypt"},
+	],
 	"extras": [
 		{name: "boss_limbs"},
 		{name: "entrance"},
@@ -774,4 +798,25 @@ export const PIXEL_SCENE_BIOME_MAP = {
 	"mountain": MOUNTAIN_SCENES,
 	"general": GENERAL_SCENES,
 	"spliced": SPLICED_SCENES,
+};
+
+/**
+ * Where a biome's `load_pixel_sceneN` nudges the magic pixel's position before
+ * it rolls, as `[dx, dy]` per scene list.
+ *
+ * Most of them are the identity -- `load_random_pixel_scene(g_pixel_scene_01,
+ * x, y)` -- but a handful in data/scripts/biomes/*.lua are not, and the offset
+ * has to be applied at the CALL, not when the chosen scene is stamped: the roll
+ * itself is `ProceduralRandom(ws + ng, x, y)` over the shifted position, so a
+ * missing offset picks a different room as well as placing it 5 px off.
+ *
+ * Transcribed from the lua; every `load_random_pixel_scene` call in the game's
+ * biome scripts with a non-zero offset, for the biomes telescope models
+ * (magic_gate has one and is not modelled; the_end's is on a list it does not
+ * carry; pyramid_hallway is not a biome map colour of its own).
+ */
+export const PIXEL_SCENE_LIST_OFFSETS = {
+	"crypt": { g_pixel_scene_02: [6, 0], g_pixel_scene_04: [-5, 0] },
+	"pyramid": { g_pixel_scene_02: [6, 0], g_pixel_scene_04: [-5, 0] },
+	"liquidcave": { g_pixel_scene_01: [-5, -3] },
 };
