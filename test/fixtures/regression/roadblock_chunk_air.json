@@ -1,0 +1,77 @@
+{
+	"name": "roadblock_chunk_air",
+	"guards": "the roadblock chunk (33,11) generates no terrain - it must stay air, never a chunk fill",
+	"seed": 786433191,
+	"ngPlus": 0,
+	"world": {
+		"x": -896,
+		"y": -1472,
+		"w": 64,
+		"h": 64
+	},
+	"source": {
+		"key": "mapdump/roadblock",
+		"kind": "mapdump-ppm",
+		"path": "scripts/bugfix/roadblock.ppm",
+		"rect": [
+			-1280,
+			-1600,
+			1024,
+			768
+		],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-15",
+		"note": "MAPDUMP via noitad worker cb6aeae2; rect recorded in scripts/bugfix_cmp_all.sh. Covers the roadblock chunk (33,11) = world (-1024,-1536,512,512) plus its neighbours."
+	},
+	"expected": {
+		"file": "roadblock_chunk_air.bin",
+		"format": "rgb8"
+	},
+	"summary": {
+		"airPct": 100,
+		"topColors": {
+			"#87ceeb": 4096
+		}
+	},
+	"tier1": {
+		"chunkFlags": [
+			{
+				"cell": [
+					33,
+					11
+				],
+				"biome": "roadblock",
+				"biomeColor": "0xf0d517",
+				"mode": "topo0",
+				"paintsNothing": true,
+				"sceneOnly": true,
+				"fillLayerMaterial": null
+			}
+		],
+		"pixels": {
+			"metric": "airMask",
+			"mode": "exact",
+			"threshold": 100,
+			"measured": 100,
+			"measuredAt": "2026-08-15",
+			"measuredCommit": "35edc64"
+		},
+		"maxUnresolvedPct": 0.5
+	},
+	"tier2": {
+		"render": {
+			"layers": {}
+		},
+		"checks": [
+			{
+				"metric": "airMask",
+				"mode": "exact",
+				"threshold": 100,
+				"measured": 100,
+				"measuredAt": "2026-08-15",
+				"measuredCommit": "35edc64"
+			}
+		]
+	}
+}

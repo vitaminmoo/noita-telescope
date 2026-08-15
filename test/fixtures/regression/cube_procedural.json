@@ -1,0 +1,90 @@
+{
+	"name": "cube_procedural",
+	"guards": "procedural excavationsite terrain around the cube chamber: the topology-0 surface/carve resolve owns these pixels",
+	"seed": 786433191,
+	"ngPlus": 0,
+	"world": {
+		"x": -4240,
+		"y": 2010,
+		"w": 64,
+		"h": 64
+	},
+	"source": {
+		"key": "mapdump/cube",
+		"kind": "mapdump-ppm",
+		"path": "scripts/probe_out/cube.ppm",
+		"rect": [
+			-4500,
+			2000,
+			640,
+			512
+		],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-15",
+		"note": "MAPDUMP via noitad worker 262fb478; rect recorded in scripts/probe_cube_cpu.mjs (RECT). Straddles the excavationsite_cube_chamber room (chunk 26,18) and the procedural excavationsite around it."
+	},
+	"expected": {
+		"file": "cube_procedural.bin",
+		"format": "rgb8"
+	},
+	"summary": {
+		"airPct": 71.973,
+		"topColors": {
+			"#050505": 2948,
+			"#251511": 747,
+			"#40231c": 83,
+			"#37221d": 40,
+			"#363636": 28,
+			"#373737": 25
+		}
+	},
+	"tier1": {
+		"chunkFlags": [
+			{
+				"cell": [
+					26,
+					17
+				],
+				"biome": "solid_wall",
+				"biomeColor": "0x3d3d3d",
+				"mode": "topo0",
+				"paintsNothing": false,
+				"sceneOnly": false,
+				"fillLayerMaterial": "rock_hard_border"
+			}
+		],
+		"pixels": {
+			"metric": "airMask",
+			"mode": "agreement",
+			"threshold": 99.38,
+			"measured": 99.878,
+			"measuredAt": "2026-08-15",
+			"measuredCommit": "35edc64"
+		},
+		"maxUnresolvedPct": 0.5
+	},
+	"tier2": {
+		"render": {
+			"layers": {}
+		},
+		"checks": [
+			{
+				"metric": "airMask",
+				"mode": "agreement",
+				"threshold": 99.38,
+				"measured": 99.878,
+				"measuredAt": "2026-08-15",
+				"measuredCommit": "35edc64"
+			},
+			{
+				"metric": "rgb",
+				"mode": "agreement",
+				"measured": 70.645,
+				"measuredAt": "2026-08-15",
+				"measuredCommit": "35edc64",
+				"threshold": 70.14
+			}
+		]
+	}
+}

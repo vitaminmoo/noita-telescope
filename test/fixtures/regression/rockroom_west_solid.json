@@ -1,0 +1,88 @@
+{
+	"name": "rockroom_west_solid",
+	"guards": "the procedural excavationsite west of rock_room stays solid - the sceneOnly air must not leak into the neighbour chunk",
+	"seed": 786433191,
+	"ngPlus": 0,
+	"world": {
+		"x": -3790,
+		"y": 3010,
+		"w": 64,
+		"h": 64
+	},
+	"source": {
+		"key": "mapdump/rockroom",
+		"kind": "mapdump-ppm",
+		"path": "scripts/bugfix/rockroom.ppm",
+		"rect": [
+			-3800,
+			3000,
+			640,
+			512
+		],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-15",
+		"note": "MAPDUMP via noitad worker cb6aeae2; rect from scripts/bugfix_cmp_all.sh. A second independent capture of the same rect (scripts/probe_out/rockroom.ppm, 10h earlier, different worker) agrees byte-for-byte on 99.960% of pixels - that number is the measured game-side nondeterminism floor for MAPDUMP colors."
+	},
+	"expected": {
+		"file": "rockroom_west_solid.bin",
+		"format": "rgb8"
+	},
+	"summary": {
+		"airPct": 0,
+		"topColors": {
+			"#251511": 2518,
+			"#37221d": 1186,
+			"#40231c": 264,
+			"#623b32": 128
+		}
+	},
+	"tier1": {
+		"chunkFlags": [
+			{
+				"cell": [
+					27,
+					19
+				],
+				"biome": "solid_wall",
+				"biomeColor": "0x3d3d3d",
+				"mode": "topo0",
+				"paintsNothing": false,
+				"sceneOnly": false,
+				"fillLayerMaterial": "rock_hard_border"
+			}
+		],
+		"pixels": {
+			"metric": "airMask",
+			"mode": "agreement",
+			"threshold": 99.5,
+			"measured": 100,
+			"measuredAt": "2026-08-15",
+			"measuredCommit": "35edc64"
+		},
+		"maxUnresolvedPct": 0.5
+	},
+	"tier2": {
+		"render": {
+			"layers": {}
+		},
+		"checks": [
+			{
+				"metric": "airMask",
+				"mode": "exact",
+				"threshold": 100,
+				"measured": 100,
+				"measuredAt": "2026-08-15",
+				"measuredCommit": "35edc64"
+			},
+			{
+				"metric": "rgb",
+				"mode": "exact",
+				"measured": 100,
+				"measuredAt": "2026-08-15",
+				"measuredCommit": "35edc64",
+				"threshold": 100
+			}
+		]
+	}
+}

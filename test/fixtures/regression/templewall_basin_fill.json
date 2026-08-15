@@ -1,0 +1,88 @@
+{
+	"name": "templewall_basin_fill",
+	"guards": "the Holy Mountain basin (temple_wall chunk 32,26) stays solid brick - the engine paints nothing there, so telescope's stand-in fill must survive",
+	"seed": 786433191,
+	"ngPlus": 0,
+	"world": {
+		"x": -1440,
+		"y": 6304,
+		"w": 64,
+		"h": 64
+	},
+	"source": {
+		"key": "mapdump/templewall",
+		"kind": "mapdump-ppm",
+		"path": "scripts/bugfix/templewall.ppm",
+		"rect": [
+			-1536,
+			6144,
+			512,
+			512
+		],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-15",
+		"note": "MAPDUMP via noitad worker a7443220; rect from scripts/bugfix_cmp_all.sh. Exactly the temple_wall chunk (32,26)."
+	},
+	"expected": {
+		"file": "templewall_basin_fill.bin",
+		"format": "rgb8"
+	},
+	"summary": {
+		"airPct": 0,
+		"topColors": {
+			"#514a31": 2204,
+			"#403a29": 1204,
+			"#59533b": 596,
+			"#605739": 92
+		}
+	},
+	"tier1": {
+		"chunkFlags": [
+			{
+				"cell": [
+					32,
+					26
+				],
+				"biome": "temple_wall",
+				"biomeColor": "0x6dcb28",
+				"mode": "fallback",
+				"paintsNothing": false,
+				"sceneOnly": false,
+				"fillLayerMaterial": "templebrick_static"
+			}
+		],
+		"pixels": {
+			"metric": "fillMask",
+			"mode": "exact",
+			"threshold": 100,
+			"measured": 100,
+			"measuredAt": "2026-08-15",
+			"measuredCommit": "35edc64"
+		},
+		"maxUnresolvedPct": 0.5
+	},
+	"tier2": {
+		"render": {
+			"layers": {}
+		},
+		"checks": [
+			{
+				"metric": "airMask",
+				"mode": "exact",
+				"threshold": 100,
+				"measured": 100,
+				"measuredAt": "2026-08-15",
+				"measuredCommit": "35edc64"
+			},
+			{
+				"metric": "rgb",
+				"mode": "exact",
+				"measured": 100,
+				"measuredAt": "2026-08-15",
+				"measuredCommit": "35edc64",
+				"threshold": 100
+			}
+		]
+	}
+}

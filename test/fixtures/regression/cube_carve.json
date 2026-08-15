@@ -1,0 +1,90 @@
+{
+	"name": "cube_carve",
+	"guards": "excavationsite carve noise (density>0.85 blend) keeps its cave shape",
+	"seed": 786433191,
+	"ngPlus": 0,
+	"world": {
+		"x": -4110,
+		"y": 2140,
+		"w": 64,
+		"h": 64
+	},
+	"source": {
+		"key": "mapdump/cube",
+		"kind": "mapdump-ppm",
+		"path": "scripts/probe_out/cube.ppm",
+		"rect": [
+			-4500,
+			2000,
+			640,
+			512
+		],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-15",
+		"note": "MAPDUMP via noitad worker 262fb478; rect recorded in scripts/probe_cube_cpu.mjs (RECT). Straddles the excavationsite_cube_chamber room (chunk 26,18) and the procedural excavationsite around it."
+	},
+	"expected": {
+		"file": "cube_carve.bin",
+		"format": "rgb8"
+	},
+	"summary": {
+		"airPct": 8.081,
+		"topColors": {
+			"#251511": 2443,
+			"#37221d": 954,
+			"#050505": 331,
+			"#40231c": 247,
+			"#623b32": 99,
+			"#4c4c4c": 5
+		}
+	},
+	"tier1": {
+		"chunkFlags": [
+			{
+				"cell": [
+					26,
+					18
+				],
+				"biome": "excavationsite_cube_chamber",
+				"biomeColor": "0x24888a",
+				"mode": "topo0",
+				"paintsNothing": false,
+				"sceneOnly": false,
+				"fillLayerMaterial": "rock_static_grey"
+			}
+		],
+		"pixels": {
+			"metric": "airMask",
+			"mode": "agreement",
+			"threshold": 99.43,
+			"measured": 99.927,
+			"measuredAt": "2026-08-15",
+			"measuredCommit": "35edc64"
+		},
+		"maxUnresolvedPct": 0.5
+	},
+	"tier2": {
+		"render": {
+			"layers": {}
+		},
+		"checks": [
+			{
+				"metric": "airMask",
+				"mode": "agreement",
+				"threshold": 99.43,
+				"measured": 99.927,
+				"measuredAt": "2026-08-15",
+				"measuredCommit": "35edc64"
+			},
+			{
+				"metric": "rgb",
+				"mode": "agreement",
+				"measured": 94.98,
+				"measuredAt": "2026-08-15",
+				"measuredCommit": "35edc64",
+				"threshold": 94.48
+			}
+		]
+	}
+}

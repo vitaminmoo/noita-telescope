@@ -1,0 +1,86 @@
+{
+	"name": "temple_pyramid_materials",
+	"guards": "the desert temple's templebrick / rock_hard / diamond structure materials",
+	"seed": 786433191,
+	"ngPlus": 0,
+	"world": {
+		"x": 9600,
+		"y": 124,
+		"w": 64,
+		"h": 64
+	},
+	"source": {
+		"key": "matdump/surface",
+		"kind": "matdump-pgm-set",
+		"path": "/home/vitaminmoo/reverse/noita/groundtruth/surface/matdump_seed786433191",
+		"manifest": "manifest.json",
+		"matlist": "matlist.txt",
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-05",
+		"note": "Frozen-physics MATDUMP of the whole surface band (y -900..600) as raw engine material ids, 20 tiles of 1536x1500. Authoritative material identity, not just colors. See ~/reverse/noita/groundtruth/surface/README.md."
+	},
+	"expected": {
+		"file": "temple_pyramid_materials.bin",
+		"format": "matpal16",
+		"palette": [
+			"rock_hard",
+			"diamond",
+			"templebrick_static",
+			"air",
+			"templebrickdark_static",
+			"ceiling_plant_material"
+		]
+	},
+	"summary": {
+		"airPct": 69.8,
+		"topMaterials": {
+			"air": 2859,
+			"templebrick_static": 982,
+			"templebrickdark_static": 212,
+			"rock_hard": 31,
+			"diamond": 11,
+			"ceiling_plant_material": 1
+		}
+	},
+	"tier1": {
+		"chunkFlags": [
+			{
+				"cell": [
+					53,
+					14
+				],
+				"biome": "pyramid",
+				"biomeColor": "0x967f11",
+				"mode": "topo2",
+				"paintsNothing": false,
+				"sceneOnly": false,
+				"fillLayerMaterial": null
+			}
+		],
+		"pixels": {
+			"metric": "materials",
+			"mode": "agreement",
+			"threshold": 99.48,
+			"measured": 99.976,
+			"measuredAt": "2026-08-15",
+			"measuredCommit": "35edc64"
+		},
+		"maxUnresolvedPct": 0.5
+	},
+	"tier2": {
+		"render": {
+			"layers": {}
+		},
+		"checks": [
+			{
+				"metric": "airMask",
+				"mode": "agreement",
+				"threshold": 99.4,
+				"measured": 99.902,
+				"measuredAt": "2026-08-15",
+				"measuredCommit": "35edc64"
+			}
+		]
+	}
+}

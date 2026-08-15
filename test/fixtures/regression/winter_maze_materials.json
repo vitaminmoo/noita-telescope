@@ -1,0 +1,78 @@
+{
+	"name": "winter_maze_materials",
+	"guards": "winter's snow/snowrock is_rare maze band (the rare_use_perlin gate that runs FIRST at runtime)",
+	"seed": 786433191,
+	"ngPlus": 0,
+	"world": {
+		"x": -7930,
+		"y": -130,
+		"w": 64,
+		"h": 64
+	},
+	"source": {
+		"key": "matdump/surface",
+		"kind": "matdump-pgm-set",
+		"path": "/home/vitaminmoo/reverse/noita/groundtruth/surface/matdump_seed786433191",
+		"manifest": "manifest.json",
+		"matlist": "matlist.txt",
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-05",
+		"note": "Frozen-physics MATDUMP of the whole surface band (y -900..600) as raw engine material ids, 20 tiles of 1536x1500. Authoritative material identity, not just colors. See ~/reverse/noita/groundtruth/surface/README.md."
+	},
+	"expected": {
+		"file": "winter_maze_materials.bin",
+		"format": "matpal16",
+		"palette": [
+			"snow_static",
+			"snowrock_static"
+		]
+	},
+	"summary": {
+		"airPct": 0,
+		"topMaterials": {
+			"snow_static": 4014,
+			"snowrock_static": 82
+		}
+	},
+	"tier1": {
+		"chunkFlags": [
+			{
+				"cell": [
+					19,
+					13
+				],
+				"biome": "winter",
+				"biomeColor": "0xd6d8e3",
+				"mode": "topo0",
+				"paintsNothing": false,
+				"sceneOnly": false,
+				"fillLayerMaterial": null
+			}
+		],
+		"pixels": {
+			"metric": "materials",
+			"mode": "agreement",
+			"threshold": 99.5,
+			"measured": 100,
+			"measuredAt": "2026-08-15",
+			"measuredCommit": "35edc64"
+		},
+		"maxUnresolvedPct": 0.5
+	},
+	"tier2": {
+		"render": {
+			"layers": {}
+		},
+		"checks": [
+			{
+				"metric": "airMask",
+				"mode": "agreement",
+				"threshold": 99.5,
+				"measured": 100,
+				"measuredAt": "2026-08-15",
+				"measuredCommit": "35edc64"
+			}
+		]
+	}
+}

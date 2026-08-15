@@ -1,0 +1,89 @@
+{
+	"name": "rockroom_bug_site",
+	"guards": "the rock_room air pocket the user found by mousing over (-3595,3238) stays air",
+	"seed": 786433191,
+	"ngPlus": 0,
+	"world": {
+		"x": -3595,
+		"y": 3238,
+		"w": 64,
+		"h": 64
+	},
+	"source": {
+		"key": "mapdump/rockroom",
+		"kind": "mapdump-ppm",
+		"path": "scripts/bugfix/rockroom.ppm",
+		"rect": [
+			-3800,
+			3000,
+			640,
+			512
+		],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-15",
+		"note": "MAPDUMP via noitad worker cb6aeae2; rect from scripts/bugfix_cmp_all.sh. A second independent capture of the same rect (scripts/probe_out/rockroom.ppm, 10h earlier, different worker) agrees byte-for-byte on 99.960% of pixels - that number is the measured game-side nondeterminism floor for MAPDUMP colors."
+	},
+	"expected": {
+		"file": "rockroom_bug_site.bin",
+		"format": "rgb8"
+	},
+	"summary": {
+		"airPct": 100,
+		"topColors": {
+			"#050505": 4096
+		}
+	},
+	"tier1": {
+		"chunkFlags": [
+			{
+				"cell": [
+					27,
+					20
+				],
+				"biome": "solid_wall",
+				"biomeColor": "0x3d3d3d",
+				"mode": "topo0",
+				"paintsNothing": false,
+				"sceneOnly": false,
+				"fillLayerMaterial": "rock_hard_border"
+			},
+			{
+				"cell": [
+					28,
+					20
+				],
+				"biome": "rock_room",
+				"biomeColor": "0x326655",
+				"mode": "fallback",
+				"paintsNothing": true,
+				"sceneOnly": true,
+				"fillLayerMaterial": null
+			}
+		],
+		"pixels": {
+			"metric": "fillMask",
+			"mode": "agreement",
+			"threshold": 99.5,
+			"measured": 100,
+			"measuredAt": "2026-08-15",
+			"measuredCommit": "35edc64"
+		},
+		"maxUnresolvedPct": 100
+	},
+	"tier2": {
+		"render": {
+			"layers": {}
+		},
+		"checks": [
+			{
+				"metric": "airMask",
+				"mode": "agreement",
+				"threshold": 99.5,
+				"measured": 100,
+				"measuredAt": "2026-08-15",
+				"measuredCommit": "35edc64"
+			}
+		]
+	}
+}

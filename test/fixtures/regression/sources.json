@@ -1,0 +1,66 @@
+{
+	"mapdump/roadblock": {
+		"kind": "mapdump-ppm",
+		"path": "scripts/bugfix/roadblock.ppm",
+		"rect": [-1280, -1600, 1024, 768],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-15",
+		"note": "MAPDUMP via noitad worker cb6aeae2; rect recorded in scripts/bugfix_cmp_all.sh. Covers the roadblock chunk (33,11) = world (-1024,-1536,512,512) plus its neighbours."
+	},
+	"mapdump/templewall": {
+		"kind": "mapdump-ppm",
+		"path": "scripts/bugfix/templewall.ppm",
+		"rect": [-1536, 6144, 512, 512],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-15",
+		"note": "MAPDUMP via noitad worker a7443220; rect from scripts/bugfix_cmp_all.sh. Exactly the temple_wall chunk (32,26)."
+	},
+	"mapdump/rockroom": {
+		"kind": "mapdump-ppm",
+		"path": "scripts/bugfix/rockroom.ppm",
+		"rect": [-3800, 3000, 640, 512],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-15",
+		"note": "MAPDUMP via noitad worker cb6aeae2; rect from scripts/bugfix_cmp_all.sh. A second independent capture of the same rect (scripts/probe_out/rockroom.ppm, 10h earlier, different worker) agrees byte-for-byte on 99.960% of pixels - that number is the measured game-side nondeterminism floor for MAPDUMP colors."
+	},
+	"mapdump/watercave": {
+		"kind": "mapdump-ppm",
+		"path": "scripts/bugfix/watercave.ppm",
+		"rect": [-2048, 512, 512, 512],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-15",
+		"note": "MAPDUMP via noitad worker cb6aeae2; rect from scripts/bugfix_cmp_all.sh. A watercave chunk - all content is the biome lua's stamped watercave_layout_N scene."
+	},
+	"mapdump/lavalake": {
+		"kind": "mapdump-ppm",
+		"path": "scripts/bugfix/lavalake.ppm",
+		"rect": [2048, 512, 512, 512],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-15",
+		"note": "MAPDUMP via noitad worker cb6aeae2. The rect was not written down; recovered by correlating the dump's solid mask against data/pixel_scenes.zip spliced/lavalake2.png, which static_spawns.js stamps at (2048,0): best alignment is scene offset (0,512) at 99.93% mask agreement, i.e. world (2048,512). Every neighbouring offset scores far lower."
+	},
+	"mapdump/cube": {
+		"kind": "mapdump-ppm",
+		"path": "scripts/probe_out/cube.ppm",
+		"rect": [-4500, 2000, 640, 512],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-15",
+		"note": "MAPDUMP via noitad worker 262fb478; rect recorded in scripts/probe_cube_cpu.mjs (RECT). Straddles the excavationsite_cube_chamber room (chunk 26,18) and the procedural excavationsite around it."
+	},
+	"matdump/surface": {
+		"kind": "matdump-pgm-set",
+		"path": "/home/vitaminmoo/reverse/noita/groundtruth/surface/matdump_seed786433191",
+		"manifest": "manifest.json",
+		"matlist": "matlist.txt",
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-05",
+		"note": "Frozen-physics MATDUMP of the whole surface band (y -900..600) as raw engine material ids, 20 tiles of 1536x1500. Authoritative material identity, not just colors. See ~/reverse/noita/groundtruth/surface/README.md."
+	}
+}
