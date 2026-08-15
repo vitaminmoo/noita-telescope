@@ -1661,14 +1661,17 @@ export const app = {
 			lines.push(`Origin: scene ${scene.key} @ ${scene.localX},${scene.localY}`);
 			if (data) lines.push(`Image: data/pixel_scenes/${data.dir}/${data.name}.png`);
 			if (scene.variantKey) lines.push(`Variant: ${scene.variantKey}`);
-			// The _visual.png cell-color override only applies where its alpha is
-			// >= 128; artMask is that test, bit-packed MSB-first at load time.
+			// The colors-file cell-color override only applies where its alpha is
+			// >= 128; artMask is that test, bit-packed MSB-first at load time. The
+			// file is usually <name>_visual.png, but a good number of scenes are
+			// painted with a sibling's art, so the loader records which it read.
 			if (data && data.artMask) {
 				const p = scene.localY * data.width + scene.localX;
 				const covered = (data.artMask[p >> 3] & (0x80 >> (p & 7))) !== 0;
+				const artFile = `${data.artName ?? `${data.name}_visual`}.png`;
 				lines.push(covered
-					? `Art: visual override (${data.name}_visual.png)`
-					: `Art: material color (${data.name}_visual.png does not cover)`);
+					? `Art: visual override (${artFile})`
+					: `Art: material color (${artFile} does not cover)`);
 			}
 		}
 		else if (source === 'layer') {

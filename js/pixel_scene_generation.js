@@ -22,6 +22,72 @@ import { VISUAL_OVERLAY_SCENES } from './pixel_scene_visuals.js';
 import { SCENE_BACKGROUNDS } from './pixel_scene_backgrounds.js';
 import { SKIP_EDGE_TEXTURE_SCENES } from './pixel_scene_edge_flags.js';
 
+// Scenes the game paints with ANOTHER scene's colors file. VISUAL_OVERLAY_SCENES
+// is derived from the "<name>_visual.png sits beside <name>.png" convention, but
+// the convention is not what the engine reads: LoadPixelScene's second argument
+// is an explicit path, and a good number of call sites pass a sibling variant's
+// art. The liquid-tank holy mountains are the visible case --
+// data/scripts/biomes/temple_altar_top_shared.lua sets
+// `file_visual = "data/biome_impl/temple/altar_top_visual.png"` once and passes
+// it for altar_top.png AND every altar_top_<liquid>.png, so the water/blood/oil/
+// radioactive/lava variants are hand-painted in game while only the plain one
+// was here -- and temple_wall_ending.lua does the same for altar_top_ending.
+//
+// Value is the basename of the art inside the SAME data/pixel_scenes/<dir>/ as
+// the scene (every one of these resolves that way, and the art already ships
+// because the scene it belongs to is in VISUAL_OVERLAY_SCENES). Derived by
+// scanning every LoadPixelScene call and <PixelScene colors_filename> in the
+// unpacked game data for a colors file whose name is not `<material>_visual.png`,
+// restricted to scenes telescope ships and confirmed by matching PNG dimensions.
+//
+// Two known references are deliberately absent: data/biome_impl/vault/stain.png
+// and stain_ceiling.png pick one of three `stain_NN_visual.png` at random per
+// instance, and telescope ships neither those decals nor their art.
+const SCENE_COLORS_FILE_ALIASES = {
+	"coalmine/physics_01_alt": "physics_01_visual",
+	"coalmine/physics_02_alt": "physics_02_visual",
+	"coalmine/shop_alt": "shop_visual",
+	"coalmine/shrine01_alt": "shrine01_visual",
+	"coalmine/shrine02_alt": "shrine02_visual",
+	"coalmine/swarm_alt": "swarm_visual",
+	"coalmine/wandtrap_h_07": "wandtrap_h_06_visual",
+	"crypt/room_gate_drop_b": "room_gate_drop_visual",
+	"crypt/room_liquid_funnel_b": "room_liquid_funnel_visual",
+	"crypt/shop_b": "shop_visual",
+	"excavationsite/machine_1_alt": "machine_1_visual",
+	"excavationsite/machine_2_alt": "machine_2_visual",
+	"excavationsite/machine_3b_alt": "machine_3b_visual",
+	"excavationsite/machine_4_alt": "machine_4_visual",
+	"excavationsite/machine_5_alt": "machine_5_visual",
+	"excavationsite/machine_6_alt": "machine_6_visual",
+	"excavationsite/machine_7": "machine_5_visual",
+	"excavationsite/machine_7_alt": "machine_5_visual",
+	"excavationsite/shop_alt": "shop_visual",
+	"general/bunker2": "bunker_visual",
+	"general/essenceroom_submerged": "essenceroom_visual",
+	"pyramid/boss_limbs": "reward_visual",
+	"snowcave/pipe_alt": "pipe_visual",
+	"snowcave/verticalobservatory2_alt": "verticalobservatory2_visual",
+	"snowcave/verticalobservatory_alt": "verticalobservatory_visual",
+	"temple/altar_right_snowcastle": "altar_right_visual",
+	"temple/altar_top_blood": "altar_top_visual",
+	"temple/altar_top_ending": "altar_top_visual",
+	"temple/altar_top_lava": "altar_top_visual",
+	"temple/altar_top_oil": "altar_top_visual",
+	"temple/altar_top_radioactive": "altar_top_visual",
+	"temple/altar_top_water": "altar_top_visual",
+};
+
+/**
+ * Basename (no extension) of the colors file the engine paints this scene with,
+ * inside data/pixel_scenes/<dir>/, or null when the scene has none.
+ */
+function sceneColorsFileName(dir, name) {
+	const id = `${dir}/${name}`;
+	if (SCENE_COLORS_FILE_ALIASES[id]) return SCENE_COLORS_FILE_ALIASES[id];
+	return VISUAL_OVERLAY_SCENES.has(id) ? `${name}_visual` : null;
+}
+
 // This was originally constant but it sometimes needs to be cleared to regenerate the cache...
 export let PIXEL_SCENE_DATA = {};
 export let PIXEL_SCENE_SPAWN_DATA = {}; // Populated during the prescan of pixel scenes, keyed by biome and scene name, used for looking up spawn points during generation without needing to access the image data again
@@ -433,9 +499,10 @@ export async function loadPixelSceneData() {
 					// means this scene renders material-derived, like any other.
 					let visualArt = null;
 					let artMask = null;
-					if (VISUAL_OVERLAY_SCENES.has(`${alias}/${scene.name}`)) {
+					const artName = sceneColorsFileName(alias, scene.name);
+					if (artName) {
 						try {
-							const vis = await loadPNG(`../data/pixel_scenes/${alias}/${scene.name}_visual.png`);
+							const vis = await loadPNG(`../data/pixel_scenes/${alias}/${artName}.png`);
 							visualArt = { data: vis.data, width: vis.width, height: vis.height };
 							// Bit-packed "art covers this scene pixel" mask, for the hover
 							// readout's "Art:" line (app.js pushOriginLines) -- small enough
@@ -454,7 +521,7 @@ export async function loadPixelSceneData() {
 								}
 							}
 						} catch (err) {
-							console.warn(`visual art missing for ${alias}/${scene.name}:`, err);
+							console.warn(`visual art ${artName}.png missing for ${alias}/${scene.name}:`, err);
 						}
 					}
 					// Prescan the pixel scene for spawn points and store them in a global lookup for later use during generation, keyed by biome and scene name
@@ -480,6 +547,9 @@ export async function loadPixelSceneData() {
 						// pass of its own (js/pixel_scene_edge_flags.js).
 						skipEdgeTextures: SKIP_EDGE_TEXTURE_SCENES.has(`${alias}/${scene.name}`),
 						visualArt, // per-pixel cell-color override art, or null
+						// Basename of the colors file that art came from, for the hover
+						// readout -- not always `${name}_visual` (SCENE_COLORS_FILE_ALIASES).
+						artName,
 						artMask, // bit-packed art coverage (MSB-first), or null
 						// Repo-relative path of this scene's background sprite, or null.
 						// Just a string: the bitmap itself is owned by the background
