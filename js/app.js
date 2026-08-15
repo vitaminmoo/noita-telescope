@@ -40,6 +40,12 @@ import {
 // Width of a background boundary strip in world pixels, matching the engine art.
 const STRIP_WORLD_PX = 64;
 
+// Below this zoom the per-cell material texels are smaller than half a screen
+// pixel: point-sampling them just shimmers, and the flat material colors are
+// what the eye averages the texture to anyway. The material-texture detail pass
+// auto-disables below it (edge decals have their own gate, EDGE_DECAL_MIN_ZOOM).
+const MATERIAL_DETAIL_MIN_ZOOM = 0.5;
+
 // Paint one cell of a recolor-map canvas. `color` is either an RGB int or
 // BACKGROUND_VOID, which the engine leaves empty (biomes with no
 // background_image) and which we write as fully transparent so the canvas
@@ -1966,8 +1972,26 @@ export const app = {
 			}
 
 
+			// Above the surface the engine's chunk backdrops are wang-masked to the
+			// structure interiors (mountain, tower: sprite_static_tile_bg.frag masks
+			// the tile to the template) or horizon-limited (limit_background_image on
+			// the surface biomes and solid_wall), so what actually shows around the
+			// art up there is the parallax sky. Painting the plain tile (or void)
+			// there gave a black sky around the spawn mountain. Until the masks and
+			// limit_y strips are modeled, every above-surface cell paints the sky
+			// gradient and stays out of the backdrop-run/edge-strip builders. Only
+			// the background canvas is affected; the identity buffer keeps the biome
+			// color for tile overlays / scene fills.
+			let bgColor = isSky ? color : backgroundLayerColor(biomeColor) ?? color;
+			if (!isSky && i < this.w * surfaceLevel) {
+				const depthFactor = Math.min(Math.floor(i / this.w) / surfaceLevel, 1);
+				const r = 0x87 + ((0xbb - 0x87) * depthFactor);
+				const g = 0xce + ((0xdd - 0xce) * depthFactor);
+				bgColor = (r << 16) | (g << 8) | 0xeb;
+				isSky = true;
+			}
 			if (isSky) skyCells[i] = 1;
-			writeBackgroundPixel(id, i, isSky ? color : backgroundLayerColor(biomeColor) ?? color);
+			writeBackgroundPixel(id, i, bgColor);
 			this.recolorOffscreenBuffer[i*3+0] = (color >> 16) & 0xFF;
 			this.recolorOffscreenBuffer[i*3+1] = (color >> 8) & 0xFF;
 			this.recolorOffscreenBuffer[i*3+2] = color & 0xFF;
@@ -2355,7 +2379,9 @@ export const app = {
 			edgeNoise: appSettings.enableEdgeNoise,
 			// Per-cell material textures only mean anything once wang colors
 			// resolve to their material, which is what recolorMaterials does.
-			materialTextures: appSettings.materialTextures && appSettings.recolorMaterials,
+			// Auto-off when zoomed out: sub-pixel texels only alias.
+			materialTextures: appSettings.materialTextures && appSettings.recolorMaterials
+				&& this.cam.z >= MATERIAL_DETAIL_MIN_ZOOM,
 			engineTerrain: appSettings.engineTerrain,
 		});
 		if (!glCanvas) return null;
@@ -2920,7 +2946,7 @@ export const app = {
 		if (L.alphaMask && !(appSettings.engineTerrain
 			&& appSettings.terrainRenderer === 'gl' && biomeOverlayMode !== 'none')) {
 			for (let worldKey of this.worldsInView) {
-				const { pwX, pwY, shiftX, shiftY } = worldOffsets[worldKey];
+				const { pwY, shiftX, shiftY } = worldOffsets[worldKey];
 				if (pwY === 0) {
 					if (this.biomeMapAlphaMask) {
 						this.ctx.drawImage(this.biomeMapAlphaMask, shiftX, shiftY, this.w * 512, this.h * 512);

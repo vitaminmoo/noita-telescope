@@ -173,12 +173,39 @@ export function buildSinHashAndGrids(worldSeed) {
     return { width: SIN_HASH_W, height: H, data: t };
 }
 
+// Alpha-weighted mean color of one atlas entry's texture rect: the flat color
+// the material paints when texel detail is off (zoomed out, or the material-
+// textures toggle). The XML display color is wrong for that — for textured
+// materials nothing in the game ever shows it, and several are placeholder
+// values nowhere near the texture (bright teal coal, blue rock).
+function atlasEntryMeanRGB(matAtlas, entry) {
+    const [x, y, w, h] = matAtlas.meta.subarray((entry - 1) * 4, entry * 4);
+    let r = 0, g = 0, b = 0, wsum = 0;
+    for (let py = y; py < y + h; py++) {
+        let o = (py * matAtlas.width + x) * 4;
+        for (let px = 0; px < w; px++, o += 4) {
+            const a = matAtlas.data[o + 3];
+            if (!a) continue;
+            r += matAtlas.data[o] * a; g += matAtlas.data[o + 1] * a; b += matAtlas.data[o + 2] * a;
+            wsum += a;
+        }
+    }
+    if (!wsum) return 0;
+    return (Math.round(r / wsum) << 16) | (Math.round(g / wsum) << 8) | Math.round(b / wsum);
+}
+
 export function buildMatColorTable(matAtlas) {
     const t = new Uint16Array(512 * 4);
+    const meanByEntry = new Map();
     for (let id = 0; id < MATERIAL_NAMES_BY_ID.length; id++) {
         const name = MATERIAL_NAMES_BY_ID[id];
         const entry = (name && matAtlas) ? (matAtlas.entryByMaterial.get(name) ?? 0) : 0;
-        const rgb = MATERIAL_FLAT_RGB_BY_ID[id] | 0;
+        let rgb = MATERIAL_FLAT_RGB_BY_ID[id] | 0;
+        if (entry > 0) {
+            let mean = meanByEntry.get(entry);
+            if (mean === undefined) { mean = atlasEntryMeanRGB(matAtlas, entry); meanByEntry.set(entry, mean); }
+            rgb = mean;
+        }
         // x packs the material's XML alpha (the cell's src-over compositing
         // alpha, water 0xA0...) above the 8-bit atlas entry; the shader
         // unpacks with & 0xff / >> 8. Textured materials take the texel's own

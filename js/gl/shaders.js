@@ -845,7 +845,9 @@ ivec2 engResolveCell(ivec2 w) {
 void engMaterialColor(int mat, ivec2 w) {
     uvec4 mc = texelFetch(u_matMetaTex, ivec2(mat, 1), 0);
     uint entry = mc.x & 0xffu;
-    if (entry > 0u) { materialTexel(int(entry), w, outColor); return; }
+    // u_matDetail off (toggle, or auto below MATERIAL_DETAIL_MIN_ZOOM): flat
+    // display color instead of per-cell texels, which only alias at sub-pixel.
+    if (u_matDetail && entry > 0u) { materialTexel(int(entry), w, outColor); return; }
     float a = float(mc.x >> 8) / 255.0;
     outColor = vec4(vec3(mc.yzw) / 255.0 * a, a);
 }
