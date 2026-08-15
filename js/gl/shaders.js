@@ -630,18 +630,25 @@ int engTopo2(int slot, ivec2 w) {
 }
 
 // Topology-0 pieces (CellNoise_EvaluateCaveAndMaterial @0x0087e110 chain).
-float engFbm4(float x, float y) {
+// ProceduralNoise_Dispatch @0x00873c00, restricted to the two variants any
+// shipped <Topology mInsideNoiseType> asks for: 5 (EdgeNoise_Simplex2D, the
+// default when the attribute is absent) and 8 ("SimplexNoise1234",
+// ProceduralNoise_Simplex2D — the same function carveSimplex already is).
+float engBaseNoise(float x, float y, int variant) {
+    return variant == 8 ? carveSimplex(x, y) : magicNoise(x, y);
+}
+float engFbm4(float x, float y, int variant) {
     const float M0 = 0.84147, M1 = 0.5403;
-    float acc = magicNoise(x, y) * 0.5;
+    float acc = engBaseNoise(x, y, variant) * 0.5;
     float u = ((M0 * x) + (M1 * y)) * 2.02;
     float v = ((M1 * x) + (-M0 * y)) * 2.02;
-    acc = acc + magicNoise(u, v) * 0.25;
+    acc = acc + engBaseNoise(u, v, variant) * 0.25;
     float u2 = ((M0 * u) + (M1 * v)) * 2.33;
     float v2 = ((M1 * u) + (-M0 * v)) * 2.33;
-    acc = acc + magicNoise(u2, v2) * 0.125;
+    acc = acc + engBaseNoise(u2, v2, variant) * 0.125;
     float u3 = ((M0 * u2) + (M1 * v2)) * 2.01;
     float v3 = ((M1 * u2) + (-M0 * v2)) * 2.01;
-    acc = acc + magicNoise(u3, v3) * 0.0625;
+    acc = acc + engBaseNoise(u3, v3, variant) * 0.0625;
     return acc / 0.9375;
 }
 // Sin-hash value noise @0x00871850 (even/odd lattice parity picks smoothstep vs
@@ -751,9 +758,17 @@ float engSurfaceTop(vec4 t0, vec4 t1, float wx, out float botY) {
 }
 // CellNoise_EvaluateCaveBoundary @0x0087e8d0: depth ratio in the biome's
 // gradient band, blended with the LEFT neighbour cell's line near the surface.
-float engDepthRatio(int slot, int leftSlot, float wx, float wy, float subX) {
-    vec4 t0 = engTable(ENG_TOPO0_COL + 0, slot);
-    vec4 t1 = engTable(ENG_TOPO0_COL + 1, slot);
+// CellNoise_EvaluateCaveBoundary @0x0087e8d0. Which chunk's surface line is
+// used depends on depth, and the two answers differ inside the wobble band:
+// below y=380 it is the BiomeChunk the caller resolved (the WOBBLED cell),
+// unblended; at/above 380 the function ignores that argument and re-derives the
+// cell from the raw coordinates — the PHYSICAL map cell — then blends with THAT
+// cell's left neighbour over the first 42px. So near the surface the bands come
+// from the wobbled biome while the depth ratio comes from the physical one.
+float engDepthRatio(int slot, int physSlot, int leftSlot, float wx, float wy, float subX) {
+    int base = wy <= 380.0 ? physSlot : slot;
+    vec4 t0 = engTable(ENG_TOPO0_COL + 0, base);
+    vec4 t1 = engTable(ENG_TOPO0_COL + 1, base);
     float botY;
     float topY = engSurfaceTop(t0, t1, wx, botY);
     if (wy <= 380.0 && subX < 42.0) {
@@ -773,7 +788,7 @@ float engDepthRatio(int slot, int leftSlot, float wx, float wy, float subX) {
 // CellNoise_EvaluateCaveAndMaterial @0x0087e110 (noise_type 0 and 3 carve
 // regimes — the only two the shipped biomes use; unsupported variants never
 // reach the shader — see buildEngineResources).
-float engEvalCaveMat(int slot, int leftSlot, ivec2 w) {
+float engEvalCaveMat(int slot, int physSlot, int leftSlot, ivec2 w) {
     vec4 t2p = engTable(ENG_TOPO0_COL + 2, slot);
     vec4 t3p = engTable(ENG_TOPO0_COL + 3, slot);
     vec4 t4p = engTable(ENG_TOPO0_COL + 4, slot);
@@ -803,7 +818,7 @@ float engEvalCaveMat(int slot, int leftSlot, ivec2 w) {
     }
     if (!(m > 0.0)) return 0.0;
     float subX = float(pmod(w.x + u_centerPx, CHUNK));
-    float r = engDepthRatio(slot, leftSlot, wx, wy, subX);
+    float r = engDepthRatio(slot, physSlot, leftSlot, wx, wy, subX);
     float density = r * m;
     if (density <= 0.0) return 0.0;
     float matWeight = 0.0, mn = 0.0;
@@ -812,7 +827,9 @@ float engEvalCaveMat(int slot, int leftSlot, ivec2 w) {
         float msx = wx * 0.05243442 * t3p.x + 0.1 + t3p.z;
         float msy = wy * 0.05243442 * t3p.y + 0.1 + t3p.w;
         int ifl = int(t4p.x);
-        mn = (ifl & 1) != 0 ? engFbm4(msx, msy) : magicNoise(msx, msy);
+        int inoise = int(t4p.w);   // mInsideNoiseType, the dispatch variant
+        mn = (ifl & 1) != 0 ? engFbm4(msx, msy, inoise)
+                            : engBaseNoise(msx, msy, inoise);
         if ((ifl & 2) != 0) mn = mn * mn;
         if ((ifl & 4) != 0) mn = clamp(mn, t4p.y, t4p.z);
         if ((ifl & 8) != 0) mn = (t4p.z - t4p.y) * (mn * 0.5 + 0.5) + t4p.y;
@@ -825,10 +842,10 @@ float engEvalCaveMat(int slot, int leftSlot, ivec2 w) {
     }
     return ((t2p.y * matWeight) * mn + (t2p.x * density)) + addValue;
 }
-int engTopo0(int slot, int leftSlot, ivec2 w) {
+int engTopo0(int slot, int physSlot, int leftSlot, ivec2 w) {
     vec4 hdr = engTable(0, slot);
     if (hdr.z < 1.0) return 0;    // no MaterialComponents: this path paints nothing
-    return engBandSelect(slot, w, engEvalCaveMat(slot, leftSlot, w));
+    return engBandSelect(slot, w, engEvalCaveMat(slot, physSlot, leftSlot, w));
 }
 
 // ChunkGrid_ResolveChunkAtPosition @0x0087d9a0 — the engine's own biome-cell
@@ -922,8 +939,14 @@ void main() {
             if (mode == 1u) {
                 mat = engTopo2(slot, w);
             } else {
-                int leftSlot = int(engInfoAt(cell.x - 1, cell.y) & 0xffu);
-                mat = engTopo0(slot, leftSlot, w);
+                // The surface line near the top of the world comes from the
+                // PHYSICAL biome-map cell, not the wobble-resolved one — see
+                // engDepthRatio.
+                int pcx = fdiv(w.x + u_centerPx, CHUNK);
+                int pcy = fdiv(w.y + u_baseY, CHUNK);
+                int physSlot = int(engInfoAt(pcx, pcy) & 0xffu);
+                int leftSlot = int(engInfoAt(pcx - 1, pcy) & 0xffu);
+                mat = engTopo0(slot, physSlot, leftSlot, w);
             }
             if (mat > 0) engMaterialColor(mat, w);
             return;

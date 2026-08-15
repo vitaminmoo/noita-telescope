@@ -148,6 +148,9 @@ export function buildEngineTable() {
         t[o + 12] = c.insideScaleX; t[o + 13] = c.insideScaleY; t[o + 14] = c.insideOffX; t[o + 15] = c.insideOffY;
         t[o + 16] = (c.insideFBM ? 1 : 0) | (c.insideSquared ? 2 : 0) | (c.insideClamped ? 4 : 0) | (c.insideScaled ? 8 : 0);
         t[o + 17] = c.insideScaleMin; t[o + 18] = c.insideScaleMax;
+        // mInsideNoiseType: which ProceduralNoise_Dispatch variant the material
+        // noise runs (5 = the absent-attribute default, 8 = "SimplexNoise1234").
+        t[o + 19] = c.insideNoiseType ?? 5;
         t[o + 20] = KIND[c.modKind] ?? 3; t[o + 21] = c.modValue;
         // kind 3 (grid): which replayed BitmapCaves grid to sample, as a slot in
         // the buildSinHashAndGrids stack; -1 = params not ported, modifier 1.0

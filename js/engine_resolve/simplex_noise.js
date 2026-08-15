@@ -86,3 +86,78 @@ export function ComputeMagicValueFromDoubles(x, y) {
 	}
 	return (dVar7 + dVar6 + dVar8) * 70.0; // Should this be world size or just straight 70? Didn't seem to give correct results when I tried using world size. Seems 70 is correct.
 }
+
+// ---------------------------------------------------------------------------
+// ProceduralNoise_Simplex2D @0x00872d40 -- ProceduralNoise_Dispatch variant 8,
+// the one `mInsideNoiseType="SimplexNoise1234"` selects (NoiseImpl_FromString
+// @0x004867c6 maps that string to 8). Stefan Gustavson's simplexnoise1234.c
+// snoise2 verbatim, in FLOAT32 throughout, over the SAME 256-byte permutation
+// table as EdgeNoise_Simplex2D above (the engine's copy at 0x00fdf730 is
+// byte-identical to EDGE_NOISE, mirrored to 512).
+//
+// What differs from ComputeMagicValueFromDoubles (variant 5) is the gradient and
+// the output scale: this one takes the hash's low 3 bits into the classic 8-way
+// grad2 (u +/- 2v) and scales the sum by 40, where the edge variant runs the
+// 12-entry grad3 table in 2D and scales by 70.
+//
+// Both floors are Gustavson's FASTFLOOR, which the binary implements as
+// `CVTTSS2SI; if (!(v > 0)) --i` -- so an exactly-zero coordinate floors to -1.
+// That quirk is load-bearing at the world origin, so it is reproduced here.
+const F32 = Math.fround;
+const SN_F2 = F32(0.3660253882408142);   // 0x010535bc
+const SN_G2 = F32(0.21132487058639526);  // 0x01053548
+const SN_G2_2 = F32(0.42264974117279053); // 0x010535d4 (2*G2, as its own constant)
+const SN_SCALE = 40.0;                   // 0x01053df0
+
+function fastFloor(v) {
+	const i = Math.trunc(v);
+	return v > 0 ? i : i - 1;
+}
+
+/** grad2(hash, x, y) from the binary: u = h<4 ? x : y, v = the other,
+ *  u negated on bit 0, v scaled by -2 on bit 1 and +2 otherwise. */
+function snGrad2(hash, x, y) {
+	const h = hash & 7;
+	let u = h < 4 ? x : y;
+	const w = h < 4 ? y : x;
+	if (h & 1) u = F32(-u);
+	return F32(u + F32(w * (h & 2 ? -2.0 : 2.0)));
+}
+
+/** ProceduralNoise_Simplex2D(x, y) -> float in roughly [-1, 1]. */
+export function SimplexNoise1234(x, y) {
+	const fx = F32(x), fy = F32(y);
+	const s = F32(F32(fx + fy) * SN_F2);
+	const i = fastFloor(F32(s + fx));
+	const j = fastFloor(F32(s + fy));
+	const t = F32(F32(i + j) * SN_G2);
+	const x0 = F32(fx - F32(i - t));
+	const y0 = F32(fy - F32(j - t));
+	const i1 = x0 > y0 ? 1 : 0;
+	const j1 = x0 > y0 ? 0 : 1;
+	const x1 = F32(F32(x0 - i1) + SN_G2);
+	const y1 = F32(F32(y0 - j1) + SN_G2);
+	const x2 = F32(F32(x0 - 1.0) + SN_G2_2);
+	const y2 = F32(F32(y0 - 1.0) + SN_G2_2);
+	const ii = i & 0xff, jj = j & 0xff;
+
+	let n0 = 0, n1 = 0, n2 = 0;
+	let t0 = F32(F32(0.5 - F32(x0 * x0)) - F32(y0 * y0));
+	if (t0 >= 0) {
+		t0 = F32(t0 * t0);
+		n0 = F32(F32(t0 * t0) * snGrad2(EDGE_NOISE_2[EDGE_NOISE_2[jj] + ii], x0, y0));
+	}
+	let t1 = F32(F32(0.5 - F32(x1 * x1)) - F32(y1 * y1));
+	if (t1 >= 0) {
+		t1 = F32(t1 * t1);
+		n1 = F32(F32(t1 * t1) *
+			snGrad2(EDGE_NOISE_2[EDGE_NOISE_2[jj + j1] + ii + i1], x1, y1));
+	}
+	let t2 = F32(F32(0.5 - F32(x2 * x2)) - F32(y2 * y2));
+	if (t2 >= 0) {
+		t2 = F32(t2 * t2);
+		n2 = F32(F32(t2 * t2) *
+			snGrad2(EDGE_NOISE_2[EDGE_NOISE_2[jj + 1] + ii + 1], x2, y2));
+	}
+	return F32(F32(F32(n1 + n0) + n2) * SN_SCALE);
+}

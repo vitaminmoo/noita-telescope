@@ -140,7 +140,12 @@ for (const color of colors) {
     const topo0OK = t0.topo === 0
         && (noiseType === 0 || noiseType === 3 || !carveReachable)
         && (t0.edge === 0 || t0.edge === 1 || t0.edge === 3)
-        && t0.insideNoiseType === 5
+        // mInsideNoiseType: the ProceduralNoise_Dispatch variant the material
+        // noise runs (NoiseImpl_FromString @0x004867c6). 5 is what the
+        // attribute's absence defaults to; 8 = "SimplexNoise1234"
+        // (ProceduralNoise_Simplex2D @0x00872d40), which the four inner pyramid
+        // biomes ask for. Both are ported — simplex_noise.js, shaders.js.
+        && (t0.insideNoiseType === 5 || t0.insideNoiseType === 8)
         && !t0.depthBlend
         && (t0.modifier.kind === 'const' || t0.modifier.kind === 'empty' || t0.modifier.kind === 'none'
             || gridOK)
@@ -178,6 +183,7 @@ for (const color of colors) {
             insideFBM: t0.insideFBM, insideSquared: t0.insideSquared,
             insideClamped: t0.insideClamped, insideScaled: t0.insideScaled,
             insideScaleMin: t0.insideScaleMin, insideScaleMax: t0.insideScaleMax,
+            insideNoiseType: t0.insideNoiseType,
             noiseType,
             modKind: t0.modifier.kind, modValue: t0.modifier.value ?? 0,
             gridKey,
