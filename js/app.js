@@ -37,9 +37,17 @@ import { getFungalShifts } from './fungal_shifts.js';
 import { pickAlchemyMaterials } from './alchemy.js';
 import {
 	BACKGROUND_VOID, backgroundLayerColor, buildBackdropRuns, buildBackgroundEdges,
-	drawBackdropRuns, drawGlobalBackgroundImages, drawSceneBackgrounds, edgeStripArt,
-	loadBackgroundArt, loadBackgroundEdgeMasks, tintedEdgeStrip,
+	drawBackdropRuns, drawGlobalBackgroundImages, drawSceneBackgrounds, drawStaticTileBackdrops,
+	edgeStripArt, loadBackgroundArt, loadBackgroundEdgeMasks, loadStaticTileBackgroundMasks,
+	STATIC_TILE_BACKGROUNDS, tintedEdgeStrip,
 } from './biome_backgrounds.js';
+
+// The biome-map colors whose backdrop is masked to a structure silhouette rather
+// than filling their chunk (js/biome_backgrounds.js STATIC_TILE_BACKGROUNDS), so
+// the background layer must leave their chunks to the sky and draw the mask.
+const STATIC_TILE_COLORS = new Set(Object.keys(STATIC_TILE_BACKGROUNDS)
+	.map(name => GENERATOR_CONFIG[name] && (GENERATOR_CONFIG[name].color & 0xffffff))
+	.filter(c => c !== undefined && c !== null));
 
 // Width of a background boundary strip in world pixels, matching the engine art.
 const STRIP_WORLD_PX = 64;
@@ -305,6 +313,7 @@ export const app = {
 		// mask has not arrived yet, and redraws pick them up once it has.
 		loadBackgroundEdgeMasks().then(() => this.draw());
 		loadBackgroundArt().then(() => this.draw());
+		loadStaticTileBackgroundMasks().then(() => this.draw());
 		const vp = document.getElementById('view');
 
 		const resize = () => {
@@ -2189,7 +2198,16 @@ export const app = {
 			// the background canvas is affected; the identity buffer keeps the biome
 			// color for tile overlays / scene fills.
 			let bgColor = isSky ? color : backgroundLayerColor(biomeColor) ?? color;
-			if (!isSky && i < this.w * surfaceLevel) {
+			// A `static_tile` biome's backdrop is not a chunk sprite at all -- it is
+			// its background_image masked to the structure's silhouette
+			// (js/biome_backgrounds.js STATIC_TILE_BACKGROUNDS). Everything around
+			// the silhouette is the parallax sky, so the chunk joins the sky band
+			// here -- no backdrop run, no boundary strip, no flat fill -- and
+			// drawBackgroundStack draws the masked backdrop on top of it. That holds
+			// at any depth, which matters for the watchtower's row 14: the one
+			// static-tile cell not already above the surface line, and until now the
+			// one that filled its whole chunk with the wandcave backdrop.
+			if (!isSky && (STATIC_TILE_COLORS.has(biomeColor) || i < this.w * surfaceLevel)) {
 				const depthFactor = Math.min(Math.floor(i / this.w) / surfaceLevel, 1);
 				const r = 0x87 + ((0xbb - 0x87) * depthFactor);
 				const g = 0xce + ((0xdd - 0xce) * depthFactor);
@@ -2663,6 +2681,22 @@ export const app = {
 				});
 			}
 			steps.push(() => this.drawBackgroundEdges(worldOffsets, viewRect, offscreen));
+			// The static-tile structures' masked backdrops, at the same world rect
+			// (and with the same PW offsets) as their tile layers. They sit with the
+			// backdrops rather than with the scenes: they are the SAME sprite the
+			// backdrop runs draw, only masked to a silhouette instead of filling a
+			// chunk. Vertical bands are the clamped edge row repeated, so a main-world
+			// structure says nothing about what is up or down there.
+			steps.push(() => {
+				for (let worldKey of this.worldsInView) {
+					const { pwX, pwY, shiftX, shiftY } = worldOffsets[worldKey];
+					if (pwY !== 0) continue;
+					const pwOffset = (this.isNGP || this.gameMode === 'nightmare') ? -pwX * 8 : 0;
+					drawStaticTileBackdrops(this.ctx, this.tileLayers,
+						shiftX + pwOffset + VISUAL_TILE_OFFSET_X,
+						shiftY + VISUAL_TILE_OFFSET_Y, viewRect);
+				}
+			});
 			steps.push(() => {
 				for (let worldKey of this.worldsInView) {
 					const { pwX, pwY, shiftX, shiftY } = worldOffsets[worldKey];

@@ -96,6 +96,27 @@ def main():
             if b.get(k):
                 ship(b[k])
 
+    # --- 1b. static_tile background masks ------------------------------------
+    # The five `static_tile="1"` biomes -- the sky temples and the watchtower --
+    # do not get a per-chunk backdrop sprite. Their background_image is drawn
+    # through shaders/sprite_static_tile_bg.frag, which multiplies it by
+    # `static_tile_bg_mask`: a black/white silhouette of the structure at the
+    # wang template's own resolution (1 mask pixel = 10 world pixels). Ship the
+    # masks verbatim; the renderer thresholds them into an alpha mask at load
+    # (js/biome_backgrounds.js STATIC_TILE_BACKGROUNDS, which also records which
+    # background image each one masks).
+    st_dir = os.path.join(src, 'biome_impl/static_tile')
+    mask_re = re.compile(r'static_tile_bg_mask="([^"]+)"')
+    if os.path.isdir(st_dir):
+        for fn in sorted(os.listdir(st_dir)):
+            if not fn.endswith('.xml'):
+                continue
+            text = open(os.path.join(st_dir, fn), encoding='utf-8',
+                        errors='replace').read()
+            for mask in mask_re.findall(text):
+                if mask:
+                    ship(mask, 'data/backgrounds/' + mask.removeprefix('data/'))
+
     # --- 2. scene backgrounds ------------------------------------------------
     # scene key (material basename, no extension) -> game background path
     scene_bg = {}

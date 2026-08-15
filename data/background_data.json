@@ -669,6 +669,36 @@
     64
    ]
   },
+  "data/backgrounds/biome_impl/static_tile/temples-assets/barren_bg.png": {
+   "size": [
+    153,
+    94
+   ]
+  },
+  "data/backgrounds/biome_impl/static_tile/temples-assets/boss_bg.png": {
+   "size": [
+    153,
+    94
+   ]
+  },
+  "data/backgrounds/biome_impl/static_tile/temples-assets/darkness_bg.png": {
+   "size": [
+    153,
+    94
+   ]
+  },
+  "data/backgrounds/biome_impl/static_tile/temples-assets/potion_mimics_bg.png": {
+   "size": [
+    153,
+    154
+   ]
+  },
+  "data/backgrounds/biome_impl/static_tile/temples-assets/watchtower_bg.png": {
+   "size": [
+    52,
+    155
+   ]
+  },
   "data/backgrounds/biome_impl/temple/altar_background.png": {
    "size": [
     512,

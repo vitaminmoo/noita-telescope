@@ -388,6 +388,127 @@ export function drawSceneBackgrounds(ctx, scenes, toDrawX, toDrawY, viewRect, ar
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Static-tile backdrops
+//
+// The five `static_tile="1"` biomes -- the sky temples and the watchtower --
+// do NOT get the per-chunk backdrop sprite above. Their `background_image` is
+// drawn through shaders/sprite_static_tile_bg.frag, which multiplies it by a
+// second texture, `static_tile_bg_mask`:
+//
+//     gl_FragColor = color * gl_Color * mask_read_supersample8x( mask_uv );
+//
+// `mask_read` is `step(mask_threshold, mask.r)` on a pixel-art grid, so the mask
+// is a hard black/white silhouette of the structure at the wang template's own
+// resolution (1 mask pixel = 10 world pixels, the same TILE_SIZE the fg template
+// uses). Inside the silhouette the biome's background image tiles; outside it,
+// nothing is drawn and what shows is the parallax sky.
+//
+// That is why telescope had to paint the whole above-surface band as sky
+// (app.js renderRecolorMap) to avoid a black sky around the spawn mountain, and
+// why the tower and temple interiors came out sky-coloured with it: they are
+// the chunks where a masked backdrop is the right answer, not "no backdrop".
+//
+// The mask lives at the same world rect as the biome's static tile layer,
+// BOTTOM-aligned: watchtower_bg.png is one row taller than watchtower_fg.png
+// and its silhouette sits one row lower (rows 9..154 against the tile's 8..153),
+// so aligning the bottoms puts the two in register exactly. The other four are
+// the same height either way.
+//
+// Not modelled: `background_image_height="-39"`, a vertical phase on the tiled
+// image. It moves a repeating dark texture by 39px inside a mask that never
+// moves, which is invisible at any zoom telescope draws.
+
+/** biome name (GENERATOR_CONFIG key) -> its masked backdrop. */
+export const STATIC_TILE_BACKGROUNDS = {
+	biome_watchtower: { image: 'data/weather_gfx/background_wandcave.png', mask: 'data/backgrounds/biome_impl/static_tile/temples-assets/watchtower_bg.png' },
+	biome_darkness: { image: 'data/weather_gfx/background_crypt.png', mask: 'data/backgrounds/biome_impl/static_tile/temples-assets/darkness_bg.png' },
+	biome_barren: { image: 'data/weather_gfx/background_wandcave.png', mask: 'data/backgrounds/biome_impl/static_tile/temples-assets/barren_bg.png' },
+	biome_boss_sky: { image: 'data/weather_gfx/background_crypt.png', mask: 'data/backgrounds/biome_impl/static_tile/temples-assets/boss_bg.png' },
+	biome_potion_mimics: { image: 'data/weather_gfx/background_wandcave.png', mask: 'data/backgrounds/biome_impl/static_tile/temples-assets/potion_mimics_bg.png' },
+};
+
+/** The world pixels one mask pixel covers -- constants.js TILE_SIZE. */
+const MASK_TILE = 10;
+/** shaders/sprite_static_tile_bg.frag `step(mask_threshold, mask.r)`. */
+const MASK_THRESHOLD = 128;
+
+// biome name -> a 1x canvas whose ALPHA is the thresholded silhouette, so the
+// composite below is one `destination-in` drawImage with no pixel readback.
+const STATIC_TILE_MASK_CANVASES = new Map();
+let staticMaskPromise = null;
+
+export function loadStaticTileBackgroundMasks() {
+	return staticMaskPromise ??= (async () => {
+		const { loadPNG } = await import('./png_sanitizer.js');
+		await Promise.all(Object.entries(STATIC_TILE_BACKGROUNDS).map(async ([name, rec]) => {
+			try {
+				const png = await loadPNG('../' + rec.mask);
+				const canvas = document.createElement('canvas');
+				canvas.width = png.width;
+				canvas.height = png.height;
+				const ctx = canvas.getContext('2d');
+				const id = ctx.createImageData(png.width, png.height);
+				for (let p = 0; p < png.width * png.height; p++) {
+					const on = png.data[p * 4 + 3] !== 0 && png.data[p * 4] >= MASK_THRESHOLD;
+					id.data[p * 4 + 3] = on ? 255 : 0;
+				}
+				ctx.putImageData(id, 0, 0);
+				STATIC_TILE_MASK_CANVASES.set(name, canvas);
+			}
+			catch (e) { console.warn('Static tile background mask failed to load:', rec.mask, e); }
+		}));
+	})();
+}
+
+// One baked canvas per (layer, tiling phase). The phase only takes a handful of
+// values -- one per world copy on screen -- and a bake is a few hundred tiled
+// blits, so this never runs per frame.
+const staticTileBakes = new Map();
+
+/**
+ * Draws the masked backdrop of every static-tile layer in view.
+ *
+ * `layers` is app.tileLayers; (offsetX, offsetY) is the same world->canvas shift
+ * the tile-overlay pass applies to `layer.correctedX/Y`, so the backdrop lands
+ * exactly on the structure it belongs to.
+ */
+export function drawStaticTileBackdrops(ctx, layers, offsetX, offsetY, viewRect) {
+	if (!artData || !layers) return;
+	const pmod = (v, m) => ((v % m) + m) % m;
+	for (const layer of layers) {
+		const rec = STATIC_TILE_BACKGROUNDS[layer.biomeName];
+		if (!rec) continue;
+		const mask = STATIC_TILE_MASK_CANVASES.get(layer.biomeName);
+		const img = ART_BITMAPS.get(rec.image);
+		if (!mask || !img) continue;
+		const w = layer.w, h = mask.height * MASK_TILE;
+		// Bottom-aligned against the layer's own rect (see the note above).
+		const dx = layer.correctedX + offsetX;
+		const dy = layer.correctedY + layer.h - h + offsetY;
+		if (dx + w < viewRect.left || dx > viewRect.right ||
+			dy + h < viewRect.top || dy > viewRect.bottom) continue;
+
+		const phaseX = pmod(dx, img.width), phaseY = pmod(dy, img.height);
+		const key = `${layer.biomeName}|${layer.correctedX},${layer.correctedY}|${phaseX},${phaseY}`;
+		let baked = staticTileBakes.get(key);
+		if (!baked) {
+			baked = document.createElement('canvas');
+			baked.width = w;
+			baked.height = h;
+			const bctx = baked.getContext('2d');
+			bctx.imageSmoothingEnabled = false;
+			for (let ty = -phaseY; ty < h; ty += img.height)
+				for (let tx = -phaseX; tx < w; tx += img.width)
+					bctx.drawImage(img, tx, ty);
+			bctx.globalCompositeOperation = 'destination-in';
+			bctx.drawImage(mask, 0, 0, w, h);
+			staticTileBakes.set(key, baked);
+		}
+		ctx.drawImage(baked, dx, dy);
+	}
+}
+
 export function drawGlobalBackgroundImages(ctx, toDrawX, toDrawY, viewRect) {
 	if (!artData) return;
 	for (const g of artData.globalImages) {
