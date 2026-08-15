@@ -6,8 +6,8 @@ import { getDateAndTime } from "./utils.js";
 export const RENDER_LAYERS = [
 	{ key: 'biomeBackground', id: 'debug-layer-biome-background', label: 'Biome Background', defaultOn: true },
 	{ key: 'customArt', id: 'debug-layer-custom-art', label: 'Custom Art', defaultOn: false },
-	{ key: 'atmosphere', id: 'debug-layer-atmosphere', label: 'Weather / Sky / Stars', defaultOn: true },
-	{ key: 'alphaMask', id: 'debug-layer-alpha-mask', label: 'Alpha Mask', defaultOn: true },
+	{ key: 'atmosphere', id: 'debug-layer-atmosphere', label: 'Weather / Sky / Stars', defaultOn: false },
+	{ key: 'alphaMask', id: 'debug-layer-alpha-mask', label: 'Alpha Mask', defaultOn: false },
 	{ key: 'tileOverlays', id: 'debug-layer-tile-overlays', label: 'Tile Overlays', defaultOn: true },
 	{ key: 'pixelScenes', id: 'debug-layer-pixel-scenes', label: 'Pixel Scenes', defaultOn: true },
 	{ key: 'debugBoxes', id: 'debug-layer-debug-boxes', label: 'Debug Boxes / Paths', defaultOn: true },
@@ -34,7 +34,7 @@ export function readRenderLayersFromUI() {
 }
 
 export const appSettings = {
-	enableStaticPixelScenes: 'some',
+	enableStaticPixelScenes: 'all',
 	skipCosmeticScenes: true,
 	enableEdgeNoise: true,
 	blockEdgeSpawns: false,
@@ -42,13 +42,13 @@ export const appSettings = {
 	rngInfo: false,
 	recolorMaterials: true,
 	materialTextures: true,
-	engineTerrain: false,
+	engineTerrain: true,
 	edgeDecals: true,
 	clearSpawnPixels: false,
 	visitedCoalmineAltShrine: false,
 	excludeTaikasauva: false,
 	excludeEdgeCases: false, // Not yet implemented
-	biomeOverlayMode: 'cheap',
+	biomeOverlayMode: 'normal',
 	showEnemies: false,
 	enableHamisHints: false,
 	gameMode: 'normal',
@@ -72,7 +72,7 @@ export const appSettings = {
 	renderLayers: defaultRenderLayers(),
 	// Which renderer draws the tile-overlay layer: 'cpu' is the baked overlay
 	// canvases (the parity reference), 'gl' is the WebGL2 terrain pass.
-	terrainRenderer: 'cpu',
+	terrainRenderer: 'gl',
 	debugLayerTimings: false,
 	checkerboardUnpainted: true,
 	biomeBoundaryContour: false,
@@ -94,7 +94,7 @@ export function updateSettings(newSettings) {
 
 export function updateSettingsFromUI() {
 	const newSettings = {
-		enableStaticPixelScenes: document.getElementById('enable-static-pixel-scenes')?.value || 'some',
+		enableStaticPixelScenes: document.getElementById('enable-static-pixel-scenes')?.value || 'all',
 		skipCosmeticScenes: document.getElementById('skip-cosmetic-scenes')?.checked || false,
 		enableEdgeNoise: document.getElementById('enable-edge-noise')?.checked || false,
 		blockEdgeSpawns: document.getElementById('debug-block-edge-spawns')?.checked || false,
@@ -106,13 +106,13 @@ export function updateSettingsFromUI() {
 		// keeps the "no such checkbox" default without overriding an unchecked one.
 		recolorMaterials: document.getElementById('recolor-materials')?.checked ?? true,
 		materialTextures: document.getElementById('material-textures')?.checked ?? true,
-		engineTerrain: document.getElementById('engine-terrain')?.checked || false,
+		engineTerrain: document.getElementById('engine-terrain')?.checked ?? true,
 		edgeDecals: document.getElementById('edge-decals')?.checked ?? true,
 		clearSpawnPixels: document.getElementById('clear-spawn-pixels')?.checked || false,
 		visitedCoalmineAltShrine: document.getElementById('visited-coalmine-alt-shrine')?.checked || false,
 		excludeTaikasauva: document.getElementById('exclude-taikasauva')?.checked || true,
 		excludeEdgeCases: document.getElementById('exclude-edge-cases')?.checked || false,
-		biomeOverlayMode: document.getElementById('debug-biome-overlay-mode')?.value || 'cheap',
+		biomeOverlayMode: document.getElementById('debug-biome-overlay-mode')?.value || 'normal',
 		showEnemies: document.getElementById('show-enemy-spawns')?.checked || false,
 		enableHamisHints: document.getElementById('enable-hamis-hints')?.checked || false,
 		gameMode: document.getElementById('game-mode')?.value || 'normal',
@@ -126,7 +126,7 @@ export function updateSettingsFromUI() {
 		highlightPoiScale: parseFloat(document.getElementById('debug-highlight-poi-scale')?.value) || 1,
 		scaleHighlightedPoisWithZoom: document.getElementById('debug-highlight-pois-zoom')?.checked ?? true,
 		renderLayers: readRenderLayersFromUI(),
-		terrainRenderer: document.getElementById('debug-terrain-renderer')?.value || 'cpu',
+		terrainRenderer: document.getElementById('debug-terrain-renderer')?.value || 'gl',
 		debugLayerTimings: document.getElementById('debug-layer-timings')?.checked || false,
 		checkerboardUnpainted: document.getElementById('debug-unpainted-checkerboard')?.checked ?? true,
 		biomeBoundaryContour: document.getElementById('debug-biome-boundary-contour')?.checked ?? false,

@@ -1171,7 +1171,7 @@
             <label class="debug-opt" title="Exclude Taikasauva Spawns from the map. Taikasauvas are a source of wands and spells, but they can be somewhat inconsistent because they have a tendency to randomly unload."><input type="checkbox" id="exclude-taikasauva"> Exclude Natural Taikasauva Spawns</label>
             <label class="debug-opt" title="Whether to recolor wang colors to material colors. Colors are still incorrect for some materials because they use textures which have different colors than their wang/material colors."><input type="checkbox" id="recolor-materials" checked> Recolor Materials</label>
             <label class="debug-opt" title="Paint each terrain pixel from the material's own materials_gfx texture, the way the game bakes cell colors, instead of one flat color per material. Requires the WebGL terrain renderer and Recolor Materials."><input type="checkbox" id="material-textures" checked> Material textures (GL)</label>
-            <label class="debug-opt" title="Resolve terrain per pixel with the game engine's own generation math (coverage lattices, carve noise, material bands) for the biomes the port supports; other biomes keep the regular renderer. Requires the WebGL terrain renderer."><input type="checkbox" id="engine-terrain"> Engine terrain (GL)</label>
+            <label class="debug-opt" title="Resolve terrain per pixel with the game engine's own generation math (coverage lattices, carve noise, material bands) for the biomes the port supports; other biomes keep the regular renderer. Requires the WebGL terrain renderer."><input type="checkbox" id="engine-terrain" checked> Engine terrain (GL)</label>
             <label class="debug-opt" title="Stamp the EdgeGraphics sprite band the game bakes into cell colors along material borders. Placement is statistical - the engine's own is generation-order dependent and not reproducible - but density, depth and palette match. Requires Engine terrain, and only draws at zoom 1x or closer."><input type="checkbox" id="edge-decals" checked> Edge decals (GL)</label>
             <label class="debug-opt" title="Remove spawn pixels after pre-scanning spawns from tiles and pixel scenes. Makes the world look quite a bit more empty, or more clean, depending on your point of view. Might be buggy with attempting to deselect this setting."><input type="checkbox" id="clear-spawn-pixels"> Clear Spawn Pixels</label>
             <label class="debug-opt" title="Show a custom overlay of the surface and pixel scenes at a lower resolution"><input type="checkbox" id="custom-art" checked> Display Custom Art</label>
@@ -1179,8 +1179,8 @@
                 Enable Static Pixel Scenes
                 <select id="enable-static-pixel-scenes">
                     <option value="off">Off</option>
-                    <option value="some" selected>Some</option>
-                    <option value="all">All (kind of slow)</option>
+                    <option value="some">Some</option>
+                    <option value="all" selected>All (kind of slow)</option>
                 </select>
             </label>
             <label class="debug-opt" title="Hide PoI circles to show the underlying tile map more clearly"><input type="checkbox" id="debug-hide-pois"> Hide PoIs</label>
@@ -1201,16 +1201,16 @@
                 Overlay Mode
                 <select id="debug-biome-overlay-mode">
                     <!-- <option value="none">None</option> -->
-                    <option value="cheap" selected>Cheap</option>
-                    <option value="normal">Normal</option>
+                    <option value="cheap">Cheap</option>
+                    <option value="normal" selected>Normal</option>
                     <option value="expanded">Expanded (slow)</option>
                 </select>
             </label>
             <label class="debug-opt" title="Which renderer draws the terrain (tile overlay) layer. CPU uses the baked overlay images, one per region per parallel world. GL evaluates the biome edge noise per screen pixel on the GPU and samples the region images directly, which is faster and more accurate at biome seams, but is still being validated. GL needs WebGL2 and falls back to the CPU renderer without it, as well as for the heaven and hell parallel worlds.">
                 Terrain Renderer
                 <select id="debug-terrain-renderer">
-                    <option value="cpu" selected>CPU (baked)</option>
-                    <option value="gl">GL (experimental)</option>
+                    <option value="cpu">CPU (baked)</option>
+                    <option value="gl" selected>GL (experimental)</option>
                 </select>
             </label>
             <label class="debug-opt" title="Show tile bounds for each region, with numerical values of the tile indices shown."><input type="checkbox" id="debug-show-tile-bounds"> Show Tile Bounds</label>
@@ -1230,8 +1230,8 @@
             <div class="debug-opt" title="Show or hide individual render layers of the map, in draw order. Useful for diagnosing what is drawing (or costing) what.">Render Layers</div>
             <label class="debug-opt" title="Biome map background colors (one image per world in view)."><input type="checkbox" id="debug-layer-biome-background" checked> &nbsp;&nbsp;Biome Background</label>
             <label class="debug-opt" title="Hand-drawn surface and sky overlay art. Off by default because it is expensive and covers generated terrain."><input type="checkbox" id="debug-layer-custom-art"> &nbsp;&nbsp;Custom Art</label>
-            <label class="debug-opt" title="Weather, sky darkening, scales, suns/moons, stars and the echoing spire."><input type="checkbox" id="debug-layer-atmosphere" checked> &nbsp;&nbsp;Weather / Sky / Stars</label>
-            <label class="debug-opt" title="Biome map alpha mask which covers custom art where tiles are drawn."><input type="checkbox" id="debug-layer-alpha-mask" checked> &nbsp;&nbsp;Alpha Mask</label>
+            <label class="debug-opt" title="Weather, sky darkening, scales, suns/moons, stars and the echoing spire."><input type="checkbox" id="debug-layer-atmosphere"> &nbsp;&nbsp;Weather / Sky / Stars</label>
+            <label class="debug-opt" title="Biome map alpha mask which covers custom art where tiles are drawn."><input type="checkbox" id="debug-layer-alpha-mask"> &nbsp;&nbsp;Alpha Mask</label>
             <label class="debug-opt" title="Generated wang tile regions (the actual terrain)."><input type="checkbox" id="debug-layer-tile-overlays" checked> &nbsp;&nbsp;Tile Overlays</label>
             <label class="debug-opt" title="Pixel scenes, orb rooms and the cauldron room."><input type="checkbox" id="debug-layer-pixel-scenes" checked> &nbsp;&nbsp;Pixel Scenes</label>
             <label class="debug-opt" title="Tile bound boxes and pathfinding paths (also need their own toggles above)."><input type="checkbox" id="debug-layer-debug-boxes" checked> &nbsp;&nbsp;Debug Boxes / Paths</label>

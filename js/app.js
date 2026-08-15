@@ -3825,11 +3825,11 @@ export const app = {
 				// `?? true` so a settings blob saved before this option existed
 				// keeps the checkbox's default-on state.
 				document.getElementById('material-textures').checked = settings.materialTextures ?? true;
-				document.getElementById('engine-terrain').checked = settings.engineTerrain || false;
+				document.getElementById('engine-terrain').checked = settings.engineTerrain ?? true;
 				document.getElementById('edge-decals').checked = settings.edgeDecals ?? true;
 				document.getElementById('clear-spawn-pixels').checked = settings.clearSpawnPixels || false;
 				document.getElementById('custom-art').checked = settings.customArt || false;
-				document.getElementById('enable-static-pixel-scenes').value = settings.enableStaticPixelScenes || 'none';
+				document.getElementById('enable-static-pixel-scenes').value = settings.enableStaticPixelScenes || 'all';
 				document.getElementById('debug-hide-pois').checked = settings.hidePois || false;
 				document.getElementById('debug-poi-scale').value = settings.poiScale || 1;
 				document.getElementById('debug-poi-scale-value').textContent = `${Number.parseFloat(document.getElementById('debug-poi-scale').value).toFixed(1)}x`;
@@ -3844,7 +3844,7 @@ export const app = {
 					document.getElementById(layer.id).checked = settings.renderLayers?.[layer.key] ?? layer.defaultOn;
 				}
 				settings.renderLayers = readRenderLayersFromUI();
-				document.getElementById('debug-terrain-renderer').value = settings.terrainRenderer || 'cpu';
+				document.getElementById('debug-terrain-renderer').value = settings.terrainRenderer || 'gl';
 				settings.terrainRenderer = document.getElementById('debug-terrain-renderer').value;
 				document.getElementById('debug-layer-timings').checked = settings.debugLayerTimings || false;
 				document.getElementById('debug-unpainted-checkerboard').checked = settings.checkerboardUnpainted ?? true;
@@ -3855,7 +3855,7 @@ export const app = {
 				document.getElementById('enable-edge-noise').checked = settings.enableEdgeNoise || false;
 				document.getElementById('debug-block-edge-spawns').checked = settings.blockEdgeSpawns || false;
 				document.getElementById('debug-edge-noise').checked = settings.edgeNoiseDebug || false;
-				document.getElementById('debug-biome-overlay-mode').value = settings.overlayMode || 'none';
+				document.getElementById('debug-biome-overlay-mode').value = settings.overlayMode || 'normal';
 				document.getElementById('debug-show-tile-bounds').checked = settings.showTileBounds || false;
 				document.getElementById('debug-show-path').checked = settings.showPath || false;
 				document.getElementById('show-enemy-spawns').checked = settings.showEnemies || false;
