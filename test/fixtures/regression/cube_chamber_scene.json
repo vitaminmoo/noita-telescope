@@ -74,15 +74,19 @@
 				"threshold": 99.49,
 				"measured": 99.988,
 				"measuredAt": "2026-08-15",
-				"measuredCommit": "4859a24"
+				"measuredCommit": "0a62e73",
+				"comparedPixels": 16384
 			},
 			{
 				"metric": "rgb",
-				"mode": "agreement",
-				"measured": 0,
+				"mode": "skip",
+				"measured": null,
 				"measuredAt": "2026-08-15",
-				"measuredCommit": "4859a24",
-				"threshold": 0
+				"measuredCommit": "0a62e73",
+				"threshold": null,
+				"artExcluded": 1160,
+				"comparedPixels": 0,
+				"note": "every terrain pixel in this rect is scene cell-colour art, which a MAPDUMP does not carry; rgb has nothing to compare"
 			}
 		]
 	}

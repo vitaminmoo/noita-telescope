@@ -75,15 +75,19 @@
 				"threshold": 99.48,
 				"measured": 99.982,
 				"measuredAt": "2026-08-15",
-				"measuredCommit": "35edc64"
+				"measuredCommit": "0a62e73",
+				"comparedPixels": 16384
 			},
 			{
 				"metric": "rgb",
 				"mode": "agreement",
-				"measured": 40.374,
+				"note": "40.374% -> 99.945% when the rgb metric started excluding scene art. The old ceiling was the holy-mountain hall's own colours file (altar_top_visual.png), which a MAPDUMP does not carry -- not a renderer gap. 5,397 of the rect's 9,028 terrain pixels are that art; the 3,631 that are not now agree byte-for-byte.",
+				"measured": 99.945,
 				"measuredAt": "2026-08-15",
-				"measuredCommit": "35edc64",
-				"threshold": 39.87
+				"measuredCommit": "0a62e73",
+				"threshold": 99.44,
+				"artExcluded": 5397,
+				"comparedPixels": 3631
 			}
 		]
 	}

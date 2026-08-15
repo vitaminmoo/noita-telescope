@@ -65,10 +65,41 @@ Per-pixel checks over procedural (noise-driven) terrain stay on `agreement` even
 when they measure 100 %: `Math.sin`/`Math.cos` are implementation-defined, so a
 hair of float drift on another machine must not fail the run.
 
-Some baselines are deliberately **low** (`cube_chamber_scene` rgb is 0 %,
-`templewall_basin_top` rgb is 40 %). Those are honest records of a known gap, not
-passing grades — they stop the gap getting *worse* and they make the number
-visible in the table. Re-baseline them upward when the gap is fixed.
+Some baselines are deliberately **low** (`templewall_basin_top` rgb is 40 %).
+Those are honest records of a known gap, not passing grades — they stop the gap
+getting *worse* and they make the number visible in the table. Re-baseline them
+upward when the gap is fixed.
+
+### What the rgb metric compares
+
+Two classes of pixel are **excluded** from the tier-2 `rgb` comparison, both
+because the ground truth cannot answer for them:
+
+* **the game's air** — the dump paints an empty cell `#050505` (or the sky
+  gradient above ground) while telescope paints its own nothing-here colour, so
+  comparing them only measures the two conventions disagreeing;
+* **scene art** — where a stamped scene's colours file (`<name>_visual.png`)
+  overrides the cell colours. A MAPDUMP re-renders the *material grid* through
+  materials_gfx and carries no scene art at all, so an art-covered pixel is the
+  two images answering different questions. No renderer fix can close that, and
+  an `rgb` metric over such a rect can never reach 100 %.
+
+The art mask is the same bit-packed `artMask` the scene loader builds,
+intersected with the scene's opaque pixels (art over a scene's own air paints
+nothing) and read off the placed scenes in the live page, so it cannot drift
+from what was drawn. A re-baseline records `comparedPixels` and, where any were
+dropped, `artExcluded`, so the percentage says what it is a percentage *of*.
+
+Three fixtures moved when this landed, and the two numbers it produced are the
+argument for it:
+
+* `templewall_basin_top` rgb 40 % → **99.9 %** over 5 397 fewer pixels. The
+  40 % was never a renderer gap; it was the holy-mountain hall's art.
+* `cube_chamber_scene` and `roadblock_west_neighbour` rgb 0 % → **`skip`**.
+  Every terrain pixel in both rects is a colours file, so there is nothing for
+  the metric to compare and the fixture now says that in a `note` instead of
+  recording a 0 % that no fix could ever raise. Both keep their `airMask` check,
+  which is what those rects actually guard.
 
 ### Tier-1 metrics
 

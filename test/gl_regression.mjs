@@ -60,6 +60,65 @@ const BASE_LAYERS = {
 	'debug-layer-pois': false,
 };
 
+/**
+ * Which pixels of a fixture rect a stamped scene's colors file paints, as a
+ * 0/1 byte per pixel (or null when no scene art reaches the rect).
+ *
+ * The rgb metric compares telescope's pixels against the game's MAPDUMP, which
+ * re-renders the material grid through materials_gfx -- it carries NO scene art
+ * at all. Where a scene's `<name>_visual.png` overrides the cell colours, the
+ * two images are answering different questions, and no amount of fixing the
+ * renderer can make them agree. That is a property of the ground truth, not a
+ * defect, so those pixels come out of the metric entirely rather than dragging
+ * a fixture's honest ceiling down (cube_chamber_scene measured 0%: its whole
+ * rect is cube_chamber_visual.png).
+ *
+ * The mask is the same bit-packed artMask the loader builds and the hover
+ * readout's "Art:" line tests (js/pixel_scene_generation.js), read straight off
+ * the placed scenes in the live page, so it cannot drift from what was drawn.
+ * It is intersected with the scene's OPAQUE pixels, because that is the gate
+ * the art itself runs under (overlayVisualArt: "no cell here, art places none
+ * either") -- art hanging over a scene's air paints nothing, and the terrain
+ * showing through there is still worth comparing.
+ */
+async function artMaskFor(d, f) {
+	const { x, y, w, h } = f.world;
+	const covered = await d.evalIn(`(async () => {
+		const m = await import('/js/app.js');
+		const g = await import('/js/pixel_scene_generation.js');
+		const scenes = m.app.pixelScenesByPW?.[\`\${m.app.pw},\${m.app.pwVertical}\`] ?? [];
+		const hits = [];
+		for (const s of scenes) {
+			if (s.type !== 'pixel_scene') continue;
+			const data = g.PIXEL_SCENE_DATA[s.key];
+			if (!data || !data.artMask) continue;
+			const x0 = Math.max(${x}, s.x), x1 = Math.min(${x + w}, s.x + s.width);
+			const y0 = Math.max(${y}, s.y), y1 = Math.min(${y + h}, s.y + s.height);
+			if (x0 >= x1 || y0 >= y1) continue;
+			// The instance as drawn, so the opacity test is the drawn one.
+			const bmp = g.getPixelSceneCanvas(s, 0);
+			if (!bmp) continue;
+			const c = new OffscreenCanvas(s.width, s.height);
+			const ctx = c.getContext('2d', { willReadFrequently: true });
+			ctx.drawImage(bmp, 0, 0);
+			const px = ctx.getImageData(0, 0, s.width, s.height).data;
+			for (let wy = y0; wy < y1; wy++) {
+				for (let wx = x0; wx < x1; wx++) {
+					const p = (wy - s.y) * data.width + (wx - s.x);
+					if (!(data.artMask[p >> 3] & (0x80 >> (p & 7)))) continue;
+					if (px[p * 4 + 3] !== 255) continue;
+					hits.push((wy - ${y}) * ${w} + (wx - ${x}));
+				}
+			}
+		}
+		return hits;
+	})()`);
+	if (!covered.length) return null;
+	const mask = new Uint8Array(w * h);
+	for (const i of covered) mask[i] = 1;
+	return mask;
+}
+
 const fixtures = names.map(loadFixture);
 const seeds = new Set(fixtures.map(f => `${f.seed}|${f.ngPlus ?? 0}`));
 if (seeds.size !== 1) throw new Error(`fixtures span several worlds (${[...seeds]}); run them per seed`);
@@ -114,19 +173,34 @@ try {
 		const rgba = new Uint8Array(UPNG.toRGBA8(img)[0]);
 
 		const wantAir = expectedAirMask(f);
+		const art = f.rgb ? await artMaskFor(d, f) : null;
 		const gotAir = new Array(w * h);
 		for (let i = 0; i < w * h; i++) gotAir[i] = isRenderAir(rgba, i * 4) ? 'air' : 'solid';
-		const rgb = f.rgb ? rgbAgreement(f.rgb, rgba, w * h, wantAir) : null;
+		// The rgb metric skips the game's air (two conventions for "nothing") and
+		// the scene art (a colour the dump cannot carry) -- see artMaskFor.
+		const rgbSkip = art ? Uint8Array.from(wantAir, (a, i) => (a || art[i] ? 1 : 0)) : wantAir;
+		const rgb = f.rgb ? rgbAgreement(f.rgb, rgba, w * h, rgbSkip) : null;
+		let artSkipped = 0;
+		if (art) for (let i = 0; i < w * h; i++) if (art[i] && !wantAir[i]) artSkipped++;
+		if (rgb) rgb.artSkipped = artSkipped;
 		const measured = {
 			airMask: agreement(Array.from(wantAir, a => (a ? 'air' : 'solid')), gotAir),
-			// An all-air rect has no terrain colors to compare; only its mask.
+			// An all-air rect has no terrain colors to compare; only its mask. Nor
+			// has a rect whose terrain is all scene art -- that one gets a `skip`
+			// check recording the ceiling, rather than a percentage of nothing.
 			rgb: rgb && rgb.n > 0 ? rgb : null,
 		};
 
 		const checks = f.tier2?.checks ?? [];
 		for (const metric of ['airMask', 'rgb']) {
 			const m = measured[metric];
-			if (!m) continue;
+			if (!m) {
+				if (metric === 'rgb' && rgb && artSkipped) {
+					rows.push([f.name, metric, 'n/a', 'info',
+						`no comparable pixels: all ${artSkipped} terrain px are scene art`]);
+				}
+				continue;
+			}
 			const c = checks.find(k => k.metric === metric);
 			if (!c || c.threshold === null) {
 				rows.push([f.name, metric, `${m.pct.toFixed(3)}%`, 'info', 'no baseline yet']);
@@ -135,19 +209,37 @@ try {
 			const v = verdict(c, m.pct);
 			if (!v.pass) failures++;
 			rows.push([f.name, metric, `${m.pct.toFixed(3)}%`, v.pass ? 'pass' : 'FAIL',
-				v.why + (v.pass ? '' : `  ${m.top}`)]);
+				v.why + (m.artSkipped ? `  (${m.artSkipped} art px excluded)` : '')
+				+ (v.pass ? '' : `  ${m.top}`)]);
 		}
 
 		if (REBASELINE) {
 			const meta = JSON.parse(readFileSync(`${FIXTURE_DIR}${f.name}.json`, 'utf8'));
-			meta.tier2.checks = ['airMask', 'rgb'].filter(k => measured[k]).map((k) => {
+			const had = (k) => (meta.tier2.checks ?? []).some(c => c.metric === k);
+			meta.tier2.checks = ['airMask', 'rgb'].filter(k => measured[k] || had(k)).map((k) => {
 				const prev = (meta.tier2.checks ?? []).find(c => c.metric === k) ?? { metric: k, mode: 'agreement' };
+				const stamp = { measuredAt: new Date().toISOString().slice(0, 10), measuredCommit: gitHead() };
+				// Nothing left to compare: say so in the fixture instead of
+				// recording a percentage over zero pixels.
+				if (!measured[k]) {
+					return {
+						...prev, mode: 'skip', threshold: null, measured: null,
+						artExcluded: artSkipped || undefined, comparedPixels: 0, ...stamp,
+						note: `every terrain pixel in this rect is scene cell-colour art, which a MAPDUMP does not carry; ${k} has nothing to compare`,
+					};
+				}
 				const pct = measured[k].pct;
 				return {
 					...prev,
+					mode: prev.mode === 'skip' ? 'agreement' : prev.mode,
+					// How many terrain pixels the scene-art exclusion took out of the
+					// comparison, so the recorded percentage says what it is a
+					// percentage OF. `undefined` drops the key on the way through
+					// JSON.stringify, which also clears a stale one from `prev`.
+					artExcluded: measured[k].artSkipped || undefined,
+					comparedPixels: measured[k].n,
 					measured: +pct.toFixed(3),
-					measuredAt: new Date().toISOString().slice(0, 10),
-					measuredCommit: gitHead(),
+					...stamp,
 					threshold: prev.mode === 'exact' ? 100 : Math.max(0, +(pct - MARGIN).toFixed(2)),
 				};
 			});
