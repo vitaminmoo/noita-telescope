@@ -375,6 +375,21 @@ export function stampEdgeDecals(mat, width, height, originX, originY, worldSeed,
     // erases stamps under every pixel the scene paints or force-airs, then runs
     // the scene-local pass. `mat` is mutated into the post-scene composite,
     // which is what later scenes and their type-3 normals must see.
+    //
+    // The colors image does two separate things, and only one of them is the
+    // per-scene gate in sceneStampsAnyEdge. The other is PER CELL and permanent:
+    // the row painter gives a covered cell its color straight from the image
+    // (Cell::SetColor, vf+0x1c) WITHOUT touching the cell's base color (vf+0x24),
+    // and every stamper's overwrite="0" test is exactly `base == current`
+    // (BiomeGen_StampEdgeSprite_PaintTexel @0x0095c250 step 5). A recoloured cell
+    // therefore fails that test forever — no terrain stamp, no scene stamp, no
+    // later scene's stamp can land on it — which is why the dragon egg
+    // (data/biome_impl/dragoncave.png, wholly covered by dragoncave_visual.png)
+    // stays clean while the same scene's uncovered rock_hard walls are dressed.
+    // Live BAKEDUMP of the dragoncave chunk (2048,7168 512x512, seed 786433191):
+    // all 29,787 covered rock_static cells are byte-exact the visual image, and
+    // 5,802 of the 47,620 uncovered rock_hard cells carry a decal.
+    // The overlay below models that by entering covered cells as pre-painted.
     if (opts.scenes) {
         if (opts.stats) {
             let a = 0; for (let i = 3; i < out.length; i += 4) if (out[i]) a++;
@@ -460,16 +475,23 @@ function stampSceneDecals(out, painted, mat, width, height, originX, originY, wo
     if (baseX + sw <= 0 || baseY + sh <= 0 || baseX >= width || baseY >= height) return;
 
     // The overlay: everything the scene paints (or erases) replaces the world.
+    // A cell the colors image covers comes out of the row painter already
+    // recoloured, which permanently marks it "stamped" — see the note above
+    // stampEdgeDecals' scene block — so it enters this pass pre-painted and no
+    // decal can ever land on it.
+    const artMask = scene.artMask;
     const ox0 = Math.max(0, -baseX), ox1 = Math.min(sw, width - baseX);
     const oy0 = Math.max(0, -baseY), oy1 = Math.min(sh, height - baseY);
     for (let ly = oy0; ly < oy1; ly++) {
         const srow = ly * sw, trow = (baseY + ly) * width + baseX;
         for (let lx = ox0; lx < ox1; lx++) {
-            const v = grid[srow + lx];
+            const p = srow + lx;
+            const v = grid[p];
             if (v === SCENE_UNTOUCHED) continue;
             const i = trow + lx;
             mat[i] = v;
-            painted[i] = 0;
+            painted[i] = (v > 0 && artMask !== null && artMask !== undefined &&
+                (artMask[p >> 3] & (0x80 >> (p & 7))) !== 0) ? 1 : 0;
             const o = i * 4;
             out[o] = out[o + 1] = out[o + 2] = out[o + 3] = 0;
         }
