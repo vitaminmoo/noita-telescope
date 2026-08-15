@@ -1,0 +1,80 @@
+{
+	"name": "winter_east_caves_materials",
+	"guards": "east winter's steelfrost_static veins and its surface-cave mouths",
+	"seed": 786433191,
+	"ngPlus": 0,
+	"world": {
+		"x": -11776,
+		"y": 380,
+		"w": 64,
+		"h": 64
+	},
+	"source": {
+		"key": "matdump/surface",
+		"kind": "matdump-pgm-set",
+		"path": "/home/vitaminmoo/reverse/noita/groundtruth/surface/matdump_seed786433191",
+		"manifest": "manifest.json",
+		"matlist": "matlist.txt",
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-05",
+		"note": "Frozen-physics MATDUMP of the whole surface band (y -900..600) as raw engine material ids, 20 tiles of 1536x1500. Authoritative material identity, not just colors. See ~/reverse/noita/groundtruth/surface/README.md."
+	},
+	"expected": {
+		"file": "winter_east_caves_materials.bin",
+		"format": "matpal16",
+		"palette": [
+			"snowrock_static",
+			"snow_static",
+			"air"
+		]
+	},
+	"summary": {
+		"airPct": 1.978,
+		"topMaterials": {
+			"snowrock_static": 3609,
+			"snow_static": 406,
+			"air": 81
+		}
+	},
+	"tier1": {
+		"chunkFlags": [
+			{
+				"cell": [
+					12,
+					14
+				],
+				"biome": "winter",
+				"biomeColor": "0xd6d8e3",
+				"mode": "topo0",
+				"paintsNothing": false,
+				"sceneOnly": false,
+				"fillLayerMaterial": null
+			}
+		],
+		"pixels": {
+			"metric": "materials",
+			"mode": "agreement",
+			"threshold": 99.5,
+			"measured": 100,
+			"measuredAt": "2026-08-15",
+			"measuredCommit": "98f0b2b"
+		},
+		"maxUnresolvedPct": 0.5
+	},
+	"tier2": {
+		"render": {
+			"layers": {}
+		},
+		"checks": [
+			{
+				"metric": "airMask",
+				"mode": "agreement",
+				"threshold": 99.5,
+				"measured": 100,
+				"measuredAt": "2026-08-15",
+				"measuredCommit": "98f0b2b"
+			}
+		]
+	}
+}

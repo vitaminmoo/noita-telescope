@@ -11,7 +11,7 @@ them, in one line: *what it guards*.
 
 | | what it runs | what it proves | cost |
 |---|---|---|---|
-| **Tier 1** | `node --test test/*.test.mjs` (`test/regression_pixels.test.mjs`) | the CPU engine-resolve chain (`js/engine_resolve/`, `js/gl/engine_resources.js`) still classifies these chunks the same way and still resolves the same materials the game has | ~2.5 s, pure Node, no browser |
+| **Tier 1** | `node --test test/*.test.mjs` (`test/regression_pixels.test.mjs`) | the CPU engine-resolve chain (`js/engine_resolve/`, `js/gl/engine_resources.js`) still classifies these chunks the same way and still resolves the same materials the game has | ~4 s, pure Node, no browser |
 | **Tier 2** | `test/gl_regression.mjs` | the **rendered pixels** — the full GL terrain + scene pipeline — still match the game's dump | ~2 min, headless Chrome |
 
 Tier 1 is deliberately part of the default test run. Tier 2 is not: it needs a
@@ -90,8 +90,9 @@ engine model declines to resolve at all may not grow past its baseline.
 ## The fixture set
 
 Run `node tools/regression_capture.mjs list` for the current list with rects and
-guards. As of the initial set, 22 fixtures over 6 MAPDUMP color rects and the
-MATDUMP surface material grid, all seed **786433191**, NG+0:
+guards. As of the initial set, 33 fixtures over 6 MAPDUMP colour rects, the
+MATDUMP surface material grid and the batch-3 per-site MATDUMP rects, all seed
+**786433191**, NG+0:
 
 * **roadblock** (`roadblock_chunk_air`, `roadblock_chunk_bottom`,
   `roadblock_west_neighbour`) — the roadblock chunk (33,11) generates nothing
@@ -110,10 +111,22 @@ MATDUMP surface material grid, all seed **786433191**, NG+0:
   `cube_chamber_carve`, `cube_chamber_scene`, `cube_chunk_seam`) — the
   topology-0 surface + carve resolve, the room the carve port was validated on,
   and a chunk seam where the 42px biome-edge wobble decides the answer.
-* **surface materials** (`winter_maze_materials`, `hills_bands_materials`,
-  `coal_bands_materials`, `desert_surface_materials`, `temple_pyramid_materials`)
-  — MATDUMP material identity: the winter is_rare snow maze, hills bands, the
-  coal band, the desert surface skin, and the pyramid's structure materials.
+* **rooms and structures, from the batch-3 MATDUMP rects**
+  (`ominoustemple_slabs`, `watchtower_slabs`, `orbroom_ice`, `pyramid_chamber`,
+  `surface_pond_shore`, `dragoncave_room_air`, `mountaintop_hall`) — material
+  identity inside seven hand-built sites. `mountaintop_hall` is the interesting
+  one: the engine models **none** of the mountain hall (100 % unresolved), so
+  tier 1 only pins its chunk and the render carries the check — which it passes
+  at 100 % air-mask agreement.
+* **surface materials** (`winter_maze_materials`, `winter_east_caves_materials`,
+  `winter_surface_line_materials`, `hills_bands_materials`, `coal_bands_materials`,
+  `snow_soil_edge_materials`, `desert_surface_materials`, `east_sandstone_materials`,
+  `temple_pyramid_materials`) — MATDUMP material identity across nine spots of
+  the surface band: the winter is_rare snow maze, east winter's steelfrost veins
+  and cave mouths, the winter surface line itself (76 % air, so it pins the
+  topology-0 surface height and not only the bands under it), hills bands, the
+  coal band, the material fingers at a biome edge, the desert surface skin, the
+  east sandstone bands, and the pyramid's structure materials.
 
 ### Sites still without usable ground truth (TODO)
 
@@ -125,11 +138,20 @@ the runbook below and add a fixture:
 * EDR polkadot / texture rect — `scripts/probe_out/edr_*_crop.png` are crops with
   no recorded world rect or dump provenance.
 * tree scene rect (−1427, 436) — `wood_tree` undressed.
+  (`roadblock_west_neighbour` covers the same class at a `mountain_tree` chunk.)
 * essenceroom (9923, 4339) — undressed.
 * coalmine control rect.
-* mountain hall scene set, ominous temple, watchtower, orbroom — a
-  `groundtruth/batch3/` capture of these was in flight while this harness was
-  built; wire them in when it lands.
+* `groundtruth/batch3/temple_*` landed without a `.json`, so its world rect is
+  unknown and it is not registered. Ask whoever captured it, or re-dump.
+
+Ground truth that exists but has no fixture yet, because the model scores 0 %
+there and a 0 % threshold guards nothing — real open leads, not oversights:
+
+* the surface pond's water body (`matdump/surface_pond` around (2944,192)):
+  `water` vs the model's `sand_static`. The lake "settled water" band rule
+  (`limit_min_y`) is ported for lakes but this pond is not following it.
+* `matdump/mountaintop` below the hall (around (704,−704), (896,−576)): snow,
+  rock and *gold* the engine model does not resolve at all.
 
 ## Adding a fixture from a dump that already exists
 

@@ -1,0 +1,87 @@
+{
+	"name": "ominoustemple_slabs",
+	"guards": "the ominous temple's templeslab / templeslab_crumbling / diamond structure materials",
+	"seed": 786433191,
+	"ngPlus": 0,
+	"world": {
+		"x": 2554,
+		"y": -4871,
+		"w": 64,
+		"h": 64
+	},
+	"source": {
+		"key": "matdump/ominoustemple",
+		"kind": "matdump-pgm",
+		"path": "groundtruth/batch3/ominoustemple_mat.pgm",
+		"matlist": "groundtruth/batch3/matlist.txt",
+		"rect": [
+			2234,
+			-5127,
+			1024,
+			1024
+		],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-15",
+		"note": "Batch-3 capture (groundtruth/batch3/, not committed - 67MB): one MAPDUMP colour rect plus a MATDUMP material-id rect per site, world rect + seed recorded in the site's own .json beside it."
+	},
+	"expected": {
+		"file": "ominoustemple_slabs.bin",
+		"format": "matpal16",
+		"palette": [
+			"templeslab_crumbling_static",
+			"diamond",
+			"templeslab_static",
+			"air"
+		]
+	},
+	"summary": {
+		"airPct": 20.703,
+		"topMaterials": {
+			"templeslab_crumbling_static": 2500,
+			"air": 848,
+			"templeslab_static": 726,
+			"diamond": 22
+		}
+	},
+	"tier1": {
+		"chunkFlags": [
+			{
+				"cell": [
+					39,
+					4
+				],
+				"biome": "biome_darkness",
+				"biomeColor": "0xff00fd",
+				"mode": "topo2",
+				"paintsNothing": false,
+				"sceneOnly": false,
+				"fillLayerMaterial": null
+			}
+		],
+		"pixels": {
+			"metric": "materials",
+			"mode": "agreement",
+			"threshold": 99.5,
+			"measured": 100,
+			"measuredAt": "2026-08-15",
+			"measuredCommit": "98f0b2b"
+		},
+		"maxUnresolvedPct": 0.5
+	},
+	"tier2": {
+		"render": {
+			"layers": {}
+		},
+		"checks": [
+			{
+				"metric": "airMask",
+				"mode": "agreement",
+				"threshold": 99.5,
+				"measured": 100,
+				"measuredAt": "2026-08-15",
+				"measuredCommit": "0138659"
+			}
+		]
+	}
+}

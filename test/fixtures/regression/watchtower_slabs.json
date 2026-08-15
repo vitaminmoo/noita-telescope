@@ -1,0 +1,89 @@
+{
+	"name": "watchtower_slabs",
+	"guards": "the watchtower's templeslab shell and the lava inside it",
+	"seed": 786433191,
+	"ngPlus": 0,
+	"world": {
+		"x": 14191,
+		"y": -720,
+		"w": 64,
+		"h": 64
+	},
+	"source": {
+		"key": "matdump/watchtower",
+		"kind": "matdump-pgm",
+		"path": "groundtruth/batch3/watchtower_mat.pgm",
+		"matlist": "groundtruth/batch3/matlist.txt",
+		"rect": [
+			13551,
+			-720,
+			1024,
+			1024
+		],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-15",
+		"note": "Batch-3 capture (groundtruth/batch3/, not committed - 67MB): one MAPDUMP colour rect plus a MATDUMP material-id rect per site, world rect + seed recorded in the site's own .json beside it."
+	},
+	"expected": {
+		"file": "watchtower_slabs.bin",
+		"format": "matpal16",
+		"palette": [
+			"lava",
+			"templeslab_static",
+			"templeslab_crumbling_static",
+			"air",
+			"diamond"
+		]
+	},
+	"summary": {
+		"airPct": 36.816,
+		"topMaterials": {
+			"air": 1508,
+			"templeslab_static": 1418,
+			"templeslab_crumbling_static": 793,
+			"lava": 354,
+			"diamond": 23
+		}
+	},
+	"tier1": {
+		"chunkFlags": [
+			{
+				"cell": [
+					62,
+					12
+				],
+				"biome": "biome_watchtower",
+				"biomeColor": "0xb70000",
+				"mode": "topo2",
+				"paintsNothing": false,
+				"sceneOnly": false,
+				"fillLayerMaterial": null
+			}
+		],
+		"pixels": {
+			"metric": "materials",
+			"mode": "agreement",
+			"threshold": 99.48,
+			"measured": 99.976,
+			"measuredAt": "2026-08-15",
+			"measuredCommit": "98f0b2b"
+		},
+		"maxUnresolvedPct": 0.5
+	},
+	"tier2": {
+		"render": {
+			"layers": {}
+		},
+		"checks": [
+			{
+				"metric": "airMask",
+				"mode": "agreement",
+				"threshold": 99.48,
+				"measured": 99.976,
+				"measuredAt": "2026-08-15",
+				"measuredCommit": "e69977b"
+			}
+		]
+	}
+}

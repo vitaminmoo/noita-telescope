@@ -1,0 +1,87 @@
+{
+	"name": "pyramid_chamber",
+	"guards": "the pyramid's inner chamber: templebrick over rock_hard, 74% air",
+	"seed": 786433191,
+	"ngPlus": 0,
+	"world": {
+		"x": 9792,
+		"y": -1024,
+		"w": 64,
+		"h": 64
+	},
+	"source": {
+		"key": "matdump/pyramid",
+		"kind": "matdump-pgm",
+		"path": "groundtruth/batch3/pyramid_mat.pgm",
+		"matlist": "groundtruth/batch3/matlist.txt",
+		"rect": [
+			8192,
+			-1536,
+			3584,
+			2048
+		],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-15",
+		"note": "Batch-3 capture (groundtruth/batch3/, not committed - 67MB): one MAPDUMP colour rect plus a MATDUMP material-id rect per site, world rect + seed recorded in the site's own .json beside it."
+	},
+	"expected": {
+		"file": "pyramid_chamber.bin",
+		"format": "matpal16",
+		"palette": [
+			"air",
+			"templebrick_static",
+			"rock_hard",
+			"templebrickdark_static"
+		]
+	},
+	"summary": {
+		"airPct": 72.314,
+		"topMaterials": {
+			"air": 2962,
+			"templebrick_static": 790,
+			"templebrickdark_static": 237,
+			"rock_hard": 107
+		}
+	},
+	"tier1": {
+		"chunkFlags": [
+			{
+				"cell": [
+					54,
+					12
+				],
+				"biome": "pyramid",
+				"biomeColor": "0x967f11",
+				"mode": "topo2",
+				"paintsNothing": false,
+				"sceneOnly": false,
+				"fillLayerMaterial": null
+			}
+		],
+		"pixels": {
+			"metric": "materials",
+			"mode": "agreement",
+			"threshold": 99.5,
+			"measured": 100,
+			"measuredAt": "2026-08-15",
+			"measuredCommit": "98f0b2b"
+		},
+		"maxUnresolvedPct": 0.5
+	},
+	"tier2": {
+		"render": {
+			"layers": {}
+		},
+		"checks": [
+			{
+				"metric": "airMask",
+				"mode": "agreement",
+				"threshold": 99.48,
+				"measured": 99.976,
+				"measuredAt": "2026-08-15",
+				"measuredCommit": "e69977b"
+			}
+		]
+	}
+}

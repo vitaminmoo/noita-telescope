@@ -1,0 +1,85 @@
+{
+	"name": "mountaintop_hall",
+	"guards": "the mountain hall (chunk 36,11) is scene art: whatever the engine claims for the chunk, the hall's pixels come from its scene set, so the render has to carry it",
+	"seed": 786433191,
+	"ngPlus": 0,
+	"world": {
+		"x": 640,
+		"y": -1280,
+		"w": 64,
+		"h": 64
+	},
+	"source": {
+		"key": "matdump/mountaintop",
+		"kind": "matdump-pgm",
+		"path": "groundtruth/batch3/mountaintop_mat.pgm",
+		"matlist": "groundtruth/batch3/matlist.txt",
+		"rect": [
+			512,
+			-1536,
+			1024,
+			1024
+		],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-15",
+		"note": "Batch-3 capture (groundtruth/batch3/, not committed - 67MB): one MAPDUMP colour rect plus a MATDUMP material-id rect per site, world rect + seed recorded in the site's own .json beside it."
+	},
+	"expected": {
+		"file": "mountaintop_hall.bin",
+		"format": "matpal16",
+		"palette": [
+			"air",
+			"templebrick_static",
+			"ice_static"
+		]
+	},
+	"summary": {
+		"airPct": 58.154,
+		"topMaterials": {
+			"air": 2382,
+			"templebrick_static": 1615,
+			"ice_static": 99
+		}
+	},
+	"tier1": {
+		"chunkFlags": [
+			{
+				"cell": [
+					36,
+					11
+				],
+				"biome": "mountain_floating_island",
+				"biomeColor": "0xc08082",
+				"mode": "topo0",
+				"paintsNothing": false,
+				"sceneOnly": false,
+				"fillLayerMaterial": null
+			}
+		],
+		"pixels": {
+			"metric": "fillMask",
+			"mode": "agreement",
+			"threshold": 57.65,
+			"measured": 58.154,
+			"measuredAt": "2026-08-15",
+			"measuredCommit": "e69977b"
+		},
+		"maxUnresolvedPct": 0.5
+	},
+	"tier2": {
+		"render": {
+			"layers": {}
+		},
+		"checks": [
+			{
+				"metric": "airMask",
+				"mode": "agreement",
+				"threshold": 99.5,
+				"measured": 100,
+				"measuredAt": "2026-08-15",
+				"measuredCommit": "e69977b"
+			}
+		]
+	}
+}

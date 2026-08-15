@@ -1,0 +1,76 @@
+{
+	"name": "snow_soil_edge_materials",
+	"guards": "the rock_hard_border / soil / sand_static fingers where the snow biome meets its neighbour",
+	"seed": 786433191,
+	"ngPlus": 0,
+	"world": {
+		"x": -2944,
+		"y": 380,
+		"w": 64,
+		"h": 64
+	},
+	"source": {
+		"key": "matdump/surface",
+		"kind": "matdump-pgm-set",
+		"path": "/home/vitaminmoo/reverse/noita/groundtruth/surface/matdump_seed786433191",
+		"manifest": "manifest.json",
+		"matlist": "matlist.txt",
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-05",
+		"note": "Frozen-physics MATDUMP of the whole surface band (y -900..600) as raw engine material ids, 20 tiles of 1536x1500. Authoritative material identity, not just colors. See ~/reverse/noita/groundtruth/surface/README.md."
+	},
+	"expected": {
+		"file": "snow_soil_edge_materials.bin",
+		"format": "matpal16",
+		"palette": [
+			"rock_hard_border"
+		]
+	},
+	"summary": {
+		"airPct": 0,
+		"topMaterials": {
+			"rock_hard_border": 4096
+		}
+	},
+	"tier1": {
+		"chunkFlags": [
+			{
+				"cell": [
+					29,
+					14
+				],
+				"biome": "solid_wall_hidden_cavern",
+				"biomeColor": "0x42244d",
+				"mode": "topo0",
+				"paintsNothing": false,
+				"sceneOnly": false,
+				"fillLayerMaterial": "rock_hard_border"
+			}
+		],
+		"pixels": {
+			"metric": "materials",
+			"mode": "agreement",
+			"threshold": 99.5,
+			"measured": 100,
+			"measuredAt": "2026-08-15",
+			"measuredCommit": "98f0b2b"
+		},
+		"maxUnresolvedPct": 0.5
+	},
+	"tier2": {
+		"render": {
+			"layers": {}
+		},
+		"checks": [
+			{
+				"metric": "airMask",
+				"mode": "agreement",
+				"threshold": 99.5,
+				"measured": 100,
+				"measuredAt": "2026-08-15",
+				"measuredCommit": "98f0b2b"
+			}
+		]
+	}
+}

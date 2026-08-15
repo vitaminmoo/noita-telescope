@@ -2,7 +2,12 @@
 	"mapdump/roadblock": {
 		"kind": "mapdump-ppm",
 		"path": "scripts/bugfix/roadblock.ppm",
-		"rect": [-1280, -1600, 1024, 768],
+		"rect": [
+			-1280,
+			-1600,
+			1024,
+			768
+		],
 		"seed": 786433191,
 		"ngPlus": 0,
 		"captured": "2026-08-15",
@@ -11,7 +16,12 @@
 	"mapdump/templewall": {
 		"kind": "mapdump-ppm",
 		"path": "scripts/bugfix/templewall.ppm",
-		"rect": [-1536, 6144, 512, 512],
+		"rect": [
+			-1536,
+			6144,
+			512,
+			512
+		],
 		"seed": 786433191,
 		"ngPlus": 0,
 		"captured": "2026-08-15",
@@ -20,7 +30,12 @@
 	"mapdump/rockroom": {
 		"kind": "mapdump-ppm",
 		"path": "scripts/bugfix/rockroom.ppm",
-		"rect": [-3800, 3000, 640, 512],
+		"rect": [
+			-3800,
+			3000,
+			640,
+			512
+		],
 		"seed": 786433191,
 		"ngPlus": 0,
 		"captured": "2026-08-15",
@@ -29,7 +44,12 @@
 	"mapdump/watercave": {
 		"kind": "mapdump-ppm",
 		"path": "scripts/bugfix/watercave.ppm",
-		"rect": [-2048, 512, 512, 512],
+		"rect": [
+			-2048,
+			512,
+			512,
+			512
+		],
 		"seed": 786433191,
 		"ngPlus": 0,
 		"captured": "2026-08-15",
@@ -38,7 +58,12 @@
 	"mapdump/lavalake": {
 		"kind": "mapdump-ppm",
 		"path": "scripts/bugfix/lavalake.ppm",
-		"rect": [2048, 512, 512, 512],
+		"rect": [
+			2048,
+			512,
+			512,
+			512
+		],
 		"seed": 786433191,
 		"ngPlus": 0,
 		"captured": "2026-08-15",
@@ -47,7 +72,12 @@
 	"mapdump/cube": {
 		"kind": "mapdump-ppm",
 		"path": "scripts/probe_out/cube.ppm",
-		"rect": [-4500, 2000, 640, 512],
+		"rect": [
+			-4500,
+			2000,
+			640,
+			512
+		],
 		"seed": 786433191,
 		"ngPlus": 0,
 		"captured": "2026-08-15",
@@ -62,5 +92,208 @@
 		"ngPlus": 0,
 		"captured": "2026-08-05",
 		"note": "Frozen-physics MATDUMP of the whole surface band (y -900..600) as raw engine material ids, 20 tiles of 1536x1500. Authoritative material identity, not just colors. See ~/reverse/noita/groundtruth/surface/README.md."
+	},
+	"matdump/dragoncave": {
+		"kind": "matdump-pgm",
+		"path": "groundtruth/batch3/dragoncave_mat.pgm",
+		"matlist": "groundtruth/batch3/matlist.txt",
+		"rect": [
+			2048,
+			7168,
+			512,
+			512
+		],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-15",
+		"note": "Batch-3 capture (groundtruth/batch3/, not committed - 67MB): one MAPDUMP colour rect plus a MATDUMP material-id rect per site, world rect + seed recorded in the site's own .json beside it."
+	},
+	"mapdump/dragoncave": {
+		"kind": "mapdump-ppm",
+		"path": "groundtruth/batch3/dragoncave_map.ppm",
+		"rect": [
+			2048,
+			7168,
+			512,
+			512
+		],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-15",
+		"note": "Batch-3 capture (groundtruth/batch3/, not committed - 67MB): one MAPDUMP colour rect plus a MATDUMP material-id rect per site, world rect + seed recorded in the site's own .json beside it."
+	},
+	"matdump/mountaintop": {
+		"kind": "matdump-pgm",
+		"path": "groundtruth/batch3/mountaintop_mat.pgm",
+		"matlist": "groundtruth/batch3/matlist.txt",
+		"rect": [
+			512,
+			-1536,
+			1024,
+			1024
+		],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-15",
+		"note": "Batch-3 capture (groundtruth/batch3/, not committed - 67MB): one MAPDUMP colour rect plus a MATDUMP material-id rect per site, world rect + seed recorded in the site's own .json beside it."
+	},
+	"mapdump/mountaintop": {
+		"kind": "mapdump-ppm",
+		"path": "groundtruth/batch3/mountaintop_map.ppm",
+		"rect": [
+			512,
+			-1536,
+			1024,
+			1024
+		],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-15",
+		"note": "Batch-3 capture (groundtruth/batch3/, not committed - 67MB): one MAPDUMP colour rect plus a MATDUMP material-id rect per site, world rect + seed recorded in the site's own .json beside it."
+	},
+	"matdump/ominoustemple": {
+		"kind": "matdump-pgm",
+		"path": "groundtruth/batch3/ominoustemple_mat.pgm",
+		"matlist": "groundtruth/batch3/matlist.txt",
+		"rect": [
+			2234,
+			-5127,
+			1024,
+			1024
+		],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-15",
+		"note": "Batch-3 capture (groundtruth/batch3/, not committed - 67MB): one MAPDUMP colour rect plus a MATDUMP material-id rect per site, world rect + seed recorded in the site's own .json beside it."
+	},
+	"mapdump/ominoustemple": {
+		"kind": "mapdump-ppm",
+		"path": "groundtruth/batch3/ominoustemple_map.ppm",
+		"rect": [
+			2234,
+			-5127,
+			1024,
+			1024
+		],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-15",
+		"note": "Batch-3 capture (groundtruth/batch3/, not committed - 67MB): one MAPDUMP colour rect plus a MATDUMP material-id rect per site, world rect + seed recorded in the site's own .json beside it."
+	},
+	"matdump/orbroom": {
+		"kind": "matdump-pgm",
+		"path": "groundtruth/batch3/orbroom_mat.pgm",
+		"matlist": "groundtruth/batch3/matlist.txt",
+		"rect": [
+			-10354,
+			2494,
+			1024,
+			1024
+		],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-15",
+		"note": "Batch-3 capture (groundtruth/batch3/, not committed - 67MB): one MAPDUMP colour rect plus a MATDUMP material-id rect per site, world rect + seed recorded in the site's own .json beside it."
+	},
+	"mapdump/orbroom": {
+		"kind": "mapdump-ppm",
+		"path": "groundtruth/batch3/orbroom_map.ppm",
+		"rect": [
+			-10354,
+			2494,
+			1024,
+			1024
+		],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-15",
+		"note": "Batch-3 capture (groundtruth/batch3/, not committed - 67MB): one MAPDUMP colour rect plus a MATDUMP material-id rect per site, world rect + seed recorded in the site's own .json beside it."
+	},
+	"matdump/pyramid": {
+		"kind": "matdump-pgm",
+		"path": "groundtruth/batch3/pyramid_mat.pgm",
+		"matlist": "groundtruth/batch3/matlist.txt",
+		"rect": [
+			8192,
+			-1536,
+			3584,
+			2048
+		],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-15",
+		"note": "Batch-3 capture (groundtruth/batch3/, not committed - 67MB): one MAPDUMP colour rect plus a MATDUMP material-id rect per site, world rect + seed recorded in the site's own .json beside it."
+	},
+	"mapdump/pyramid": {
+		"kind": "mapdump-ppm",
+		"path": "groundtruth/batch3/pyramid_map.ppm",
+		"rect": [
+			8192,
+			-1536,
+			3584,
+			2048
+		],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-15",
+		"note": "Batch-3 capture (groundtruth/batch3/, not committed - 67MB): one MAPDUMP colour rect plus a MATDUMP material-id rect per site, world rect + seed recorded in the site's own .json beside it."
+	},
+	"matdump/surface_pond": {
+		"kind": "matdump-pgm",
+		"path": "groundtruth/batch3/surface_pond_mat.pgm",
+		"matlist": "groundtruth/batch3/matlist.txt",
+		"rect": [
+			2048,
+			-512,
+			1536,
+			1024
+		],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-15",
+		"note": "Batch-3 capture (groundtruth/batch3/, not committed - 67MB): one MAPDUMP colour rect plus a MATDUMP material-id rect per site, world rect + seed recorded in the site's own .json beside it."
+	},
+	"mapdump/surface_pond": {
+		"kind": "mapdump-ppm",
+		"path": "groundtruth/batch3/surface_pond_map.ppm",
+		"rect": [
+			2048,
+			-512,
+			1536,
+			1024
+		],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-15",
+		"note": "Batch-3 capture (groundtruth/batch3/, not committed - 67MB): one MAPDUMP colour rect plus a MATDUMP material-id rect per site, world rect + seed recorded in the site's own .json beside it."
+	},
+	"matdump/watchtower": {
+		"kind": "matdump-pgm",
+		"path": "groundtruth/batch3/watchtower_mat.pgm",
+		"matlist": "groundtruth/batch3/matlist.txt",
+		"rect": [
+			13551,
+			-720,
+			1024,
+			1024
+		],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-15",
+		"note": "Batch-3 capture (groundtruth/batch3/, not committed - 67MB): one MAPDUMP colour rect plus a MATDUMP material-id rect per site, world rect + seed recorded in the site's own .json beside it."
+	},
+	"mapdump/watchtower": {
+		"kind": "mapdump-ppm",
+		"path": "groundtruth/batch3/watchtower_map.ppm",
+		"rect": [
+			13551,
+			-720,
+			1024,
+			1024
+		],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-15",
+		"note": "Batch-3 capture (groundtruth/batch3/, not committed - 67MB): one MAPDUMP colour rect plus a MATDUMP material-id rect per site, world rect + seed recorded in the site's own .json beside it."
 	}
 }

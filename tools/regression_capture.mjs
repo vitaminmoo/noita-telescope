@@ -6,9 +6,9 @@
 //   node tools/regression_capture.mjs list
 //   node tools/regression_capture.mjs sources
 //   node tools/regression_capture.mjs add --name NAME --source SRC --rect x,y,w,h \
-//        --guards "one line: what this fixture protects" [--tier1 airMask|materials|none]
+//        --guards "one line: what this fixture protects" [--tier1 airMask|fillMask|materials|none]
 //        [--tier1-mode exact|agreement] [--chunk cx,cy] [--tier2 airMask|rgb|none]
-//        [--tier2-mode exact|agreement] [--layers a=1,b=0]
+//        [--tier2-mode exact|agreement] [--layers debug-layer-custom-art=1,...]
 //   node tools/regression_capture.mjs recut [names...]        re-cut .bin from the dump
 //   node tools/regression_capture.mjs check [names...]        measure tier 1, print, write nothing
 //   node tools/regression_capture.mjs baseline [names...]     measure tier 1 and WRITE thresholds
@@ -84,13 +84,27 @@ function cutRect(srcKey, rect) {
 			},
 		};
 	}
-	if (src.kind === 'matdump-pgm-set') {
-		const dir = abs(src.path);
-		const man = JSON.parse(readFileSync(`${dir}/${src.manifest ?? 'manifest.json'}`, 'utf8'));
-		const names = readMatlist(`${dir}/${src.matlist ?? 'matlist.txt'}`);
-		const tile = man.tiles.find(t => x >= t.x0 && y >= t.y0 && x + w <= t.x0 + t.w && y + h <= t.y0 + t.h);
-		if (!tile) throw new Error(`rect ${rect} spans no single ${srcKey} tile`);
-		const img = readPGM16(`${dir}/${tile.file}`);
+	if (src.kind === 'matdump-pgm-set' || src.kind === 'matdump-pgm') {
+		// A tile set (the surface band, one PGM per 1536px column) and a
+		// single-rect PGM differ only in how the tile covering the rect is found.
+		let names, img, tile;
+		if (src.kind === 'matdump-pgm-set') {
+			const dir = abs(src.path);
+			const man = JSON.parse(readFileSync(`${dir}/${src.manifest ?? 'manifest.json'}`, 'utf8'));
+			names = readMatlist(`${dir}/${src.matlist ?? 'matlist.txt'}`);
+			tile = man.tiles.find(t => x >= t.x0 && y >= t.y0 && x + w <= t.x0 + t.w && y + h <= t.y0 + t.h);
+			if (!tile) throw new Error(`rect ${rect} spans no single ${srcKey} tile`);
+			img = readPGM16(`${dir}/${tile.file}`);
+		} else {
+			const [sx, sy, sw, sh] = src.rect;
+			if (x < sx || y < sy || x + w > sx + sw || y + h > sy + sh) {
+				throw new Error(`rect ${rect} is outside ${srcKey} (${src.rect})`);
+			}
+			names = readMatlist(abs(src.matlist));
+			tile = { x0: sx, y0: sy };
+			img = readPGM16(abs(src.path));
+			if (img.w !== sw || img.h !== sh) throw new Error(`${src.path}: ${img.w}x${img.h} != registered ${sw}x${sh}`);
+		}
 		const palette = [];
 		const index = new Map();
 		const out = Buffer.alloc(w * h * 2);
@@ -212,8 +226,12 @@ async function measure(names, { write }) {
 			meta.tier1.maxUnresolvedPct = Math.min(100, +(r.unresolvedPct + margin).toFixed(2));
 			writeFileSync(`${FIXTURE_DIR}${name}.json`, JSON.stringify(meta, null, '\t') + '\n');
 		}
-		const flagState = badFlags.length ? `FLAGS DIFFER (${badFlags.map(b => b.bad.map(([k]) => k).join('/')).join(' ')})` : 'flags ok';
-		if (badFlags.length) fail++;
+		// `baseline` has just rewritten the flags, so a diff there is the update,
+		// not a failure; only `check` reports it as one.
+		const flagState = badFlags.length
+			? `FLAGS ${write ? 'UPDATED' : 'DIFFER'} (${badFlags.map(b => b.bad.map(([k]) => k).join('/')).join(' ')})`
+			: 'flags ok';
+		if (badFlags.length && !write) fail++;
 		rows.push([name, r.metric, pct === null ? '-' : pct.toFixed(2) + '%',
 			r.unresolvedPct.toFixed(1) + '%', flagState, r.pixels?.top ?? '']);
 	}

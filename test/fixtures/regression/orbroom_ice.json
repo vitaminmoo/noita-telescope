@@ -1,0 +1,91 @@
+{
+	"name": "orbroom_ice",
+	"guards": "the west orb room's ice_static / steelfrost_static / snow bands",
+	"seed": 786433191,
+	"ngPlus": 0,
+	"world": {
+		"x": -9714,
+		"y": 2494,
+		"w": 64,
+		"h": 64
+	},
+	"source": {
+		"key": "matdump/orbroom",
+		"kind": "matdump-pgm",
+		"path": "groundtruth/batch3/orbroom_mat.pgm",
+		"matlist": "groundtruth/batch3/matlist.txt",
+		"rect": [
+			-10354,
+			2494,
+			1024,
+			1024
+		],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-15",
+		"note": "Batch-3 capture (groundtruth/batch3/, not committed - 67MB): one MAPDUMP colour rect plus a MATDUMP material-id rect per site, world rect + seed recorded in the site's own .json beside it."
+	},
+	"expected": {
+		"file": "orbroom_ice.bin",
+		"format": "matpal16",
+		"palette": [
+			"snow_static",
+			"snow_sticky",
+			"air",
+			"snowrock_static",
+			"steelfrost_static",
+			"ice_static"
+		]
+	},
+	"summary": {
+		"airPct": 61.719,
+		"topMaterials": {
+			"air": 2528,
+			"ice_static": 847,
+			"steelfrost_static": 255,
+			"snow_static": 241,
+			"snowrock_static": 173,
+			"snow_sticky": 52
+		}
+	},
+	"tier1": {
+		"chunkFlags": [
+			{
+				"cell": [
+					16,
+					18
+				],
+				"biome": "vault_frozen",
+				"biomeColor": "0x0080a8",
+				"mode": "topo2",
+				"paintsNothing": false,
+				"sceneOnly": false,
+				"fillLayerMaterial": null
+			}
+		],
+		"pixels": {
+			"metric": "materials",
+			"mode": "agreement",
+			"threshold": 99.5,
+			"measured": 100,
+			"measuredAt": "2026-08-15",
+			"measuredCommit": "98f0b2b"
+		},
+		"maxUnresolvedPct": 0.5
+	},
+	"tier2": {
+		"render": {
+			"layers": {}
+		},
+		"checks": [
+			{
+				"metric": "airMask",
+				"mode": "agreement",
+				"threshold": 99.28,
+				"measured": 99.78,
+				"measuredAt": "2026-08-15",
+				"measuredCommit": "e69977b"
+			}
+		]
+	}
+}

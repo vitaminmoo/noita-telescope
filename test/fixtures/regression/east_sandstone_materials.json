@@ -1,0 +1,78 @@
+{
+	"name": "east_sandstone_materials",
+	"guards": "east desert sandstone_surface / sand_static_bright bands",
+	"seed": 786433191,
+	"ngPlus": 0,
+	"world": {
+		"x": 11904,
+		"y": 124,
+		"w": 64,
+		"h": 64
+	},
+	"source": {
+		"key": "matdump/surface",
+		"kind": "matdump-pgm-set",
+		"path": "/home/vitaminmoo/reverse/noita/groundtruth/surface/matdump_seed786433191",
+		"manifest": "manifest.json",
+		"matlist": "matlist.txt",
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-05",
+		"note": "Frozen-physics MATDUMP of the whole surface band (y -900..600) as raw engine material ids, 20 tiles of 1536x1500. Authoritative material identity, not just colors. See ~/reverse/noita/groundtruth/surface/README.md."
+	},
+	"expected": {
+		"file": "east_sandstone_materials.bin",
+		"format": "matpal16",
+		"palette": [
+			"sandstone_surface",
+			"sand_static_bright"
+		]
+	},
+	"summary": {
+		"airPct": 0,
+		"topMaterials": {
+			"sandstone_surface": 2687,
+			"sand_static_bright": 1409
+		}
+	},
+	"tier1": {
+		"chunkFlags": [
+			{
+				"cell": [
+					58,
+					14
+				],
+				"biome": "desert",
+				"biomeColor": "0xcc9944",
+				"mode": "topo0",
+				"paintsNothing": false,
+				"sceneOnly": false,
+				"fillLayerMaterial": null
+			}
+		],
+		"pixels": {
+			"metric": "materials",
+			"mode": "agreement",
+			"threshold": 99.5,
+			"measured": 100,
+			"measuredAt": "2026-08-15",
+			"measuredCommit": "98f0b2b"
+		},
+		"maxUnresolvedPct": 0.5
+	},
+	"tier2": {
+		"render": {
+			"layers": {}
+		},
+		"checks": [
+			{
+				"metric": "airMask",
+				"mode": "agreement",
+				"threshold": 99.5,
+				"measured": 100,
+				"measuredAt": "2026-08-15",
+				"measuredCommit": "98f0b2b"
+			}
+		]
+	}
+}
