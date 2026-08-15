@@ -9,7 +9,9 @@
 //                                    (0 topo0, 1 topo2, 2 fallback),
 //                                    bit 10 noise_biome_edges,
 //                                    bit 11 the generator paints nothing here
-//                                    (`sceneOnly`: empty wang_template_file)
+//                                    (BIOME_ENGINE.paintsNothing — a
+//                                    BIOME_WANG_TILE biome with an empty
+//                                    wang_template_file)
 //   engTable  RGBA32F 512 x (n+1)    buildEngineTable — per-biome band table
 //                                    (cols 0..47: header texel + 5 texels/band),
 //                                    topology-0 params (cols 48..53), and the
@@ -23,7 +25,7 @@ import {
 } from '../engine_resolve/engine_data.js';
 import { CAVES_SETUP, getModifierGrid } from '../engine_resolve/bitmap_caves.js';
 import { buildEngineLattice } from '../engine_resolve/lattice_builder.js';
-import { SCENE_ONLY_COLORS } from '../generator_config.js';
+import { FILL_LAYER_COLORS } from '../generator_config.js';
 import { BIOME_MAP_HEIGHT } from './indirection.js';
 
 export const ENGINE_MODE_TOPO0 = 0;
@@ -60,20 +62,41 @@ export function buildEngineResources(layers, biomeData, generatorConfig, mapWidt
         const color = (biomeData.pixels[i] ?? 0) & 0xffffff;
         const slot = SLOT_BY_COLOR.get(color);
         const b = slot !== undefined ? BIOME_ENGINE[slot] : null;
+        // A topology-0 biome with no <MaterialComponent> keeps the ctor's empty
+        // BiomeMaterials (setMin=+FLT_MAX, setMax=-FLT_MAX — live-PEEKed on
+        // temple_wall), so its pre-gate can never pass and the engine paints
+        // nothing in its chunk. The holy mountain's brick is a pixel scene, not
+        // the generator's output; telescope does not stamp that scene and stands
+        // in for it with a constant fill instead (FILL_LAYER_MATERIALS,
+        // temple_wall -> templebrick_static). Hand those chunks to the legacy
+        // pipeline so the stand-in survives — answering "air" from the engine pass
+        // left the whole Holy Mountain basin empty. Without a stand-in fill there
+        // is nothing to defer to, so keep the engine's own "air" (which also keeps
+        // the legacy wobble from dragging a neighbour's fill in, below).
+        const enginePaintsNothing = !!b && (b.paintsNothing || (b.topo === 0 && b.bands.length === 0));
+        const deferToFill = enginePaintsNothing && !b.paintsNothing && FILL_LAYER_COLORS.has(color);
         let mode = ENGINE_MODE_FALLBACK;
-        if (b && b.supported) {
+        if (b && b.supported && !deferToFill) {
             if (b.topo === 2) mode = lattice.chunkCovered[i] ? ENGINE_MODE_TOPO2 : ENGINE_MODE_FALLBACK;
             else mode = ENGINE_MODE_TOPO0;
         }
-        // A `sceneOnly` room paints no terrain at all (BIOME_WANG_TILE with an
-        // empty wang_template_file — the generator writes nothing and everything
-        // in the chunk comes from the room's pixel scene). The engine path gets
-        // that right on its own, but the legacy fallback re-resolves the biome
-        // with the CPU pipeline's own edge-noise rules and can land on a
-        // NEIGHBOUR's fill chunk, painting solid rock over the room's air. Flag
-        // the chunk so the fallback can answer "air" the way the game does.
+        // `paintsNothing`: a BIOME_WANG_TILE biome with an empty wang_template_file.
+        // ProceduralTerrain_Init @0x0087a900 builds a wang region — and with it the
+        // covergrid the topology-2 resolve samples — only for
+        // `Biome+0x04 == 2 && wang_template_file.size() != 0`, so these biomes get
+        // no covergrid, generate no terrain, and are entirely their biome lua's
+        // stamped pixel scene (rock_room's room, watercave_layout_N, mountain/hall,
+        // and roadblock's fully transparent data/biome_impl/roadblock.png).
+        //
+        // Flagging the chunk matters twice over: the engine pass must not paint its
+        // (demoted, meaningless) topology-0 density, and the legacy fallback must not
+        // re-resolve the biome with the CPU pipeline's own edge-noise rules — where
+        // the two wobbles disagree that lands on a NEIGHBOUR's chunk and paints its
+        // fill over the room's air. The same guard covers every other chunk the
+        // engine has no terrain for, unless a stand-in fill is deferring to the
+        // legacy pipeline on purpose (deferToFill above).
         chunk[i] = (slot ?? 0) | (mode << 8) | ((b && b.noiseBiomeEdges) ? 1 << 10 : 0)
-            | (SCENE_ONLY_COLORS.has(color) ? 1 << 11 : 0);
+            | ((enginePaintsNothing && !deferToFill) ? 1 << 11 : 0);
     }
     return { lattice, chunk, width: mapWidth, height: mapHeight };
 }

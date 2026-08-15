@@ -903,13 +903,18 @@ void main() {
         ivec2 cell = engResolveCell(w);
         uint info = engInfoAt(cell.x, cell.y);
         uint mode = (info >> 8) & 3u;
-        // The resolved cell's biome paints no terrain at all (a sceneOnly room:
-        // BIOME_WANG_TILE with an empty wang_template_file). Answer air
-        // here rather than falling through: the legacy pipeline re-resolves the
-        // biome with its own edge-noise rules, and where those disagree with the
-        // engine's wobble it paints a NEIGHBOUR's fill material over the room's
-        // air — e.g. rock_room chunk 28,20 on seed 786433191, where the game
-        // leaves air and telescope drew solid rock_hard_border.
+        // The resolved cell's biome generates no terrain at all: a BIOME_WANG_TILE
+        // biome with an empty wang_template_file, which ProceduralTerrain_Init
+        // @0x0087a900 never gives a wang region (it needs
+        // Biome+0x04 == 2 && wang_template_file.size() != 0), so it has no
+        // covergrid to sample and its chunk is purely what its biome lua stamps.
+        // Answer air rather than falling through: the legacy pipeline re-resolves
+        // the biome with its own edge-noise rules, and where those disagree with
+        // the engine's wobble it paints a NEIGHBOUR's fill material over the room's
+        // air — e.g. rock_room chunk 28,20 on seed 786433191, where the game leaves
+        // air and telescope drew solid rock_hard_border. Same for roadblock chunk
+        // 33,11, whose scene (data/biome_impl/roadblock.png) is fully transparent:
+        // the game MAPDUMPs 0/262144 filled where telescope drew a solid square.
         if ((info & 2048u) != 0u) return;
         if (mode != 2u) {
             int slot = int(info & 0xffu);

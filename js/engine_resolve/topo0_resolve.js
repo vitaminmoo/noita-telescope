@@ -278,6 +278,18 @@ export function resolveTopo0Pixel(biome, cfg, phase, x, y, opts = {}) {
 	// (setMin=+FLT_MAX, setMax=-FLT_MAX -- live-PEEKed on temple_wall), so its
 	// pre-gate can never pass: the topology-0 path paints NOTHING there.
 	if (!biome || biome.bands.length === 0) return -1;
+	// Nor does a BIOME_WANG_TILE biome with an empty wang_template_file. It never
+	// gets a wang region -- ProceduralTerrain_Init @0x0087a900 builds one only for
+	// `Biome+0x04 == 2 && wang_template_file.size() != 0` -- so the generator writes
+	// nothing and the chunk is whatever its biome lua's LoadPixelScene stamps.
+	// gen_topo0.py demotes the class to topology 0 so there is *a* density to
+	// evaluate, and evaluateCaveAndMaterial below still answers it for callers that
+	// want the number, but the game never paints it. Live on seed 786433191:
+	// roadblock's chunk MAPDUMPs 0/262144 filled where this density says 100% solid
+	// (its scene, data/biome_impl/roadblock.png, is fully transparent), while
+	// watercave's chunk is solid only because watercave.lua stamps
+	// watercave_layout_N.png over it -- same class, difference entirely in the scene.
+	if (biome.paintsNothing) return -1;
 	const ret = evaluateCaveAndMaterial(cfg, phase, x + 0.5, y + 0.5, opts);
 	return selectComponentForCell(biome, x, y, ret, opts.worldSeed || 0);
 }

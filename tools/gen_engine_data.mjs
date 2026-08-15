@@ -146,10 +146,24 @@ for (const color of colors) {
             || gridOK)
         && !unsupportedBand;
     const topo2OK = t0.topo === 2 && !unsupportedBand;
+    // `paintsNothing`: a BIOME_WANG_TILE biome whose wang_template_file is empty.
+    // ProceduralTerrain_Init @0x0087a900 only builds a wang region (and with it the
+    // covergrid the topology-2 resolve samples) when
+    //     Biome+0x04 == 2 && wang_template_file.size() != 0
+    // so these biomes get no covergrid and generate no terrain at all — every pixel
+    // in their chunk comes from the pixel scene their biome lua stamps. Live-checked
+    // on seed 786433191: roadblock's chunk MAPDUMPs 0/262144 filled (its scene,
+    // data/biome_impl/roadblock.png, is 100% transparent), while watercave's chunk is
+    // solid only because watercave.lua stamps watercave_layout_N.png over it. Both
+    // are this class; the difference is entirely in the scene, never in the bands.
+    // (gen_topo0.py demotes the class to `topo: 0` so the offline resolver has
+    //  *something* to evaluate; that density is not what the game paints.)
+    const paintsNothing = t0.xmlType === 'BIOME_WANG_TILE' && t0.topo === 0;
     biomes.push({
         color,
         topo: t0.topo,
         supported: t0.topo === 2 ? topo2OK : topo0OK,
+        paintsNothing,
         noiseBiomeEdges: t0.noiseBiomeEdges,
         setMin: bands ? bands.setMin : 0,
         setMax: bands ? bands.setMax : 0,
