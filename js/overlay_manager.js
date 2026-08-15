@@ -39,7 +39,11 @@ overlayWorker.onmessage = async (e) => {
 			d.push({ tx: msg.tx, ty: msg.ty, ...msg.debug });
 			if (d.length > 64) d.shift();
 		}
-		if (msg.bitmap && putEdgeDecalTile(msg.worldKey, msg.tx, msg.ty, msg.bitmap)) app.draw();
+		// Always route the reply through putEdgeDecalTile: a null bitmap (the
+		// worker's tile layers weren't synced yet) must still clear the tile's
+		// pending flag, or the tile is never re-requested and decals stay
+		// missing for the rest of the session.
+		if (putEdgeDecalTile(msg.worldKey, msg.tx, msg.ty, msg.bitmap)) app.draw();
 	}
 	else if (msg.type === 'OVERLAY_GENERATED') {
 		const pwKey = `${msg.pw},${msg.pwVertical}`;

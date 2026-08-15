@@ -45,10 +45,12 @@ export function invalidateEdgeDecals() {
     worldKey = null;
 }
 
-/** Accepts a finished tile from the worker, or discards a stale one. */
+/** Accepts a finished tile from the worker, or discards a stale one. A null
+ *  bitmap (worker data wasn't ready) only clears the pending flag, so the
+ *  tile is asked for again on a later draw. */
 export function putEdgeDecalTile(key, tx, ty, bitmap) {
     pending.delete(`${tx},${ty}`);
-    if (key !== worldKey) { bitmap.close?.(); return false; }
+    if (!bitmap || key !== worldKey) { bitmap?.close?.(); return false; }
     if (tiles.size >= MAX_CACHED_TILES) {
         const oldest = tiles.keys().next().value;
         tiles.get(oldest).close?.();
