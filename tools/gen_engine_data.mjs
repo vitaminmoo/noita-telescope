@@ -36,6 +36,7 @@ const MATLIST = flag('--matlist',
     process.env.MATLIST || path.join(REPO, 'data', 'matlist.json'));
 
 process.env.NOITA_DATA = GAME;
+const { CAVES_SETUP } = await import(url.pathToFileURL(path.join(REPO, 'js', 'engine_resolve', 'bitmap_caves.js')));
 const { BIOME_BANDS } = await import(url.pathToFileURL(path.join(RR, 'biome_bands.js')));
 const { BIOME_TOPO0 } = await import(url.pathToFileURL(path.join(RR, 'biome_topo0.js')));
 const { WANG_PARAMS } = await import(url.pathToFileURL(path.join(RR, 'matparams.js')));
@@ -119,16 +120,27 @@ for (const color of colors) {
             } : null,
         });
     }
+    // The extraction's XML-enum guess maps SIN_CAPPED_SIMPLEX to 3, but the
+    // engine parses it to runtime noise_type 0 (chunk+0x220 live-PEEKs 0 on the
+    // hills-family chunks, and their carve regime matches the enum-0 default
+    // branch — live-verified on the real-surface branch via CELLPROBE).
+    const noiseType = t0.noiseType === 3 ? 0 : t0.noiseType;
+    // Grids are cached per biome NAME; unnamed biomes share '_EMPTY_'. Only the
+    // grids whose <BitmapCaves> params are ported (bitmap_caves.js CAVES_SETUP)
+    // are supported — the other named grids would silently render modifier 1.0.
+    const gridKey = t0.modifier.kind === 'grid' ? (t0.name || '_EMPTY_') : null;
+    const gridOK = gridKey !== null && CAVES_SETUP[gridKey] !== undefined;
     // topology-0 support: the noise/edge/modifier variants the shader implements.
     // noiseType 3 (SIN_CAPPED overworld carve) is unreachable when the 'empty'
     // lake-mask modifier caps density at ~0.5 < the 0.85 carve gate.
     const carveReachable = !(t0.modifier.kind === 'empty');
     const topo0OK = t0.topo === 0
-        && (t0.noiseType === 0 || !carveReachable)
+        && (noiseType === 0 || !carveReachable)
         && (t0.edge === 0 || t0.edge === 1 || t0.edge === 3)
         && t0.insideNoiseType === 5
         && !t0.depthBlend
-        && (t0.modifier.kind === 'const' || t0.modifier.kind === 'empty' || t0.modifier.kind === 'none')
+        && (t0.modifier.kind === 'const' || t0.modifier.kind === 'empty' || t0.modifier.kind === 'none'
+            || gridOK)
         && !unsupportedBand;
     const topo2OK = t0.topo === 2 && !unsupportedBand;
     biomes.push({
@@ -149,8 +161,9 @@ for (const color of colors) {
             insideFBM: t0.insideFBM, insideSquared: t0.insideSquared,
             insideClamped: t0.insideClamped, insideScaled: t0.insideScaled,
             insideScaleMin: t0.insideScaleMin, insideScaleMax: t0.insideScaleMax,
-            noiseType: t0.noiseType,
+            noiseType,
             modKind: t0.modifier.kind, modValue: t0.modifier.value ?? 0,
+            gridKey,
         },
     });
 }

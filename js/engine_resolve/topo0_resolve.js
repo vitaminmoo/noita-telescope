@@ -24,6 +24,7 @@
 // BiomeChunk param block at +0x218..+0x2a8 for solid_wall / temple_wall /
 // watercave / coalmine_alt).
 import { ComputeMagicValueFromDoubles } from './simplex_noise.js';
+import { getModifierGrid, sampleModifier } from './bitmap_caves.js';
 import { carveDensity } from './carve_noise.js';
 import { selectComponentForCell } from './band_select.js';
 
@@ -196,13 +197,23 @@ export function materialNoise(cfg, wx, wy, worldSeed = 0) {
 //                             the sampler returns 0 and only the simplex blend
 //                             survives -> the "lake mask" (<=0 means AIR).
 //   { kind: 'none' }          Biome+0x1d4 == NULL: the whole step is skipped.
+//   { kind: 'grid', gridKey } a real 512x256 <BitmapCaves> grid, replayed by
+//                             bitmap_caves.js (per biome NAME per world seed).
+//                             Sample + blend live in sampleModifier; a key
+//                             without ported params falls back to 1.0 exactly
+//                             like today's approximation.
 // Returns null when the pixel early-outs to air (modifier <= 0).
 // ---------------------------------------------------------------------------
-export function densityModifier(cfg, wx, wy, gridOffsetX = 0) {
+export function densityModifier(cfg, wx, wy, gridOffsetX = 0, worldSeed = 0) {
 	const mod = cfg.modifier;
 	if (!mod || mod.kind === 'none') return K0.ONE_F;
 	let m;
-	if (mod.kind === 'const') {
+	if (mod.kind === 'grid') {
+		const g = getModifierGrid(worldSeed, mod.gridKey);
+		if (!g) return K0.ONE_F;
+		m = sampleModifier(g, wx, wy);
+		return m > 0 ? m : null;
+	} else if (mod.kind === 'const') {
 		m = mod.value;
 		if (!(m < K0.ONE_F)) return m > 0 ? m : null; // no blend, no coords needed
 	} else if (mod.kind === 'empty') {
@@ -227,7 +238,7 @@ export function densityModifier(cfg, wx, wy, gridOffsetX = 0) {
 // treat null as "engine returned 0.0", not as "no material".
 // ---------------------------------------------------------------------------
 export function evaluateCaveAndMaterial(cfg, phase, wx, wy, opts = {}) {
-	const m = densityModifier(cfg, wx, wy);
+	const m = densityModifier(cfg, wx, wy, 0, opts.worldSeed || 0);
 	if (m === null) return 0;
 	const r = caveDepthRatio(cfg, phase, wx, wy, opts.leftCfg, opts.subX);
 	let density = F(r * m);
@@ -288,7 +299,7 @@ export function topo0Config(engineBiome) {
 		insideNoiseType: 5,
 		insideOffsetBySeed: false,
 		depthBlend: false,
-		modifier: { kind: t.modKind, value: t.modValue },
+		modifier: { kind: t.modKind, value: t.modValue, gridKey: t.gridKey ?? null },
 	};
 	_cfgCache.set(engineBiome, cfg);
 	return cfg;
