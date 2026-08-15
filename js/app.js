@@ -27,7 +27,8 @@ import { getMaterialAtlas, initMaterialAtlas, materialAlpha, materialAtlasEntry,
 import { ENGINE_MODE_FALLBACK, ENGINE_MODE_TOPO2 } from './gl/engine_resources.js';
 import { MATERIAL_BY_NAME } from './potion_config.js';
 import { getBiomeModifiers, getStartingWeather } from './misc_generation.js';
-import { getCauldronState, getCauldronVariation } from './cauldron.js';
+import { getCauldronState } from './cauldron.js';
+import { SCENE_ART_TILES, sceneArtTile } from './pixel_scene_art.js';
 import { WAND_TIERS } from './wand_config.js';
 import { renderFungalShifts, renderAlchemyRecipes, getPerkSimulationState, importPerkPickups, updatePerksState } from './misc_ui.js';
 import { setupProgressUI, updateUsedSpellProgress } from './progress.js';
@@ -2326,25 +2327,22 @@ export const app = {
 		this.skyOverlayNightmare = await loadPNGBitmap('../data/biome_maps/custom/sky_overlay_nightmare.png');
 		this.skyOverlayNightmarePW = await loadPNGBitmap('../data/biome_maps/custom/sky_overlay_nightmare_pw.png');
 		
-		this.surfaceOverlayScenes = {
-			"hiisi_hourglass_left": await loadPNGBitmap('../data/biome_maps/custom/hiisi_hourglass_left.png'),
-			"hiisi_hourglass_right": await loadPNGBitmap('../data/biome_maps/custom/hiisi_hourglass_right.png'),
-			"orb_room": await loadPNGBitmap('../data/biome_maps/custom/orb_room.png'),
-			"cursed_orb_room": await loadPNGBitmap('../data/biome_maps/custom/cursed_orb_room.png'),
-			"echoing_spire": await loadPNGBitmap('../data/biome_maps/custom/echoing_spire.png'),
-			"echoing_spire_grass": await loadPNGBitmap('../data/biome_maps/custom/echoing_spire_grass.png'),
-			"echoing_spire_sand": await loadPNGBitmap('../data/biome_maps/custom/echoing_spire_sand.png'),
-			"cauldron_room": await loadPNGBitmap('../data/biome_maps/custom/cauldron_room.png'),
-			"cauldron_room_broken": await loadPNGBitmap('../data/biome_maps/custom/cauldron_room_broken.png'),
-			"moon": await loadPNGBitmap('../data/biome_maps/custom/moon.png'),
-			"darkmoon": await loadPNGBitmap('../data/biome_maps/custom/darkmoon.png'),
-			"scale_empty": await loadPNGBitmap('../data/biome_maps/custom/scale_empty.png'),
-			"scale_light": await loadPNGBitmap('../data/biome_maps/custom/scale_light.png'),
-			"scale_dark": await loadPNGBitmap('../data/biome_maps/custom/scale_dark.png'),
-			"scale_balanced": await loadPNGBitmap('../data/biome_maps/custom/scale_balanced.png'),
-			"sun": await loadPNGBitmap('../data/biome_maps/custom/sun.png'),
-			"darksun": await loadPNGBitmap('../data/biome_maps/custom/darksun.png'),
-		};
+		// The world-rect tiles: those anchored to something other than a pixel
+		// scene (the sky bodies, the echoing spire, the hourglass chamber's
+		// oversized tile, the scale) still need their own draw sites below.
+		const sceneArtStems = [
+			"hiisi_hourglass_left", "hiisi_hourglass_right",
+			"echoing_spire", "echoing_spire_grass", "echoing_spire_sand",
+			"moon", "darkmoon", "sun", "darksun",
+			"scale_empty", "scale_light", "scale_dark", "scale_balanced",
+			// Everything a pixel scene can ask for by key, so giving a scene a
+			// tile is one line in js/pixel_scene_art.js and nothing here.
+			...SCENE_ART_TILES,
+		];
+		this.surfaceOverlayScenes = {};
+		for (const stem of sceneArtStems) {
+			this.surfaceOverlayScenes[stem] = await loadPNGBitmap(`../data/biome_maps/custom/${stem}.png`);
+		}
 		
 		this.weatherOverlays = {
 			"rain": await loadPNGBitmap('../data/biome_maps/custom/weather_rain.png'),
@@ -3341,6 +3339,12 @@ export const app = {
 
 				// Render pixel scenes (after overlays)
 				let airErased = false;
+				// Hand-drawn tiles that stand in for a scene's appearance
+				// (js/pixel_scene_art.js). Collected here rather than blitted in
+				// place so they land on top of every scene AND on top of the
+				// background refill below, which is what a stand-in has to do.
+				const sceneArt = [];
+				const artOn = document.getElementById('custom-art').checked && this.surfaceOverlayScenes;
 				if (this.pixelScenesByPW && this.pixelScenesByPW[`${pwX},${pwY}`]) {
 					for (let scene of this.pixelScenesByPW[`${pwX},${pwY}`]) {
 						//if (!scene || !scene.imgElement) continue;
@@ -3377,6 +3381,12 @@ export const app = {
 						}
 						// Always the full-resolution rectangle: only the source changes with the level
 						this.ctx.drawImage(pixelSceneCanvas, drawX, drawY, sceneData.width, sceneData.height);
+
+						if (artOn) {
+							const tile = sceneArtTile(scene.key, { app: this, pwX, pwY });
+							const bitmap = tile && this.surfaceOverlayScenes[tile];
+							if (bitmap) sceneArt.push([bitmap, drawX, drawY, sceneData.width, sceneData.height]);
+						}
 					}
 				}
 
@@ -3396,7 +3406,15 @@ export const app = {
 					this.ctx.globalCompositeOperation = 'source-over';
 				}
 
-				// Orb rooms (effectively another pixel scene overlay)
+				// The scene art stand-ins, on top of every scene and of the refill.
+				for (const [bitmap, x, y, w, h] of sceneArt) this.ctx.drawImage(bitmap, x, y, w, h);
+
+				// Orb rooms. Their tile comes from the general scene-art pass above,
+				// off the general/orbroom scene each orb chunk stamps -- what is left
+				// here is the two things that are not a property of that scene: the
+				// vertical-PW repeat (addStaticPixelScenes only stamps chunk-based
+				// scenes in vertical PW 0, so the copies below the first have no
+				// scene to hang off), and the marker drawn when art is off.
 				this.biomeData.orbs.forEach(o => {
 					if (o.y < 14) return; // Skip the sky altar and pyramid top orbs
 
@@ -3407,21 +3425,15 @@ export const app = {
 					if (!renderHere) return;
 					const repeatCount = (pwY > 0 && isBottomMapChunkOrb) ? 48 : 1;
 
-					if (document.getElementById('custom-art').checked && this.surfaceOverlayScenes && this.surfaceOverlayScenes['orb_room']) {
-						// Technically always NGP the way I have this set up but whatever
-						const sceneName = (pwX === 0 && this.gameMode !== 'nightmare') ? 'orb_room' : 'cursed_orb_room';
-						for (let k = 0; k < repeatCount; k++) {
-							const repeatedSceneName = k > 0 ? 'cursed_orb_room' : sceneName;
-							const sceneImage = this.surfaceOverlayScenes[repeatedSceneName] || this.surfaceOverlayScenes[sceneName];
-							this.ctx.drawImage(sceneImage, o.x * 512 + shiftX, o.y * 512 + shiftY - k * 512, 512, 512);
+					if (artOn && this.surfaceOverlayScenes['cursed_orb_room']) {
+						// k = 0 is the orb's own chunk, already covered by the scene
+						// art pass wherever the scene exists; in a vertical PW it does
+						// not, so the first copy is drawn here too.
+						const firstK = pwY === 0 ? 1 : 0;
+						for (let k = firstK; k < repeatCount; k++) {
+							this.ctx.drawImage(this.surfaceOverlayScenes['cursed_orb_room'],
+								o.x * 512 + shiftX, o.y * 512 + shiftY - k * 512, 512, 512);
 						}
-						// Circle (not really needed with exaggerated orb size in art)
-						/*
-						const ox = (o.x + 0.5) * 512; const oy = (o.y + 0.5) * 512;
-						this.ctx.fillStyle = 'rgba(255, 215, 0, 0.3)'; this.ctx.strokeStyle = '#f00';
-						this.ctx.beginPath(); this.ctx.arc(ox, oy, 200, 0, Math.PI*2);
-						this.ctx.lineWidth = 10; this.ctx.fill(); this.ctx.stroke();
-						*/
 					}
 					else {
 						for (let k = 0; k < repeatCount; k++) {
@@ -3438,24 +3450,10 @@ export const app = {
 				});
 			}
 
-			// Cauldron room should be on top of the biome data. This is hand-drawn
-			// art -- a 16x16 image blown up to the whole 512 chunk -- and it is
-			// painted straight over the real general/cauldron pixel scene, which
-			// renders from the game's own material PNG underneath it. So it needs
-			// BOTH art gates: "Display Custom Art" (does the app fetch the overlay
-			// art at all) and the Custom Art render layer (is hand-drawn art meant
-			// to cover generated terrain in this frame). It used to honor only the
-			// first, which is on by default, so turning the layer off left the
-			// blocky cauldron sitting on top of the scene it hides.
-			if (L.customArt && document.getElementById('custom-art').checked && this.cauldronState !== null && this.gameMode !== 'nightmare' && this.surfaceOverlayScenes && this.surfaceOverlayScenes["cauldron_room"] && this.surfaceOverlayScenes["cauldron_room_broken"]) {
-				// With the states being null and void it's hard to tell which is 0 and which is 1.
-				if (this.cauldronState === 0 || (this.cauldronState === 2 && getCauldronVariation())) {
-					this.ctx.drawImage(this.surfaceOverlayScenes["cauldron_room_broken"], getWorldCenter(this.isNGP, this.gameMode) * 512 - this.pw * getWorldSize(this.isNGP, this.gameMode) * 512 + 7*512, 14*512 + 10 * 512 - this.pwVertical * 24576, 512, 512);
-				}
-				else {
-					this.ctx.drawImage(this.surfaceOverlayScenes["cauldron_room"], getWorldCenter(this.isNGP, this.gameMode) * 512 - this.pw * getWorldSize(this.isNGP, this.gameMode) * 512 + 7*512, 14*512 + 10 * 512 - this.pwVertical * 24576, 512, 512);
-				}
-			}
+			// (The cauldron room's tile used to be blitted here from a hardcoded
+			// 7*512, 10*512 that duplicated static_spawns.js's placement. It now
+			// comes from js/pixel_scene_art.js, off the general/cauldron scene,
+			// like any other scene-attached art.)
 		}
 		if (prof) markLayer(prof, 'pixelScenes');
 
