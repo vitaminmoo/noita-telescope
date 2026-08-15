@@ -23,11 +23,19 @@ references plus everything (2) and (3) need:
   data/background_data.json              image sizes, scene-key -> background
                                          path, global image list
 
-Scene backgrounds are keyed the way telescope keys scenes: the material PNG's
-basename without extension ("receptacle_oil", "altar"). Sources scanned:
+Scene backgrounds are keyed here by the material PNG's basename without
+extension ("receptacle_oil", "altar"). Sources scanned:
   * background_file="..." entries in data/scripts/biomes/**.lua scene tables
   * LoadPixelScene( "mat.png", ..., "bg.png" ) literal calls anywhere in lua
   * PixelScene background_filename= attributes in data/biome/_pixel_scenes*.xml
+
+SUPERSEDED for (2): nothing reads the sceneBackgrounds field any more. A bare
+basename is ambiguous across biomes -- "altar" is both data/biome_impl/altar.png
+and data/biome_impl/temple/altar.png, and only the latter has a background -- so
+the renderer reads js/pixel_scene_backgrounds.js instead, which
+tools/gen_scene_backgrounds.mjs keys the way telescope keys scenes (dir/name)
+and which also picks up the material_file/background_file scene tables the
+regex above never matched. (1) and (3) are unchanged and still live here.
 
 Usage: python3 tools/gen_backgrounds.py [path-to-data.wak.unpacked]
 """
