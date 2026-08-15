@@ -1,0 +1,93 @@
+{
+	"name": "pyramid_crypt_stairs",
+	"guards": "the pyramid's interior rooms come from data/biome_impl/crypt/: two stairs_right stamps land here, and only because a scene entry may name its own folder",
+	"seed": 786433191,
+	"ngPlus": 0,
+	"world": {
+		"x": 9312,
+		"y": 352,
+		"w": 128,
+		"h": 128
+	},
+	"source": {
+		"key": "matdump/pyramid",
+		"kind": "matdump-pgm",
+		"path": "groundtruth/batch3/pyramid_mat.pgm",
+		"matlist": "groundtruth/batch3/matlist.txt",
+		"rect": [
+			8192,
+			-1536,
+			3584,
+			2048
+		],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-15",
+		"note": "Batch-3 capture (groundtruth/batch3/, not committed - 67MB): one MAPDUMP colour rect plus a MATDUMP material-id rect per site, world rect + seed recorded in the site's own .json beside it."
+	},
+	"expected": {
+		"file": "pyramid_crypt_stairs.bin",
+		"format": "matpal16",
+		"palette": [
+			"air",
+			"templebrick_static",
+			"templebrickdark_static",
+			"rock_hard",
+			"ceiling_plant_material",
+			"diamond"
+		]
+	},
+	"summary": {
+		"airPct": 63.977,
+		"topMaterials": {
+			"air": 10482,
+			"templebrick_static": 2592,
+			"templebrickdark_static": 2372,
+			"rock_hard": 902,
+			"diamond": 35,
+			"ceiling_plant_material": 1
+		}
+	},
+	"tier1": {
+		"chunkFlags": [
+			{
+				"cell": [
+					53,
+					14
+				],
+				"biome": "pyramid",
+				"biomeColor": "0x967f11",
+				"mode": "topo2",
+				"paintsNothing": false,
+				"sceneOnly": false,
+				"fillLayerMaterial": null
+			}
+		],
+		"pixels": {
+			"metric": "none",
+			"mode": "agreement",
+			"threshold": null,
+			"measured": null,
+			"measuredAt": null,
+			"measuredCommit": null
+		},
+		"maxUnresolvedPct": 0.5
+	},
+	"tier2": {
+		"render": {
+			"layers": {}
+		},
+		"checks": [
+			{
+				"metric": "airMask",
+				"mode": "agreement",
+				"note": "measured 92.682% over this rect before the crypt-dir wiring (07c618f): without it the two stairs_right stamps never load, leaving 1,192 of the rect's 5,902 terrain pixels air.",
+				"threshold": 99.47,
+				"measured": 99.969,
+				"measuredAt": "2026-08-15",
+				"measuredCommit": "56b0166",
+				"comparedPixels": 16384
+			}
+		]
+	}
+}
