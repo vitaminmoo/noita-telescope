@@ -205,6 +205,11 @@ export class GLTerrainRenderer {
             engine = buildEngineResources(layers, biomeData, GENERATOR_CONFIG ?? {}, mapWidth);
             this.surfacePhase = surfaceNoisePhase(opts.seed ?? 0);
         }
+        // Kept for the unpainted-checkerboard mask: chunks the engine pass
+        // resolves itself (mode != fallback, bits 8-9) ARE painted — including
+        // the ones whose whole answer is air (sky, holy-mountain interiors).
+        this.engineChunkModes = engine ? engine.chunk : null;
+        this.engineChunkWidth = engine ? engine.width : 0;
 
         deleteTerrainTextures(gl, this.textures);
         this.textures = {

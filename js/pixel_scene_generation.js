@@ -425,10 +425,24 @@ export async function loadPixelSceneData() {
 					// real art, so no makeBlackTransparent here). A failed fetch just
 					// means this scene renders material-derived, like any other.
 					let visualArt = null;
+					let artMask = null;
 					if (VISUAL_OVERLAY_SCENES.has(`${alias}/${scene.name}`)) {
 						try {
 							const vis = await loadPNG(`../data/pixel_scenes/${alias}/${scene.name}_visual.png`);
 							visualArt = { data: vis.data, width: vis.width, height: vis.height };
+							// Bit-packed "art covers this scene pixel" mask for the
+							// edge-decal pass -- small enough to clone into the overlay
+							// worker, unlike the art itself.
+							artMask = new Uint8Array((imgData.width * imgData.height + 7) >> 3);
+							const aw = Math.min(imgData.width, vis.width), ah = Math.min(imgData.height, vis.height);
+							for (let y = 0; y < ah; y++) {
+								for (let x = 0; x < aw; x++) {
+									if (vis.data[(y * vis.width + x) * 4 + 3] >= 128) {
+										const p = y * imgData.width + x;
+										artMask[p >> 3] |= 0x80 >> (p & 7);
+									}
+								}
+							}
 						} catch (err) {
 							console.warn(`visual art missing for ${alias}/${scene.name}:`, err);
 						}
@@ -451,6 +465,7 @@ export async function loadPixelSceneData() {
 						// chunk it lands in (underlyingBiomeSuffix).
 						...classifyPixelSceneColors(imgData.data),
 						visualArt, // per-pixel cell-color override art, or null
+						artMask, // bit-packed art coverage (MSB-first), or null
 						variants: {}, // Used for color material changes, keyed as `${color}=${material}`
 					};
 					loaded++;
@@ -1057,8 +1072,10 @@ export function texturePixelSceneForBiome(sceneName, sourceData, width, height, 
 	const densityBiome = densityBiomeFor(bands, paint.targetBiome, paint.underlyingBiome);
 
 	// How one material paints: its atlas rect when it has a texture, else its flat
-	// display color (which is what the engine falls back to as well). Memoized --
-	// a scene uses a handful of materials across hundreds of thousands of pixels.
+	// display color (which is what the engine falls back to as well), composited
+	// with the material's XML alpha (water 0xA0) exactly as the engine's cell
+	// grid blends liquids/gasses over the background layer. Memoized -- a scene
+	// uses a handful of materials across hundreds of thousands of pixels.
 	const recipeByName = new Map();
 	const recipeForMaterial = (name, fallbackFlat) => {
 		let recipe = recipeByName.get(name);
@@ -1067,6 +1084,7 @@ export function texturePixelSceneForBiome(sceneName, sourceData, width, height, 
 			recipe = {
 				entry: atlasMod.materialAtlasEntry(atlas, name),
 				flat: wang === undefined ? fallbackFlat : materialDisplayColor(name),
+				alpha: wang === undefined ? 255 : atlasMod.materialAlpha(name),
 			};
 			recipeByName.set(name, recipe);
 		}
@@ -1077,7 +1095,7 @@ export function texturePixelSceneForBiome(sceneName, sourceData, width, height, 
 	const fillMaterial = densityFillMaterialFor(paint.targetBiome, paint.underlyingBiome);
 	const fillRecipe = fillMaterial
 		? recipeForMaterial(fillMaterial, paint.targetColor)
-		: { entry: 0, flat: paint.targetColor };
+		: { entry: 0, flat: paint.targetColor, alpha: 255 };
 
 	const densityRecipes = new Map();
 	const densityRecipeFor = (id) => {
@@ -1097,7 +1115,7 @@ export function texturePixelSceneForBiome(sceneName, sourceData, width, height, 
 			const name = materialForWangColor(rgb);
 			recipe = name
 				? recipeForMaterial(name, (recolorMaterials ? MATERIAL_COLOR_CONVERSION[rgb] : undefined) ?? rgb)
-				: { entry: 0, flat: (recolorMaterials ? MATERIAL_COLOR_CONVERSION[rgb] : undefined) ?? rgb };
+				: { entry: 0, flat: (recolorMaterials ? MATERIAL_COLOR_CONVERSION[rgb] : undefined) ?? rgb, alpha: 255 };
 			wangRecipes.set(rgb, recipe);
 		}
 		return recipe;
@@ -1135,25 +1153,37 @@ export function texturePixelSceneForBiome(sceneName, sourceData, width, height, 
 		// class; the wang color's own material for everything else. A band table
 		// that accepts nothing here falls back to the biome's fillMaterial rather
 		// than to air, so a table gap can never punch a hole in a room floor.
-		const { entry, flat } = (r === g && g === b && r > 0)
+		const { entry, flat, alpha } = (r === g && g === b && r > 0)
 			? densityRecipeFor(densityBiome
 				? bands.selectComponentForCell(densityBiome, wx, wy,
 					bands.computeMaterialNoiseDensity(wx, wy, 1.0))
 				: -1)
 			: wangRecipeFor((r << 16) | (g << 8) | b);
 
+		let a = alpha;
 		if (entry > 0) {
-			const texel = atlasMod.materialTexelRGB(atlas, entry, wx, wy);
-			// A transparent texel places no cell in the engine, so paint nothing.
+			// Textured materials take the texel's own alpha (same rule as the GL
+			// terrain shader); a fully transparent texel places no cell at all.
+			const texel = atlasMod.materialTexelRGBA(atlas, entry, wx, wy);
 			if (texel < 0) { outData[i + 3] = 0x00; continue; }
+			a = (texel >>> 24) & 0xFF;
 			outData[i] = (texel >> 16) & 0xFF;
 			outData[i + 1] = (texel >> 8) & 0xFF;
 			outData[i + 2] = texel & 0xFF;
-			continue;
+		} else {
+			outData[i] = (flat >> 16) & 0xFF;
+			outData[i + 1] = (flat >> 8) & 0xFF;
+			outData[i + 2] = flat & 0xFF;
 		}
-		outData[i] = (flat >> 16) & 0xFF;
-		outData[i + 1] = (flat >> 8) & 0xFF;
-		outData[i + 2] = flat & 0xFF;
+		if (a < 255) {
+			// A translucent cell (liquid, gas) replaces the world cell under it
+			// and blends over the BACKGROUND, so it must also erase the terrain:
+			// mask first, translucent pixel second, background refilled behind by
+			// the draw site's destination-over pass.
+			outData[i + 3] = a;
+			if (!airMask) airMask = new Uint8Array(sourceData.length);
+			airMask[i + 3] = 0xff;
+		}
 	}
 
 	return { pixels: outData, airMask };
@@ -1235,6 +1265,15 @@ export function pixelSceneMaterialGrid(scene, bands) {
 			wangIds.set(rgb, id);
 		}
 		grid[p] = id >= 0 ? id : SCENE_MAT_UNKNOWN;
+	}
+	// Cells covered by the scene's visual art keep the art's pixel as their
+	// color, so edge decals must never stamp over them; SCENE_MAT_UNKNOWN still
+	// blocks edges like any painted cell.
+	if (data.artMask) {
+		for (let p = 0; p < w * h; p++) {
+			if (grid[p] > 0 && grid[p] !== SCENE_MAT_UNKNOWN
+				&& (data.artMask[p >> 3] & (0x80 >> (p & 7)))) grid[p] = SCENE_MAT_UNKNOWN;
+		}
 	}
 	return { grid, width: w, height: h, x: scene.x, y: scene.y };
 }

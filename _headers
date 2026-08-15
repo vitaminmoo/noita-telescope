@@ -1,0 +1,12 @@
+# Cloudflare Pages headers. The app is a module-graph SPA whose page AND worker
+# modules must never be served as a mixed old/new set: workers skip hard-refresh
+# revalidation, so a cached module from a previous deploy silently breaks
+# overlays / pixel scenes / edge decals (same failure mode tools/dev_server.py
+# exists to prevent locally). no-cache still allows 304 revalidation, so
+# unchanged files stay fast.
+/index.html
+  Cache-Control: no-cache
+/js/*
+  Cache-Control: no-cache
+/data/*
+  Cache-Control: no-cache

@@ -2302,6 +2302,19 @@ export const app = {
 				if (SCENE_ONLY_COLORS.has(this.biomeData.pixels[i] & 0xffffff)) covered[i] = 1;
 			}
 		}
+		// Chunks the engine GL pass resolves itself are painted, even when the
+		// whole answer is air over a painted background (sky above the surface,
+		// holy-mountain interiors) — checkerboarding those flags correct chunks.
+		// Mode 2 (bits 8-9) is the fallback to the legacy layer pipeline, which
+		// the validChunks pass above already judged.
+		const engModes = (appSettings.engineTerrain && this.glTerrain
+			&& this.glTerrain.engineChunkWidth === w) ? this.glTerrain.engineChunkModes : null;
+		if (engModes) {
+			for (let i = 0; i < w * h; i++) {
+				if (((engModes[i] >> 8) & 3) !== 2) covered[i] = 1;
+			}
+		}
+		this.unpaintedMaskUsedEngine = !!engModes;
 		const canvas = document.createElement('canvas');
 		canvas.width = w;
 		canvas.height = h;
@@ -2367,6 +2380,12 @@ export const app = {
 			generatorConfig: GENERATOR_CONFIG,
 		});
 		if (!ok) return null;
+
+		// The engine chunk table lands here (lazily, on the first GL draw); the
+		// unpainted mask built before it existed must fold it in once.
+		if (!this.unpaintedMaskUsedEngine && terrain.engineChunkModes && this.unpaintedMask) {
+			this.buildUnpaintedMask();
+		}
 
 		const glCanvas = terrain.render({
 			width: this.canvas.width,
@@ -3217,8 +3236,9 @@ export const app = {
 				});
 			}
 
-			// Cauldron room should be on top of the biome data
-			if (this.cauldronState !== null && this.gameMode !== 'nightmare' && this.surfaceOverlayScenes && this.surfaceOverlayScenes["cauldron_room"] && this.surfaceOverlayScenes["cauldron_room_broken"]) {
+			// Cauldron room should be on top of the biome data. Hand-drawn art, so
+			// it honors the same "Display Custom Art" toggle as the orb rooms above.
+			if (document.getElementById('custom-art').checked && this.cauldronState !== null && this.gameMode !== 'nightmare' && this.surfaceOverlayScenes && this.surfaceOverlayScenes["cauldron_room"] && this.surfaceOverlayScenes["cauldron_room_broken"]) {
 				// With the states being null and void it's hard to tell which is 0 and which is 1.
 				if (this.cauldronState === 0 || (this.cauldronState === 2 && getCauldronVariation())) {
 					this.ctx.drawImage(this.surfaceOverlayScenes["cauldron_room_broken"], getWorldCenter(this.isNGP, this.gameMode) * 512 - this.pw * getWorldSize(this.isNGP, this.gameMode) * 512 + 7*512, 14*512 + 10 * 512 - this.pwVertical * 24576, 512, 512);

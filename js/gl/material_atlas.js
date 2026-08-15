@@ -102,6 +102,24 @@ export function materialTexelRGB(atlas, entry, worldX, worldY) {
     return (atlas.data[o] << 16) | (atlas.data[o + 1] << 8) | atlas.data[o + 2];
 }
 
+/**
+ * Same lookup, but packed 0xAARRGGBB (unsigned) so the texel's own alpha
+ * survives; still -1 for a fully transparent texel.
+ */
+export function materialTexelRGBA(atlas, entry, worldX, worldY) {
+    const m = (entry - 1) * 4;
+    const rx = atlas.meta[m], ry = atlas.meta[m + 1], rw = atlas.meta[m + 2], rh = atlas.meta[m + 3];
+    const o = ((ry + pmod(worldY, rh)) * atlas.width + (rx + pmod(worldX, rw))) * 4;
+    const a = atlas.data[o + 3];
+    if (a === 0) return -1;
+    return ((a << 24) | (atlas.data[o] << 16) | (atlas.data[o + 1] << 8) | atlas.data[o + 2]) >>> 0;
+}
+
+/** Compositing alpha of a material name (XML color alpha, water 0xA0). */
+export function materialAlpha(name) {
+    return MATERIAL_ALPHA_BY_NAME.get(name) ?? 255;
+}
+
 /** Material entry index for a raw 0xRRGGBB wang color (0 = no texture). */
 function entryForWangColor(atlas, raw) {
     const name = MATERIAL_COLOR_LOOKUP[raw.toString(16).padStart(6, '0')];
