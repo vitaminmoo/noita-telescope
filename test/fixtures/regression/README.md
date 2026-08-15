@@ -115,9 +115,9 @@ MATDUMP surface material grid and the batch-3 per-site MATDUMP rects, all seed
   (`ominoustemple_slabs`, `watchtower_slabs`, `orbroom_ice`, `pyramid_chamber`,
   `surface_pond_shore`, `dragoncave_room_air`, `mountaintop_hall`) — material
   identity inside seven hand-built sites. `mountaintop_hall` is the interesting
-  one: the engine models **none** of the mountain hall (100 % unresolved), so
-  tier 1 only pins its chunk and the render carries the check — which it passes
-  at 100 % air-mask agreement.
+  one: the engine gets 58 % of the mountain hall and none of its art, so tier 1
+  mostly pins the chunk and the render carries the check — which it passes at
+  100 % air-mask agreement.
 * **surface materials** (`winter_maze_materials`, `winter_east_caves_materials`,
   `winter_surface_line_materials`, `hills_bands_materials`, `coal_bands_materials`,
   `snow_soil_edge_materials`, `desert_surface_materials`, `east_sandstone_materials`,
