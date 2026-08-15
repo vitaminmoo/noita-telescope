@@ -79,9 +79,14 @@ overlayWorker.onmessage = async (e) => {
 };
 
 export function syncOverlayWorkerData() {
+	// The worker recolors from the base images and never draws the visual-art
+	// overlays (those apply at main-thread bitmap build), so don't clone the
+	// ~80MB of decoded art into it.
+	const pixelSceneCache = Object.fromEntries(Object.entries(PIXEL_SCENE_DATA)
+		.map(([k, v]) => [k, v.visualArt ? { ...v, visualArt: null } : v]));
 	overlayWorker.postMessage({
 		cmd: 'SYNC_METADATA',
-		pixelSceneCache: PIXEL_SCENE_DATA,
+		pixelSceneCache,
 		biomeData: app.biomeData,
 		tileLayers: app.tileLayers,
 		// Do not transfer these buffers: the main renderer continues to use them.

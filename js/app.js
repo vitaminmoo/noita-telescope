@@ -3147,7 +3147,7 @@ export const app = {
 						//
 						// The mask and the scene image never touch the same pixel (a scene that
 						// paints its air opaque contributes no mask), so their order is free.
-						const airMask = getPixelSceneAirMask(scene);
+						const airMask = getPixelSceneAirMask(scene, sceneMipLevel);
 						if (airMask) {
 							this.ctx.globalCompositeOperation = 'destination-out';
 							this.ctx.drawImage(airMask, drawX, drawY, sceneData.width, sceneData.height);
