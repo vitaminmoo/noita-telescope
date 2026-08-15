@@ -55,6 +55,9 @@ const BASE_LAYERS = {
 	'debug-layer-debug-boxes': false,
 	'debug-layer-secrets': false,
 	'debug-layer-misc': false,
+	// PoI markers became a real render layer (4859a24); before that they drew
+	// unconditionally and the cyan meditation-cube disc leaked into fixtures.
+	'debug-layer-pois': false,
 };
 
 const fixtures = names.map(loadFixture);

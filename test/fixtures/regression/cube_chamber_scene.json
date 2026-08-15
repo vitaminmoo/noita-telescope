@@ -70,17 +70,18 @@
 			{
 				"metric": "airMask",
 				"mode": "agreement",
-				"threshold": 76.16,
-				"measured": 76.66,
+				"note": "76.66% -> 99.99% when the harness stopped drawing PoI markers: the meditation cube's cyan marker disc sits in this rect and read as solid terrain. The old number measured the marker, not the room.",
+				"threshold": 99.49,
+				"measured": 99.988,
 				"measuredAt": "2026-08-15",
-				"measuredCommit": "35edc64"
+				"measuredCommit": "4859a24"
 			},
 			{
 				"metric": "rgb",
 				"mode": "agreement",
 				"measured": 0,
 				"measuredAt": "2026-08-15",
-				"measuredCommit": "35edc64",
+				"measuredCommit": "4859a24",
 				"threshold": 0
 			}
 		]
