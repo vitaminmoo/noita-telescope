@@ -16,6 +16,18 @@
 // debug layer, which is off by default and covers the expensive full-world
 // surface/sky overlays that hide generated terrain.
 //
+// A stand-in only stands in while the thing it replaces is unreadable. A tile
+// pixel is 32 world pixels, so the moment the room's own pixels are resolvable
+// the tile is strictly the coarser picture -- and since the density class started
+// resolving through the biome's bands (pixel_scene_generation.js densityBiomeFor)
+// the real orb room draws its brick frame, its floor materials and the air holes
+// that show its background art, all of which the 16x16 tile flattens to one
+// blob. So the tile is drawn only below this zoom, where a 512px room is under
+// ~128 screen pixels and its detail is mush anyway. Above it the room draws
+// itself. The copies that have no scene to draw -- the vertical-PW orb rooms,
+// which addStaticPixelScenes only stamps in vertical PW 0 -- keep their tile at
+// every zoom; that is app.js's separate orb-repeat pass, not this manifest.
+//
 // Keys are telescope's scene keys, `${getBiomeAlias(biome)}/${sceneName}` --
 // the same space as VISUAL_OVERLAY_SCENES, SCENE_BACKGROUNDS and
 // SKIP_EDGE_TEXTURE_SCENES. Values name a file stem under
@@ -46,6 +58,12 @@ export const SCENE_ART = {
 			? 'orb_room' : 'cursed_orb_room',
 	},
 };
+
+/**
+ * The camera zoom at or above which a stamped scene draws itself instead of its
+ * stand-in tile: one 512px room is 128 screen pixels here.
+ */
+export const SCENE_ART_MAX_ZOOM = 0.25;
 
 /** Every file stem the manifest can ask for, for the art preloader. */
 export const SCENE_ART_TILES = [...new Set(Object.values(SCENE_ART).flatMap(e => e.tiles))];

@@ -28,7 +28,7 @@ import { ENGINE_MODE_FALLBACK, ENGINE_MODE_TOPO2 } from './gl/engine_resources.j
 import { MATERIAL_BY_NAME } from './potion_config.js';
 import { getBiomeModifiers, getStartingWeather } from './misc_generation.js';
 import { getCauldronState } from './cauldron.js';
-import { SCENE_ART_TILES, sceneArtTile } from './pixel_scene_art.js';
+import { SCENE_ART_MAX_ZOOM, SCENE_ART_TILES, sceneArtTile } from './pixel_scene_art.js';
 import { WAND_TIERS } from './wand_config.js';
 import { renderFungalShifts, renderAlchemyRecipes, getPerkSimulationState, importPerkPickups, updatePerksState } from './misc_ui.js';
 import { setupProgressUI, updateUsedSpellProgress } from './progress.js';
@@ -1712,6 +1712,12 @@ export const app = {
 			const mode = (modes[idx] >> 8) & 3;
 			if (mode !== ENGINE_MODE_FALLBACK) return `engine ${mode === ENGINE_MODE_TOPO2 ? 'topo2' : 'topo0'}`;
 		}
+		// The measured members of the same class the engine table does not carry:
+		// generator_config.js flags a biome `sceneOnly` from a live dump that the
+		// table calls BIOME_PROCEDURAL (boss_arena today). buildUnpaintedMask()
+		// already counts those chunks as covered, so without this they read as a
+		// 'layer fallback' they have no layer for.
+		if (SCENE_ONLY_COLORS.has(biomeResult.colorInt)) return 'engine: no terrain (scene-only)';
 		if (this.unpaintedCovered && idx < this.unpaintedCovered.length && !this.unpaintedCovered[idx]) {
 			return 'unpainted (checkerboard)';
 		}
@@ -3345,6 +3351,12 @@ export const app = {
 				// background refill below, which is what a stand-in has to do.
 				const sceneArt = [];
 				const artOn = document.getElementById('custom-art').checked && this.surfaceOverlayScenes;
+				// A stand-in tile is 16x16 blown up over the room; once the room's own
+				// pixels resolve it is the coarser picture, so it stops above this zoom
+				// and the scene draws itself (js/pixel_scene_art.js). Only the stamped
+				// copies -- the orb rooms' vertical-PW repeats have no scene at all, and
+				// keep their tile below.
+				const sceneArtOn = artOn && this.cam.z < SCENE_ART_MAX_ZOOM;
 				if (this.pixelScenesByPW && this.pixelScenesByPW[`${pwX},${pwY}`]) {
 					for (let scene of this.pixelScenesByPW[`${pwX},${pwY}`]) {
 						//if (!scene || !scene.imgElement) continue;
@@ -3382,7 +3394,7 @@ export const app = {
 						// Always the full-resolution rectangle: only the source changes with the level
 						this.ctx.drawImage(pixelSceneCanvas, drawX, drawY, sceneData.width, sceneData.height);
 
-						if (artOn) {
+						if (sceneArtOn) {
 							const tile = sceneArtTile(scene.key, { app: this, pwX, pwY });
 							const bitmap = tile && this.surfaceOverlayScenes[tile];
 							if (bitmap) sceneArt.push([bitmap, drawX, drawY, sceneData.width, sceneData.height]);
@@ -3415,6 +3427,10 @@ export const app = {
 				// vertical-PW repeat (addStaticPixelScenes only stamps chunk-based
 				// scenes in vertical PW 0, so the copies below the first have no
 				// scene to hang off), and the marker drawn when art is off.
+				//
+				// Those copies keep the tile at every zoom, unlike the pass above:
+				// nothing else draws them, so a zoom gate would leave the vertical
+				// worlds' orb towers empty rather than coarse.
 				this.biomeData.orbs.forEach(o => {
 					if (o.y < 14) return; // Skip the sky altar and pyramid top orbs
 
