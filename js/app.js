@@ -3432,9 +3432,16 @@ export const app = {
 				});
 			}
 
-			// Cauldron room should be on top of the biome data. Hand-drawn art, so
-			// it honors the same "Display Custom Art" toggle as the orb rooms above.
-			if (document.getElementById('custom-art').checked && this.cauldronState !== null && this.gameMode !== 'nightmare' && this.surfaceOverlayScenes && this.surfaceOverlayScenes["cauldron_room"] && this.surfaceOverlayScenes["cauldron_room_broken"]) {
+			// Cauldron room should be on top of the biome data. This is hand-drawn
+			// art -- a 16x16 image blown up to the whole 512 chunk -- and it is
+			// painted straight over the real general/cauldron pixel scene, which
+			// renders from the game's own material PNG underneath it. So it needs
+			// BOTH art gates: "Display Custom Art" (does the app fetch the overlay
+			// art at all) and the Custom Art render layer (is hand-drawn art meant
+			// to cover generated terrain in this frame). It used to honor only the
+			// first, which is on by default, so turning the layer off left the
+			// blocky cauldron sitting on top of the scene it hides.
+			if (L.customArt && document.getElementById('custom-art').checked && this.cauldronState !== null && this.gameMode !== 'nightmare' && this.surfaceOverlayScenes && this.surfaceOverlayScenes["cauldron_room"] && this.surfaceOverlayScenes["cauldron_room_broken"]) {
 				// With the states being null and void it's hard to tell which is 0 and which is 1.
 				if (this.cauldronState === 0 || (this.cauldronState === 2 && getCauldronVariation())) {
 					this.ctx.drawImage(this.surfaceOverlayScenes["cauldron_room_broken"], getWorldCenter(this.isNGP, this.gameMode) * 512 - this.pw * getWorldSize(this.isNGP, this.gameMode) * 512 + 7*512, 14*512 + 10 * 512 - this.pwVertical * 24576, 512, 512);
