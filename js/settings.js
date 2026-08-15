@@ -13,6 +13,11 @@ export const RENDER_LAYERS = [
 	{ key: 'debugBoxes', id: 'debug-layer-debug-boxes', label: 'Debug Boxes / Paths', defaultOn: true },
 	{ key: 'secrets', id: 'debug-layer-secrets', label: 'Secrets', defaultOn: true },
 	{ key: 'misc', id: 'debug-layer-misc', label: 'Misc', defaultOn: true },
+	// The PoI circles already had their own timing bucket and their own 'Hide PoIs'
+	// checkbox; what they lacked was a place in this list, which is the one thing a
+	// scripted capture switches. A 100px opaque marker over the world is not world
+	// content, and test/gl_regression.mjs was comparing one against the game's cells.
+	{ key: 'pois', id: 'debug-layer-pois', label: 'Points of Interest', defaultOn: true },
 ];
 
 export function defaultRenderLayers() {

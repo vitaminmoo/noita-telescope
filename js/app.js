@@ -3701,8 +3701,10 @@ export const app = {
 		// Layer 9
 		// PoIs
 
-		// Render PoIs
-		if (!document.getElementById('debug-hide-pois').checked) {
+		// Render PoIs. Two gates for one thing: the user-facing "Hide PoIs" option,
+		// and the layer switch every other pass here already has (settings.js
+		// RENDER_LAYERS), which is what a scripted capture turns off.
+		if (L.pois && !document.getElementById('debug-hide-pois').checked) {
 			for (let worldKey of this.worldsInView) {
 				// Skip rendering PoIs when too zoomed out (helps with lag)
 				// Not really necessary with the speedups
