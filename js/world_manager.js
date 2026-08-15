@@ -73,6 +73,19 @@ export function buildPixelSceneMetadata(sceneData = PIXEL_SCENE_DATA) {
 			width: scene.width,
 			height: scene.height,
 			isCosmetic: scene.isCosmetic,
+			// Which recolor classes the scene contains (classifyPixelSceneColors).
+			// underlyingBiomeSuffix() reads both to decide whether a scene needs an
+			// `@<chunk biome>` variant, and a worker that cannot see them answers "no
+			// suffix" for every scene it generates. That is how a pseudo-biome scene
+			// (general/, temple/, spliced/) came out of the worker as plain
+			// `biome=spliced`: its density-class pixels have no color in either table,
+			// so sceneBiomePaint fell back to magenta. The main thread generates the
+			// current world and the workers generate all the others, so the same scene
+			// resolved two ways, and the parallel-world copies -- which the pixel-scene
+			// layer draws at the same world position, and which only come into view
+			// when zoomed far out -- painted magenta over the correct main-world one.
+			hasAir: scene.hasAir,
+			hasBiomeFill: scene.hasBiomeFill,
 			// Same shape as the main thread cache, minus the pixels: no recolored variant
 			// ever exists on these workers.
 			variants: {}
