@@ -33,7 +33,7 @@ const flag = (n, d) => { const i = argv.indexOf(n); return i >= 0 ? argv[i + 1] 
 const GAME = flag('--game', process.env.NOITA_DATA ||
     '/home/vitaminmoo/reverse/noita/noita_Jan_25_2025_15:55:41/data/data.wak.unpacked');
 const MATLIST = flag('--matlist',
-    process.env.MATLIST || '/tmp/claude-1000/-home-vitaminmoo-reverse-noita/1709ead7-4791-4244-90ea-e002fa371592/scratchpad/carve_truth/matlist.json');
+    process.env.MATLIST || path.join(REPO, 'data', 'matlist.json'));
 
 process.env.NOITA_DATA = GAME;
 const { BIOME_BANDS } = await import(url.pathToFileURL(path.join(RR, 'biome_bands.js')));
@@ -71,6 +71,7 @@ const matData = JSON.parse(fs.readFileSync(path.join(REPO, 'data', 'material_dat
 const colorByName = new Map();
 for (const m of matData) if (m.color) colorByName.set(m.name, m.color);
 const flat = new Array(maxId + 1).fill(0);
+const flatAlpha = new Array(maxId + 1).fill(255);
 for (const [name, id] of idByName) {
     const hex = colorByName.get(name);
     const v = hex ? parseInt(hex, 16) : (0xff000000 | (wangByName.get(name) ?? 0));
@@ -78,6 +79,10 @@ for (const [name, id] of idByName) {
     // proven by BAKEDUMP). The engine's ABGR is only its in-MEMORY byte layout
     // of the same value; swapping here double-swaps and paints water #596237.
     flat[id] = v & 0xffffff;
+    // The alpha byte is the cell's compositing alpha over the background layer
+    // (shaders/sprite_cellgrid.frag draws the cell grid with straight src-over
+    // alpha): 0xA0 water, 0x38-0x7f gases, 0xFF solids.
+    flatAlpha[id] = (v >>> 24) & 0xff;
 }
 
 // ---- wang sampler params by id ---------------------------------------------
@@ -180,6 +185,7 @@ export const MATERIAL_NAMES_BY_ID = ${JSON.stringify(namesById)};
 export const WANG_COLOR_TO_ID = ${JSON.stringify([...colorToId.entries()])};
 export const WANG_PARAMS_BY_ID = ${JSON.stringify(params)};
 export const MATERIAL_FLAT_RGB_BY_ID = ${JSON.stringify(flat)};
+export const MATERIAL_FLAT_ALPHA_BY_ID = ${JSON.stringify(flatAlpha)};
 export const SPAWN_COLORS_BY_BIOME = ${JSON.stringify(spawnByBiome)};
 export const BIOME_ENGINE = ${JSON.stringify(biomes)};
 export const PERM_CLASSIC = ${JSON.stringify(permClassic)};

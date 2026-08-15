@@ -121,20 +121,28 @@ bool exceptionAt(ivec2 p) { return (chunkAt(p).a & ${CHUNK_FLAG_EDGE_NOISE_EXCEP
 
 // TILE_FOREGROUND_COLORS for a chunk: the gray/white class resolves to it, and
 // so does a fill biome's constant material (chunk_textures.js FILL_LAYER_COLORS).
+// Premultiplied: fg.a carries the fill material's XML compositing alpha
+// (water 0xA0 in the lake...), 255 for the gray/white class. The canvas blit
+// then src-over-composites the cell over the background layer exactly like
+// the game's cell grid over its background sprites.
 vec4 chunkForeground(ivec2 p) {
     uvec4 fg = texelFetch(u_fgTex, ivec2(pmod(p.x, u_mapWidth), clamp(p.y, 0, u_maxRow)), 0);
-    return vec4(vec3(fg.rgb) / 255.0, 1.0);
+    float a = float(fg.a) / 255.0;
+    return vec4(vec3(fg.rgb) / 255.0 * a, a);
 }
 
 // Engine cell color: sample the material texture at absolute world coords,
 // negative-safe modulo (CellFactory_GetCellColor). a==0 texels create no
-// cell in the engine, so they paint nothing.
+// cell in the engine, so they paint nothing; partial texel alpha IS the baked
+// cell's compositing alpha (the baked color is the texel, alpha included).
+// Output premultiplied for the canvas blit.
 bool materialTexel(int entry, ivec2 w, out vec4 color) {
     uvec4 m = texelFetch(u_matMetaTex, ivec2(entry - 1, 0), 0); // x,y,w,h
     ivec2 t = ivec2(pmod(w.x, int(m.z)), pmod(w.y, int(m.w)));
     uvec4 c = texelFetch(u_matAtlasTex, ivec2(int(m.x) + t.x, int(m.y) + t.y), 0);
     if (c.a == 0u) { color = vec4(0.0); return false; }
-    color = vec4(vec3(c.rgb) / 255.0, 1.0);
+    float a = float(c.a) / 255.0;
+    color = vec4(vec3(c.rgb) / 255.0 * a, a);
     return true;
 }
 
@@ -797,10 +805,16 @@ ivec2 engResolveCell(ivec2 w) {
 // display color. The XML color text is plain aRGB (water A0376259 -> #376259);
 // ABGR is only the engine's in-memory byte order, already normalized in
 // engine_data.js — no swap here.
+// mc.x packs (alpha << 8) | atlasEntry (buildMatColorTable). An untextured
+// material's alpha is its XML color's alpha byte -- the straight src-over
+// alpha the game's cell grid composites with (sprite_cellgrid.frag) -- so
+// water paints premultiplied 0xA0-translucent over the background layer.
 void engMaterialColor(int mat, ivec2 w) {
     uvec4 mc = texelFetch(u_matMetaTex, ivec2(mat, 1), 0);
-    if (mc.x > 0u) { materialTexel(int(mc.x), w, outColor); return; }
-    outColor = vec4(vec3(mc.yzw) / 255.0, 1.0);
+    uint entry = mc.x & 0xffu;
+    if (entry > 0u) { materialTexel(int(entry), w, outColor); return; }
+    float a = float(mc.x >> 8) / 255.0;
+    outColor = vec4(vec3(mc.yzw) / 255.0 * a, a);
 }
 
 void main() {

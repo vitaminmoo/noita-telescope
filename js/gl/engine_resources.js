@@ -17,7 +17,7 @@
 //   matColor  row 1 of u_matMetaTex  atlasEntry, r, g, b (engine ABGR display
 //                                    color) by material id (buildMatColorTable)
 import {
-    BIOME_ENGINE, MATERIAL_FLAT_RGB_BY_ID, MATERIAL_NAMES_BY_ID, WANG_PARAMS_BY_ID,
+    BIOME_ENGINE, MATERIAL_FLAT_ALPHA_BY_ID, MATERIAL_FLAT_RGB_BY_ID, MATERIAL_NAMES_BY_ID, WANG_PARAMS_BY_ID,
 } from '../engine_resolve/engine_data.js';
 import { buildEngineLattice } from '../engine_resolve/lattice_builder.js';
 import { BIOME_MAP_HEIGHT } from './indirection.js';
@@ -149,7 +149,11 @@ export function buildMatColorTable(matAtlas) {
         const name = MATERIAL_NAMES_BY_ID[id];
         const entry = (name && matAtlas) ? (matAtlas.entryByMaterial.get(name) ?? 0) : 0;
         const rgb = MATERIAL_FLAT_RGB_BY_ID[id] | 0;
-        t[id * 4] = entry;
+        // x packs the material's XML alpha (the cell's src-over compositing
+        // alpha, water 0xA0...) above the 8-bit atlas entry; the shader
+        // unpacks with & 0xff / >> 8. Textured materials take the texel's own
+        // alpha instead (the baked cell color IS the texel, alpha included).
+        t[id * 4] = entry | ((MATERIAL_FLAT_ALPHA_BY_ID[id] ?? 255) << 8);
         t[id * 4 + 1] = (rgb >> 16) & 0xff;
         t[id * 4 + 2] = (rgb >> 8) & 0xff;
         t[id * 4 + 3] = rgb & 0xff;
