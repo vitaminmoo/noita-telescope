@@ -95,6 +95,10 @@ async function generateEdgeDecalTileWorker(msg) {
 			// The scenes overlapping this tile, in paint order: each one runs the
 			// engine's scene-time decal pass on top of the terrain passes.
 			scenes: sceneGrids,
+			// The biome map gates the seam band per chunk: a biome whose
+			// <Topology> sets skip_edge_textures dresses its interior only.
+			biomeData: workerBiomeData,
+			mapWidth,
 			stats,
 		});
 		var decalDebug = { scenesSent: (scenes || []).length, gridsBuilt: sceneGrids.length, ...stats };

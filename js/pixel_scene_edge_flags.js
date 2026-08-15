@@ -4,44 +4,51 @@
 // its own (PixelScene_TryPaintEntry @0x00880fb0). Keys are telescope's
 // "dir/name", the same space as VISUAL_OVERLAY_SCENES.
 export const SKIP_EDGE_TEXTURE_SCENES = new Set([
-	"general/boss_victoryroom",
 	"general/bunker",
 	"general/bunker2",
 	"general/clean_entrance",
-	"general/dragoncave",
 	"general/fishing_hut",
 	"general/huussi",
-	"general/lavalake_pit",
-	"general/lavalake_pit_cracked",
-	"general/lavalake_racing",
-	"general/robot_egg",
-	"mountain/floating_island",
-	"mountain/hall",
-	"mountain/hall_b",
-	"mountain/hall_bottom_2",
-	"mountain/hall_br",
-	"mountain/hall_instructions",
-	"mountain/hall_r",
-	"mountain/inside_bottom_left",
-	"mountain/inside_top_left",
-	"mountain/inside_top_right",
-	"mountain/left",
-	"mountain/left_2",
-	"mountain/left_3",
-	"mountain/left_bottom",
-	"mountain/left_entrance",
-	"mountain/left_entrance_below",
-	"mountain/left_entrance_bottom",
-	"mountain/left_stub",
-	"mountain/left_stub_edge",
-	"mountain/right",
-	"mountain/right_2",
-	"mountain/right_bottom",
-	"mountain/right_entrance",
-	"mountain/right_entrance_2",
-	"mountain/right_entrance_bottom",
-	"mountain/top",
 	"overworld/essence_altar",
 	"overworld/essence_altar_desert",
 	"overworld/snowy_ruins_eye_pillar"
+]);
+
+// Biome-map colors (0xRRGGBB) whose biome sets <Topology skip_edge_textures="1">.
+// That flag lands in BiomeChunk+0xc7 and gates ONLY the seam-band stamp pass --
+// the deferred pass over the cells within 8px of a chunk border. The chunk's
+// value is decided by one wobble-resolved biome lookup at the chunk centre, so
+// it is a per-chunk decision, not a per-cell one, and the interior dressing
+// pass ignores it entirely.
+export const SKIP_SEAM_EDGE_BIOMES = new Set([
+	0x008080, // mountain_left
+	0x018080, // mountain_left_2
+	0x028080, // mountain_left_3
+	0x085b77, // boss_limbs_arena
+	0x204060, // mountain_hall
+	0x208080, // mountain_left_entrance
+	0x214060, // mountain_hall_2
+	0x224060, // mountain_hall_trailer / mountain_hall_3
+	0x234060, // mountain_hall_4
+	0x364d24, // dragoncave
+	0x39401a, // niilo_testroom
+	0x39401b, // niilo_testroom_b
+	0x39401c, // niilo_testroom_c
+	0x39401d, // niilo_testroom_d
+	0x3d5a3d, // lavalake
+	0x3d5a4f, // lavalake_pit
+	0x408080, // mountain_right
+	0x4118d6, // lavalake_racing
+	0x418080, // mountain_right_entrance
+	0x428080, // mountain_right_entrance_2
+	0x438080, // mountain_right_2
+	0x50eed7, // boss_victoryroom
+	0x608080, // mountain_left_stub
+	0x7be311, // snowcave_tunnel
+	0x9e4302, // robot_egg
+	0xc08080, // mountain_top
+	0xc08082, // mountain_floating_island
+	0xff6a02, // lava
+	0xff8080, // mountain_center
+	0xffa717, // lava_90percent
 ]);

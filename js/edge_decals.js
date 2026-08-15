@@ -40,7 +40,9 @@ import {
     EDGE_ATLAS_HEIGHT, EDGE_ATLAS_WIDTH, EDGE_ENTRIES_BY_MATERIAL, EDGE_IMAGES,
     MATERIAL_TYPE_BY_NAME,
 } from './engine_resolve/edge_data.js';
-import { MATERIAL_NAMES_BY_ID } from './engine_resolve/engine_data.js';
+import { BIOME_ENGINE, MATERIAL_NAMES_BY_ID } from './engine_resolve/engine_data.js';
+import { resolveCellFull } from './engine_resolve/chunk_wobble.js';
+import { SKIP_SEAM_EDGE_BIOMES } from './pixel_scene_edge_flags.js';
 
 export const EDGE_TYPE_COLOR_EDGE_PIXELS = 0;
 export const EDGE_TYPE_EVERYWHERE = 1;
@@ -66,6 +68,49 @@ const ENTRIES_BY_ID = MATERIAL_NAMES_BY_ID.map(
     name => (name && EDGE_ENTRIES_BY_MATERIAL[name]) || null);
 const TYPE_BY_ID = Int8Array.from(MATERIAL_NAMES_BY_ID.map(
     name => (name && MATERIAL_TYPE_BY_NAME[name]) ?? 0));
+
+// ---------------------------------------------------------------------------
+// the seam-band gate: <Topology skip_edge_textures>, per chunk
+// ---------------------------------------------------------------------------
+// The biome flag (BiomeChunk+0xc7) turns off the SEAM pass and nothing else —
+// not the generation-time interior pass, and not any pixel scene. The engine
+// decides it once per chunk, from the biome resolved at the chunk paint rect's
+// centre (ChunkGrid_ResolveChunkAtPosition, i.e. the same 42px-wobbled lookup
+// the material field runs), so a chunk is gated as a whole even where the
+// biome boundary cuts through it.
+const NOISE_EDGES_BY_COLOR = new Map(
+    BIOME_ENGINE.map(b => [b.color & 0xffffff, b.noiseBiomeEdges !== false]));
+const seamHasEdgeNoise = (color) => NOISE_EDGES_BY_COLOR.get(color) !== false;
+
+/**
+ * Builds `(chunkOriginX, chunkOriginY) => boolean`, "is this chunk's seam band
+ * suppressed", memoised per chunk. Returns null when no biome map was supplied,
+ * which leaves the seam pass ungated (the pre-gate behaviour).
+ *
+ * @param {{pixels: ArrayLike<number>}} biomeData  the biome map, as
+ *        js/engine_resolve/material_field.js reads it
+ * @param {number} mapWidth  biome map width in chunks
+ */
+function makeSeamGate(biomeData, mapWidth) {
+    if (!biomeData || !biomeData.pixels || !mapWidth) return null;
+    const bmap = {
+        w: mapWidth,
+        colorAt: (cx, cy) => (biomeData.pixels[cy * mapWidth + cx] ?? 0) & 0xffffff,
+    };
+    const cache = new Map();
+    const cell = {};
+    return (chunkOriginX, chunkOriginY) => {
+        const key = `${chunkOriginX},${chunkOriginY}`;
+        let skip = cache.get(key);
+        if (skip === undefined) {
+            resolveCellFull(bmap, chunkOriginX + CHUNK / 2, chunkOriginY + CHUNK / 2,
+                seamHasEdgeNoise, cell);
+            skip = SKIP_SEAM_EDGE_BIOMES.has(cell.color);
+            cache.set(key, skip);
+        }
+        return skip;
+    };
+}
 
 // ---------------------------------------------------------------------------
 // the sprite atlas (data/edge_atlas.bin, raw RGBA rows)
@@ -190,11 +235,14 @@ function cardinalAngle(m, count) {
  * @param {number} originX  world x of column 0
  * @param {number} originY  world y of row 0
  * @param {number} worldSeed
- * @param {{chunkShiftX?: number, chunkShiftY?: number, scenes?: Array<object>}} [opts]
+ * @param {{chunkShiftX?: number, chunkShiftY?: number, scenes?: Array<object>,
+ *          biomeData?: object, mapWidth?: number}} [opts]
  *        chunkShiftX/Y: world coordinate of a chunk boundary, mod 512 (the biome
  *        grid's x_shift / y_shift). scenes: pixel-scene material grids
  *        (pixelSceneMaterialGrid) overlapping the rect, in paint order — each
  *        runs the engine's scene-time decal pass after the terrain passes.
+ *        biomeData + mapWidth: the biome map, which gates the seam pass per
+ *        chunk (SKIP_SEAM_EDGE_BIOMES); omit them to leave the seam ungated.
  * @returns {Uint8ClampedArray} RGBA over the padded rect; composite it over the
  *          terrain with plain source-over, after cropping the halo off.
  */
@@ -210,7 +258,9 @@ export function stampEdgeDecals(mat, width, height, originX, originY, worldSeed,
 
     // The generation pass skips the chunk's outer 8px and clips every stamp to
     // its own chunk; the seam pass dresses that band later, once the neighbour
-    // chunks exist, and can therefore stamp across the boundary.
+    // chunks exist, and can therefore stamp across the boundary. Only the seam
+    // pass answers to the biome's <Topology skip_edge_textures>.
+    const seamGate = makeSeamGate(opts.biomeData, opts.mapWidth);
     for (let pass = 0; pass < 2; pass++) {
         for (let y = 1; y < height - 1; y++) {
             const localY = pmod(originY + y + shiftY, CHUNK);
@@ -219,6 +269,10 @@ export function stampEdgeDecals(mat, width, height, originX, originY, worldSeed,
                 const localX = pmod(originX + x + shiftX, CHUNK);
                 const seam = seamY || localX < SEAM || localX >= CHUNK - SEAM;
                 if (seam !== (pass === 1)) continue;
+                // The gate belongs to the chunk the cell lives in, whichever
+                // side of the border the stamp then reaches.
+                if (pass === 1 && seamGate &&
+                    seamGate(originX + x - localX, originY + y - localY)) continue;
 
                 const i = y * width + x;
                 const id = mat[i];
