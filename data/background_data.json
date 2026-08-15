@@ -1,0 +1,1177 @@
+{
+ "generated": "tools/gen_backgrounds.py",
+ "source": "data.wak.unpacked",
+ "note": "engine model: docs/worldgen/background_rendering.md (RE repo). sceneBackgrounds keys = scene material basename; the background blits 1:1 at the scene position, z=50. globalImages are the <BackgroundImages> sprites, z=30. Biome backdrops tile in absolute world coords.",
+ "images": {
+  "data/weather_gfx/background_cave_01.png": {
+   "size": [
+    256,
+    256
+   ]
+  },
+  "data/weather_gfx/background_cave_02.png": {
+   "size": [
+    256,
+    256
+   ]
+  },
+  "data/weather_gfx/background_cave_04.png": {
+   "size": [
+    512,
+    256
+   ]
+  },
+  "data/weather_gfx/background_cave_04_alt.png": {
+   "size": [
+    512,
+    256
+   ]
+  },
+  "data/weather_gfx/background_cave_04_alt3.png": {
+   "size": [
+    512,
+    256
+   ]
+  },
+  "data/weather_gfx/background_cave_07.png": {
+   "size": [
+    512,
+    256
+   ]
+  },
+  "data/weather_gfx/background_cave_09.png": {
+   "size": [
+    512,
+    256
+   ]
+  },
+  "data/weather_gfx/background_coalmine.png": {
+   "size": [
+    512,
+    256
+   ]
+  },
+  "data/weather_gfx/background_crypt.png": {
+   "size": [
+    512,
+    256
+   ]
+  },
+  "data/weather_gfx/background_excavationsite.png": {
+   "size": [
+    512,
+    256
+   ]
+  },
+  "data/weather_gfx/background_fungicave_01.png": {
+   "size": [
+    512,
+    256
+   ]
+  },
+  "data/weather_gfx/background_fungiforest_01.png": {
+   "size": [
+    512,
+    256
+   ]
+  },
+  "data/weather_gfx/background_pyramid.png": {
+   "size": [
+    512,
+    256
+   ]
+  },
+  "data/weather_gfx/background_rainforest.png": {
+   "size": [
+    512,
+    256
+   ]
+  },
+  "data/weather_gfx/background_rainforest_dark.png": {
+   "size": [
+    512,
+    256
+   ]
+  },
+  "data/weather_gfx/background_robobase.png": {
+   "size": [
+    512,
+    512
+   ]
+  },
+  "data/weather_gfx/background_snowcastle.png": {
+   "size": [
+    512,
+    256
+   ]
+  },
+  "data/weather_gfx/background_snowcave.png": {
+   "size": [
+    512,
+    512
+   ]
+  },
+  "data/weather_gfx/background_the_end.png": {
+   "size": [
+    256,
+    256
+   ]
+  },
+  "data/weather_gfx/background_vault.png": {
+   "size": [
+    512,
+    512
+   ]
+  },
+  "data/weather_gfx/background_vault_frozen.png": {
+   "size": [
+    512,
+    512
+   ]
+  },
+  "data/weather_gfx/background_wandcave.png": {
+   "size": [
+    96,
+    96
+   ]
+  },
+  "data/weather_gfx/background_wizardcave.png": {
+   "size": [
+    512,
+    256
+   ]
+  },
+  "data/weather_gfx/edges/background_snowcastle_left.png": {
+   "size": [
+    64,
+    640
+   ]
+  },
+  "data/weather_gfx/edges/background_snowcastle_right.png": {
+   "size": [
+    64,
+    640
+   ]
+  },
+  "data/weather_gfx/edges/background_snowcastle_top.png": {
+   "size": [
+    640,
+    64
+   ]
+  },
+  "data/weather_gfx/edges/background_snowcastle_bottom.png": {
+   "size": [
+    640,
+    64
+   ]
+  },
+  "data/weather_gfx/edges/background_wandcave_left.png": {
+   "size": [
+    64,
+    640
+   ]
+  },
+  "data/biome_impl/wandcave/right_edge.png": {
+   "size": [
+    32,
+    512
+   ]
+  },
+  "data/weather_gfx/edges/background_wandcave_top.png": {
+   "size": [
+    640,
+    64
+   ]
+  },
+  "data/weather_gfx/edges/background_wandcave_bottom.png": {
+   "size": [
+    640,
+    64
+   ]
+  },
+  "data/weather_gfx/edges/background_vault_left.png": {
+   "size": [
+    64,
+    640
+   ]
+  },
+  "data/weather_gfx/edges/background_vault_right.png": {
+   "size": [
+    64,
+    640
+   ]
+  },
+  "data/weather_gfx/edges/background_vault_top.png": {
+   "size": [
+    640,
+    64
+   ]
+  },
+  "data/weather_gfx/edges/background_vault_bottom.png": {
+   "size": [
+    640,
+    64
+   ]
+  },
+  "data/weather_gfx/edges/background_vault_frozen_left.png": {
+   "size": [
+    64,
+    640
+   ]
+  },
+  "data/weather_gfx/edges/background_vault_frozen_right.png": {
+   "size": [
+    64,
+    640
+   ]
+  },
+  "data/weather_gfx/edges/background_vault_frozen_top.png": {
+   "size": [
+    640,
+    64
+   ]
+  },
+  "data/weather_gfx/edges/background_vault_frozen_bottom.png": {
+   "size": [
+    640,
+    64
+   ]
+  },
+  "data/weather_gfx/edges/background_crypt_left.png": {
+   "size": [
+    64,
+    640
+   ]
+  },
+  "data/weather_gfx/edges/background_crypt_right.png": {
+   "size": [
+    64,
+    640
+   ]
+  },
+  "data/weather_gfx/edges/background_crypt_top.png": {
+   "size": [
+    640,
+    64
+   ]
+  },
+  "data/weather_gfx/edges/background_crypt_bottom.png": {
+   "size": [
+    640,
+    64
+   ]
+  },
+  "data/weather_gfx/edges/background_excavationsite_left.png": {
+   "size": [
+    64,
+    640
+   ]
+  },
+  "data/weather_gfx/edges/background_excavationsite_right.png": {
+   "size": [
+    64,
+    640
+   ]
+  },
+  "data/weather_gfx/edges/background_excavationsite_top.png": {
+   "size": [
+    640,
+    64
+   ]
+  },
+  "data/weather_gfx/edges/background_excavationsite_bottom.png": {
+   "size": [
+    640,
+    64
+   ]
+  },
+  "data/weather_gfx/edges/background_cave_04_alt_left.png": {
+   "size": [
+    64,
+    640
+   ]
+  },
+  "data/weather_gfx/edges/background_cave_04_alt_right.png": {
+   "size": [
+    64,
+    640
+   ]
+  },
+  "data/weather_gfx/edges/background_cave_04_alt_top.png": {
+   "size": [
+    640,
+    64
+   ]
+  },
+  "data/weather_gfx/edges/background_cave_04_alt_bottom.png": {
+   "size": [
+    640,
+    64
+   ]
+  },
+  "data/weather_gfx/edges/background_pyramid_left.png": {
+   "size": [
+    64,
+    640
+   ]
+  },
+  "data/weather_gfx/edges/background_pyramid_right.png": {
+   "size": [
+    64,
+    640
+   ]
+  },
+  "data/weather_gfx/edges/background_pyramid_top.png": {
+   "size": [
+    640,
+    64
+   ]
+  },
+  "data/weather_gfx/edges/background_pyramid_bottom.png": {
+   "size": [
+    640,
+    64
+   ]
+  },
+  "data/weather_gfx/edges/background_snowcave_left.png": {
+   "size": [
+    64,
+    640
+   ]
+  },
+  "data/weather_gfx/edges/background_snowcave_right.png": {
+   "size": [
+    64,
+    640
+   ]
+  },
+  "data/weather_gfx/edges/background_snowcave_top.png": {
+   "size": [
+    640,
+    64
+   ]
+  },
+  "data/weather_gfx/edges/background_snowcave_bottom.png": {
+   "size": [
+    640,
+    64
+   ]
+  },
+  "data/weather_gfx/edges/background_cave_04_alt3_left.png": {
+   "size": [
+    64,
+    640
+   ]
+  },
+  "data/weather_gfx/edges/background_cave_04_alt3_right.png": {
+   "size": [
+    64,
+    640
+   ]
+  },
+  "data/weather_gfx/edges/background_cave_04_alt3_top.png": {
+   "size": [
+    640,
+    64
+   ]
+  },
+  "data/weather_gfx/edges/background_cave_04_alt3_bottom.png": {
+   "size": [
+    640,
+    64
+   ]
+  },
+  "data/weather_gfx/edges/background_wizardcave_left.png": {
+   "size": [
+    64,
+    640
+   ]
+  },
+  "data/weather_gfx/edges/background_wizardcave_right.png": {
+   "size": [
+    64,
+    640
+   ]
+  },
+  "data/weather_gfx/edges/background_wizardcave_top.png": {
+   "size": [
+    640,
+    64
+   ]
+  },
+  "data/weather_gfx/edges/background_wizardcave_bottom.png": {
+   "size": [
+    640,
+    64
+   ]
+  },
+  "data/weather_gfx/edges/background_rainforest_dark_left.png": {
+   "size": [
+    64,
+    640
+   ]
+  },
+  "data/weather_gfx/edges/background_rainforest_dark_right.png": {
+   "size": [
+    64,
+    640
+   ]
+  },
+  "data/weather_gfx/edges/background_rainforest_dark_top.png": {
+   "size": [
+    640,
+    64
+   ]
+  },
+  "data/weather_gfx/edges/background_rainforest_dark_bottom.png": {
+   "size": [
+    640,
+    64
+   ]
+  },
+  "data/weather_gfx/edges/background_the_end_left.png": {
+   "size": [
+    64,
+    640
+   ]
+  },
+  "data/weather_gfx/edges/background_the_end_right.png": {
+   "size": [
+    64,
+    640
+   ]
+  },
+  "data/weather_gfx/edges/background_the_end_top.png": {
+   "size": [
+    640,
+    64
+   ]
+  },
+  "data/weather_gfx/edges/background_the_end_bottom.png": {
+   "size": [
+    640,
+    64
+   ]
+  },
+  "data/weather_gfx/edges/background_cave_07_left.png": {
+   "size": [
+    64,
+    640
+   ]
+  },
+  "data/weather_gfx/edges/background_cave_07_right.png": {
+   "size": [
+    64,
+    640
+   ]
+  },
+  "data/weather_gfx/edges/background_cave_07_top.png": {
+   "size": [
+    640,
+    64
+   ]
+  },
+  "data/weather_gfx/edges/background_cave_07_bottom.png": {
+   "size": [
+    640,
+    64
+   ]
+  },
+  "data/weather_gfx/edges/background_rainforest_left.png": {
+   "size": [
+    64,
+    640
+   ]
+  },
+  "data/weather_gfx/edges/background_rainforest_right.png": {
+   "size": [
+    64,
+    640
+   ]
+  },
+  "data/weather_gfx/edges/background_rainforest_top.png": {
+   "size": [
+    640,
+    64
+   ]
+  },
+  "data/weather_gfx/edges/background_rainforest_bottom.png": {
+   "size": [
+    640,
+    64
+   ]
+  },
+  "data/weather_gfx/edges/background_robobase_left.png": {
+   "size": [
+    64,
+    640
+   ]
+  },
+  "data/weather_gfx/edges/background_robobase_right.png": {
+   "size": [
+    64,
+    640
+   ]
+  },
+  "data/weather_gfx/edges/background_robobase_top.png": {
+   "size": [
+    640,
+    64
+   ]
+  },
+  "data/weather_gfx/edges/background_robobase_bottom.png": {
+   "size": [
+    640,
+    64
+   ]
+  },
+  "data/weather_gfx/edges/background_cave_01_left.png": {
+   "size": [
+    64,
+    640
+   ]
+  },
+  "data/weather_gfx/edges/background_cave_01_right.png": {
+   "size": [
+    64,
+    640
+   ]
+  },
+  "data/weather_gfx/edges/background_cave_01_top.png": {
+   "size": [
+    640,
+    64
+   ]
+  },
+  "data/weather_gfx/edges/background_cave_01_bottom.png": {
+   "size": [
+    640,
+    64
+   ]
+  },
+  "data/weather_gfx/edges/background_fungiforest_01_left.png": {
+   "size": [
+    64,
+    640
+   ]
+  },
+  "data/weather_gfx/edges/background_fungiforest_01_right.png": {
+   "size": [
+    64,
+    640
+   ]
+  },
+  "data/weather_gfx/edges/background_fungiforest_01_top.png": {
+   "size": [
+    640,
+    64
+   ]
+  },
+  "data/weather_gfx/edges/background_fungiforest_01_bottom.png": {
+   "size": [
+    640,
+    64
+   ]
+  },
+  "data/weather_gfx/edges/background_coalmine_left.png": {
+   "size": [
+    64,
+    640
+   ]
+  },
+  "data/weather_gfx/edges/background_coalmine_right.png": {
+   "size": [
+    64,
+    640
+   ]
+  },
+  "data/weather_gfx/edges/background_coalmine_top.png": {
+   "size": [
+    640,
+    64
+   ]
+  },
+  "data/weather_gfx/edges/background_coalmine_bottom.png": {
+   "size": [
+    640,
+    64
+   ]
+  },
+  "data/weather_gfx/edges/background_cave_09_left.png": {
+   "size": [
+    64,
+    640
+   ]
+  },
+  "data/weather_gfx/edges/background_cave_09_right.png": {
+   "size": [
+    64,
+    640
+   ]
+  },
+  "data/weather_gfx/edges/background_cave_09_top.png": {
+   "size": [
+    640,
+    64
+   ]
+  },
+  "data/weather_gfx/edges/background_cave_09_bottom.png": {
+   "size": [
+    640,
+    64
+   ]
+  },
+  "data/weather_gfx/edges/background_fungicave_01_left.png": {
+   "size": [
+    64,
+    640
+   ]
+  },
+  "data/weather_gfx/edges/background_fungicave_01_right.png": {
+   "size": [
+    64,
+    640
+   ]
+  },
+  "data/weather_gfx/edges/background_fungicave_01_top.png": {
+   "size": [
+    640,
+    64
+   ]
+  },
+  "data/weather_gfx/edges/background_fungicave_01_bottom.png": {
+   "size": [
+    640,
+    64
+   ]
+  },
+  "data/weather_gfx/edges/background_cave_04_left.png": {
+   "size": [
+    64,
+    640
+   ]
+  },
+  "data/weather_gfx/edges/background_cave_04_right.png": {
+   "size": [
+    64,
+    640
+   ]
+  },
+  "data/weather_gfx/edges/background_cave_04_top.png": {
+   "size": [
+    640,
+    64
+   ]
+  },
+  "data/weather_gfx/edges/background_cave_04_bottom.png": {
+   "size": [
+    640,
+    64
+   ]
+  },
+  "data/backgrounds/biome_impl/temple/altar_background.png": {
+   "size": [
+    512,
+    282
+   ]
+  },
+  "data/backgrounds/biome_impl/temple/altar_left_background.png": {
+   "size": [
+    512,
+    282
+   ]
+  },
+  "data/backgrounds/biome_impl/temple/altar_right_background.png": {
+   "size": [
+    512,
+    282
+   ]
+  },
+  "data/backgrounds/biome_impl/temple/altar_snowcastle_capsule_background.png": {
+   "size": [
+    96,
+    147
+   ]
+  },
+  "data/backgrounds/biome_impl/boss_victoryroom_background.png": {
+   "size": [
+    512,
+    512
+   ]
+  },
+  "data/backgrounds/biome_impl/bunker_background.png": {
+   "size": [
+    306,
+    127
+   ]
+  },
+  "data/backgrounds/biome_impl/cavern_background.png": {
+   "size": [
+    512,
+    512
+   ]
+  },
+  "data/backgrounds/biome_impl/excavationsite/cube_chamber_background.png": {
+   "size": [
+    512,
+    512
+   ]
+  },
+  "data/backgrounds/biome_impl/dragoncave_background.png": {
+   "size": [
+    512,
+    512
+   ]
+  },
+  "data/backgrounds/biome_impl/pyramid/entrance_background.png": {
+   "size": [
+    512,
+    512
+   ]
+  },
+  "data/backgrounds/biome_impl/essenceroom_background_with_diamond.png": {
+   "size": [
+    512,
+    512
+   ]
+  },
+  "data/backgrounds/biome_impl/fishing_hut_background.png": {
+   "size": [
+    240,
+    160
+   ]
+  },
+  "data/backgrounds/biome_impl/snowcastle/forge_background.png": {
+   "size": [
+    128,
+    128
+   ]
+  },
+  "data/backgrounds/biome_impl/greed_treasure_background.png": {
+   "size": [
+    512,
+    512
+   ]
+  },
+  "data/backgrounds/biome_impl/mountain/hall_background_gamepad_updated.png": {
+   "size": [
+    512,
+    512
+   ]
+  },
+  "data/backgrounds/biome_impl/snowcastle/hourglass_chamber_background.png": {
+   "size": [
+    512,
+    512
+   ]
+  },
+  "data/backgrounds/biome_impl/lavalake_racing_background.png": {
+   "size": [
+    512,
+    512
+   ]
+  },
+  "data/backgrounds/biome_impl/mountain/left_background.png": {
+   "size": [
+    512,
+    512
+   ]
+  },
+  "data/backgrounds/biome_impl/mountain/left_entrance_background_gamepad.png": {
+   "size": [
+    512,
+    512
+   ]
+  },
+  "data/backgrounds/biome_impl/mountain/left_entrance_below_background.png": {
+   "size": [
+    512,
+    512
+   ]
+  },
+  "data/backgrounds/biome_impl/mountain/left_stub_background.png": {
+   "size": [
+    550,
+    512
+   ]
+  },
+  "data/backgrounds/biome_impl/trailer/mountain_hall_background.png": {
+   "size": [
+    512,
+    512
+   ]
+  },
+  "data/backgrounds/biome_impl/essenceroom_background.png": {
+   "size": [
+    512,
+    512
+   ]
+  },
+  "data/backgrounds/biome_impl/orbroom_background.png": {
+   "size": [
+    512,
+    512
+   ]
+  },
+  "data/backgrounds/biome_impl/snowcastle/paneling_03.png": {
+   "size": [
+    90,
+    90
+   ]
+  },
+  "data/backgrounds/biome_impl/pillars/pillar_part.png": {
+   "size": [
+    48,
+    48
+   ]
+  },
+  "data/backgrounds/biome_impl/mountain/right_background.png": {
+   "size": [
+    562,
+    513
+   ]
+  },
+  "data/backgrounds/biome_impl/mountain/right_entrance_background.png": {
+   "size": [
+    512,
+    512
+   ]
+  },
+  "data/backgrounds/biome_impl/mountain/right_stub_background.png": {
+   "size": [
+    550,
+    512
+   ]
+  },
+  "data/backgrounds/biome_impl/robot_egg_background.png": {
+   "size": [
+    512,
+    512
+   ]
+  },
+  "data/backgrounds/biome_impl/secret_lab_background.png": {
+   "size": [
+    512,
+    512
+   ]
+  },
+  "data/backgrounds/biome_impl/snowcastle/side_cavern_left_background.png": {
+   "size": [
+    512,
+    512
+   ]
+  },
+  "data/backgrounds/biome_impl/snowcastle/side_cavern_right_background.png": {
+   "size": [
+    512,
+    512
+   ]
+  },
+  "data/backgrounds/biome_impl/pyramid/top_background.png": {
+   "size": [
+    512,
+    512
+   ]
+  },
+  "data/backgrounds/biome_impl/temple/wall_top_background.png": {
+   "size": [
+    512,
+    30
+   ]
+  },
+  "data/backgrounds/biome_impl/wizardcave_entrance_background.png": {
+   "size": [
+    512,
+    512
+   ]
+  },
+  "data/backgrounds/biome_impl/hidden/boss_arena.png": {
+   "size": [
+    325,
+    105
+   ]
+  },
+  "data/backgrounds/biome_impl/hidden/boss_arena_under.png": {
+   "size": [
+    225,
+    56
+   ]
+  },
+  "data/backgrounds/biome_impl/hidden/boss_arena_under_right.png": {
+   "size": [
+    180,
+    84
+   ]
+  },
+  "data/backgrounds/biome_impl/hidden/completely_random.png": {
+   "size": [
+    200,
+    21
+   ]
+  },
+  "data/backgrounds/biome_impl/hidden/completely_random_2.png": {
+   "size": [
+    240,
+    42
+   ]
+  },
+  "data/backgrounds/biome_impl/hidden/fungal_caverns_1.png": {
+   "size": [
+    165,
+    21
+   ]
+  },
+  "data/backgrounds/biome_impl/hidden/holy_mountain_1.png": {
+   "size": [
+    195,
+    21
+   ]
+  },
+  "data/backgrounds/biome_impl/hidden/jungle_right.png": {
+   "size": [
+    245,
+    28
+   ]
+  },
+  "data/backgrounds/biome_impl/hidden/mountain_text.png": {
+   "size": [
+    165,
+    21
+   ]
+  },
+  "data/backgrounds/biome_impl/hidden/under_the_wand_cave.png": {
+   "size": [
+    245,
+    28
+   ]
+  },
+  "data/backgrounds/biome_impl/hidden/vault_inside.png": {
+   "size": [
+    245,
+    35
+   ]
+  },
+  "data/backgrounds/biome_impl/hidden/crypt_left.png": {
+   "size": [
+    325,
+    35
+   ]
+  },
+  "data/backgrounds/biome_impl/liquidcave/liquidcave_corner.png": {
+   "size": [
+    512,
+    544
+   ]
+  },
+  "data/backgrounds/biome_impl/liquidcave/liquidcave_top.png": {
+   "size": [
+    512,
+    64
+   ]
+  },
+  "data/backgrounds/biome_impl/liquidcave/liquidcave_corner2.png": {
+   "size": [
+    512,
+    512
+   ]
+  }
+ },
+ "sceneBackgrounds": {
+  "altar": "data/backgrounds/biome_impl/temple/altar_background.png",
+  "altar_empty": "data/backgrounds/biome_impl/temple/altar_background.png",
+  "altar_left": "data/backgrounds/biome_impl/temple/altar_left_background.png",
+  "altar_right": "data/backgrounds/biome_impl/temple/altar_right_background.png",
+  "altar_right_snowcastle": "data/backgrounds/biome_impl/temple/altar_right_background.png",
+  "altar_snowcastle_capsule": "data/backgrounds/biome_impl/temple/altar_snowcastle_capsule_background.png",
+  "boss_victoryroom": "data/backgrounds/biome_impl/boss_victoryroom_background.png",
+  "bunker": "data/backgrounds/biome_impl/bunker_background.png",
+  "bunker2": "data/backgrounds/biome_impl/bunker_background.png",
+  "cavern": "data/backgrounds/biome_impl/cavern_background.png",
+  "cube_chamber": "data/backgrounds/biome_impl/excavationsite/cube_chamber_background.png",
+  "dragoncave": "data/backgrounds/biome_impl/dragoncave_background.png",
+  "entrance": "data/backgrounds/biome_impl/pyramid/entrance_background.png",
+  "essenceroom": "data/backgrounds/biome_impl/essenceroom_background_with_diamond.png",
+  "essenceroom_submerged": "data/backgrounds/biome_impl/essenceroom_background_with_diamond.png",
+  "fishing_hut": "data/backgrounds/biome_impl/fishing_hut_background.png",
+  "forge": "data/backgrounds/biome_impl/snowcastle/forge_background.png",
+  "greed_treasure": "data/backgrounds/biome_impl/greed_treasure_background.png",
+  "hall": "data/backgrounds/biome_impl/mountain/hall_background_gamepad_updated.png",
+  "hourglass_chamber": "data/backgrounds/biome_impl/snowcastle/hourglass_chamber_background.png",
+  "lavalake_racing": "data/backgrounds/biome_impl/lavalake_racing_background.png",
+  "left": "data/backgrounds/biome_impl/mountain/left_background.png",
+  "left_entrance": "data/backgrounds/biome_impl/mountain/left_entrance_background_gamepad.png",
+  "left_entrance_below": "data/backgrounds/biome_impl/mountain/left_entrance_below_background.png",
+  "left_stub": "data/backgrounds/biome_impl/mountain/left_stub_background.png",
+  "mountain_hall": "data/backgrounds/biome_impl/trailer/mountain_hall_background.png",
+  "mystery_teleport": "data/backgrounds/biome_impl/essenceroom_background.png",
+  "orbroom": "data/backgrounds/biome_impl/orbroom_background.png",
+  "paneling_wall": "data/backgrounds/biome_impl/snowcastle/paneling_03.png",
+  "pillar_part_material": "data/backgrounds/biome_impl/pillars/pillar_part.png",
+  "right": "data/backgrounds/biome_impl/mountain/right_background.png",
+  "right_2": "data/backgrounds/biome_impl/mountain/right_background.png",
+  "right_entrance": "data/backgrounds/biome_impl/mountain/right_entrance_background.png",
+  "right_stub": "data/backgrounds/biome_impl/mountain/right_stub_background.png",
+  "robot_egg": "data/backgrounds/biome_impl/robot_egg_background.png",
+  "secret_lab": "data/backgrounds/biome_impl/secret_lab_background.png",
+  "side_cavern_left": "data/backgrounds/biome_impl/snowcastle/side_cavern_left_background.png",
+  "side_cavern_right": "data/backgrounds/biome_impl/snowcastle/side_cavern_right_background.png",
+  "top": "data/backgrounds/biome_impl/pyramid/top_background.png",
+  "wall_top": "data/backgrounds/biome_impl/temple/wall_top_background.png",
+  "wizardcave_entrance": "data/backgrounds/biome_impl/wizardcave_entrance_background.png"
+ },
+ "globalImages": [
+  {
+   "file": "data/backgrounds/biome_impl/hidden/boss_arena.png",
+   "x": 3425,
+   "y": 12650,
+   "size": [
+    325,
+    105
+   ]
+  },
+  {
+   "file": "data/backgrounds/biome_impl/hidden/boss_arena_under.png",
+   "x": 2976,
+   "y": 13692,
+   "size": [
+    225,
+    56
+   ]
+  },
+  {
+   "file": "data/backgrounds/biome_impl/hidden/boss_arena_under_right.png",
+   "x": 4238,
+   "y": 15055,
+   "size": [
+    180,
+    84
+   ]
+  },
+  {
+   "file": "data/backgrounds/biome_impl/hidden/completely_random.png",
+   "x": -5400,
+   "y": 21887,
+   "size": [
+    200,
+    21
+   ]
+  },
+  {
+   "file": "data/backgrounds/biome_impl/hidden/completely_random_2.png",
+   "x": 4256,
+   "y": 26954,
+   "size": [
+    240,
+    42
+   ]
+  },
+  {
+   "file": "data/backgrounds/biome_impl/hidden/fungal_caverns_1.png",
+   "x": 3419,
+   "y": 2652,
+   "size": [
+    165,
+    21
+   ]
+  },
+  {
+   "file": "data/backgrounds/biome_impl/hidden/holy_mountain_1.png",
+   "x": 1785,
+   "y": 1325,
+   "size": [
+    195,
+    21
+   ]
+  },
+  {
+   "file": "data/backgrounds/biome_impl/hidden/jungle_right.png",
+   "x": 2806,
+   "y": 6614,
+   "size": [
+    245,
+    28
+   ]
+  },
+  {
+   "file": "data/backgrounds/biome_impl/hidden/mountain_text.png",
+   "x": 700,
+   "y": -440,
+   "size": [
+    165,
+    21
+   ]
+  },
+  {
+   "file": "data/backgrounds/biome_impl/hidden/under_the_wand_cave.png",
+   "x": -4448,
+   "y": 4487,
+   "size": [
+    245,
+    28
+   ]
+  },
+  {
+   "file": "data/backgrounds/biome_impl/hidden/vault_inside.png",
+   "x": -2120,
+   "y": 8446,
+   "size": [
+    245,
+    35
+   ]
+  },
+  {
+   "file": "data/backgrounds/biome_impl/hidden/crypt_left.png",
+   "x": -4129,
+   "y": 10533,
+   "size": [
+    325,
+    35
+   ]
+  },
+  {
+   "file": "data/backgrounds/biome_impl/liquidcave/liquidcave_corner.png",
+   "x": -3072,
+   "y": -32,
+   "size": [
+    512,
+    544
+   ]
+  },
+  {
+   "file": "data/backgrounds/biome_impl/liquidcave/liquidcave_top.png",
+   "x": -3584,
+   "y": -64,
+   "size": [
+    512,
+    64
+   ]
+  },
+  {
+   "file": "data/backgrounds/biome_impl/liquidcave/liquidcave_top.png",
+   "x": -4096,
+   "y": -64,
+   "size": [
+    512,
+    64
+   ]
+  },
+  {
+   "file": "data/backgrounds/biome_impl/liquidcave/liquidcave_top.png",
+   "x": -4608,
+   "y": -64,
+   "size": [
+    512,
+    64
+   ]
+  },
+  {
+   "file": "data/backgrounds/biome_impl/liquidcave/liquidcave_corner2.png",
+   "x": -5120,
+   "y": -32,
+   "size": [
+    512,
+    512
+   ]
+  }
+ ]
+}

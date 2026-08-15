@@ -1,0 +1,190 @@
+#!/usr/bin/env python3
+"""Ship the game's background art + the scene->background mapping.
+
+The engine's background layer (docs/worldgen/background_rendering.md in the RE
+repo) has three sprite sources, all drawn behind the cell grid:
+
+  1. biome backdrop tiles: `background_image` repeat-tiled in ABSOLUTE world
+     coordinates, one sprite per 512px chunk, biome resolved at the chunk
+     center; hand-drawn 64px edge strips where neighbouring chunks' images
+     differ (winner = higher background_edge_priority, ties by string compare).
+  2. pixel-scene backgrounds: `background_filename` blitted 1:1 at the scene's
+     top-left when the scene paints (z = background_z_index, default 50).
+  3. global <BackgroundImages> sprites from biome/_pixel_scenes.xml (z = 30).
+
+data/biome_backgrounds.json (scripts/generate_biome_backgrounds.mjs) already
+carries the per-biome mapping for (1); this script ships the actual art it
+references plus everything (2) and (3) need:
+
+  data/weather_gfx/<name>.png            backdrop images, copied verbatim
+  data/weather_gfx/edges/<name>.png      full-color edge strips (the repo used
+                                         to keep only alpha-dedup masks)
+  data/backgrounds/**                    scene + global background PNGs
+  data/background_data.json              image sizes, scene-key -> background
+                                         path, global image list
+
+Scene backgrounds are keyed the way telescope keys scenes: the material PNG's
+basename without extension ("receptacle_oil", "altar"). Sources scanned:
+  * background_file="..." entries in data/scripts/biomes/**.lua scene tables
+  * LoadPixelScene( "mat.png", ..., "bg.png" ) literal calls anywhere in lua
+  * PixelScene background_filename= attributes in data/biome/_pixel_scenes*.xml
+
+Usage: python3 tools/gen_backgrounds.py [path-to-data.wak.unpacked]
+"""
+
+import json
+import os
+import re
+import shutil
+import struct
+import sys
+import zlib
+
+DEFAULT_SRC = os.path.expanduser(
+    '~/reverse/noita/noita_Jan_25_2025_15:55:41/data/data.wak.unpacked')
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def png_size(path):
+    with open(path, 'rb') as f:
+        head = f.read(33)
+    if head[:8] != b'\x89PNG\r\n\x1a\n' or head[12:16] != b'IHDR':
+        raise ValueError(f'not a PNG: {path}')
+    w, h = struct.unpack('>II', head[16:24])
+    return w, h
+
+
+def copy_art(src_root, rel, dest_rel=None):
+    """Copy one game PNG into the repo, returning (repo-relative path, (w, h))."""
+    src = os.path.join(src_root, rel.removeprefix('data/'))
+    dest_rel = dest_rel or rel
+    dest = os.path.join(REPO, dest_rel)
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    shutil.copyfile(src, dest)
+    return dest_rel, png_size(src)
+
+
+def main():
+    src = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_SRC
+    if not os.path.isdir(src):
+        sys.exit(f'game data not found: {src}')
+
+    bb = json.load(open(os.path.join(REPO, 'data/biome_backgrounds.json')))
+
+    images = {}          # repo-relative path -> {size}
+    def ship(game_path, dest_rel=None):
+        if not game_path:
+            return None
+        rel, size = copy_art(src, game_path, dest_rel)
+        images[rel] = {'size': list(size)}
+        return rel
+
+    # --- 1. biome backdrops + full-color edge strips -------------------------
+    for path in bb['images']:
+        ship(path)
+    for b in bb['biomes']:
+        for k in ('background_edge_left', 'background_edge_right',
+                  'background_edge_top', 'background_edge_bottom'):
+            if b.get(k):
+                ship(b[k])
+
+    # --- 2. scene backgrounds ------------------------------------------------
+    # scene key (material basename, no extension) -> game background path
+    scene_bg = {}
+
+    def add(mat_path, bg_path):
+        if not mat_path or not bg_path or not bg_path.startswith('data/'):
+            return
+        # dead references (endgame2_background) and lua string-concat fragments
+        # the regex can catch are dropped here rather than at ship time
+        if not os.path.isfile(os.path.join(src, bg_path.removeprefix('data/'))):
+            return
+        key = os.path.splitext(os.path.basename(mat_path))[0]
+        prev = scene_bg.get(key)
+        if prev and prev != bg_path:
+            print(f'  conflict for {key}: {prev} vs {bg_path} (keeping first)')
+            return
+        scene_bg[key] = bg_path
+
+    lua_root = os.path.join(src, 'scripts')
+    table_re = re.compile(
+        r'pixel_scene\s*=\s*"([^"]+)"[^{}]*?background_file\s*=\s*"([^"]*)"',
+        re.S)
+    call_re = re.compile(
+        r'LoadPixelScene\(\s*"([^"]+)"\s*,\s*"[^"]*"\s*,\s*[^,]+,\s*[^,]+,\s*"([^"]+)"')
+    for root, _dirs, files in os.walk(lua_root):
+        for fn in files:
+            if not fn.endswith('.lua'):
+                continue
+            text = open(os.path.join(root, fn), encoding='utf-8',
+                        errors='replace').read()
+            for mat, bg in table_re.findall(text):
+                add(mat, bg)
+            for mat, bg in call_re.findall(text):
+                add(mat, bg)
+
+    xml_scene_re = re.compile(
+        r'<PixelScene\b[^>]*?background_filename="([^"]*)"[^>]*?'
+        r'material_filename="([^"]*)"', re.S)
+    globals_re = re.compile(
+        r'<Image\s+filename="([^"]+)"\s+x="(-?\d+)"\s+y="(-?\d+)"')
+
+    global_images = []
+    biome_dir = os.path.join(src, 'biome')
+    for fn in os.listdir(biome_dir):
+        if not fn.startswith('_pixel_scenes'):
+            continue
+        text = open(os.path.join(biome_dir, fn), encoding='utf-8',
+                    errors='replace').read()
+        for bg, mat in xml_scene_re.findall(text):
+            add(mat, bg)
+        # <BackgroundImages> only; commented-out entries are stripped first
+        text_nc = re.sub(r'<!--.*?-->', '', text, flags=re.S)
+        m = re.search(r'<BackgroundImages>(.*?)</BackgroundImages>', text_nc,
+                      re.S)
+        if m and fn == '_pixel_scenes.xml':
+            for f, x, y in globals_re.findall(m.group(1)):
+                global_images.append({'file': f, 'x': int(x), 'y': int(y)})
+
+    # ship every referenced background PNG under data/backgrounds/
+    scene_bg_out = {}
+    for key, bg in sorted(scene_bg.items()):
+        try:
+            rel = ship(bg, 'data/backgrounds/' + bg.removeprefix('data/'))
+        except FileNotFoundError:
+            print(f'  missing art for {key}: {bg}')
+            continue
+        scene_bg_out[key] = rel
+    globals_out = []
+    for g in global_images:
+        try:
+            rel = ship(g['file'],
+                       'data/backgrounds/' + g['file'].removeprefix('data/'))
+        except FileNotFoundError:
+            print(f'  missing global art: {g["file"]}')
+            continue
+        globals_out.append({'file': rel, 'x': g['x'], 'y': g['y'],
+                            'size': images[rel]['size']})
+
+    out = {
+        'generated': 'tools/gen_backgrounds.py',
+        'source': os.path.basename(src.rstrip('/')),
+        'note': 'engine model: docs/worldgen/background_rendering.md '
+                '(RE repo). sceneBackgrounds keys = scene material basename; '
+                'the background blits 1:1 at the scene position, z=50. '
+                'globalImages are the <BackgroundImages> sprites, z=30. '
+                'Biome backdrops tile in absolute world coords.',
+        'images': images,
+        'sceneBackgrounds': scene_bg_out,
+        'globalImages': globals_out,
+    }
+    with open(os.path.join(REPO, 'data/background_data.json'), 'w') as f:
+        json.dump(out, f, indent=1)
+    total = sum(os.path.getsize(os.path.join(REPO, p)) for p in images)
+    print(f'{len(images)} PNGs shipped ({total / 1e6:.2f} MB), '
+          f'{len(scene_bg_out)} scene backgrounds, '
+          f'{len(globals_out)} global images')
+
+
+if __name__ == '__main__':
+    main()
