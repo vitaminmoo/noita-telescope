@@ -2912,7 +2912,13 @@ export const app = {
 		// Tile background, needs to overwrite custom art in some places in NG+ based on a mask
 		
 		// TODO: Might need special mask for vertical PWs but for now I'll just not draw it there
-		if (L.alphaMask) {
+		// The mask exists to cover custom art where the CPU tiles will paint air
+		// as opaque nothing. The engine GL terrain paints every chunk itself and
+		// deliberately leaves air transparent and liquids alpha-blended so the
+		// real background stack shows through — a flat biome-colored mask drawn
+		// between the backgrounds and the terrain would replace them.
+		if (L.alphaMask && !(appSettings.engineTerrain
+			&& appSettings.terrainRenderer === 'gl' && biomeOverlayMode !== 'none')) {
 			for (let worldKey of this.worldsInView) {
 				const { pwX, pwY, shiftX, shiftY } = worldOffsets[worldKey];
 				if (pwY === 0) {
