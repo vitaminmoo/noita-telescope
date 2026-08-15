@@ -3,7 +3,7 @@ import { BIOME_COLOR_TO_NAME, BIOME_COLORS_WITH_TILES } from './generator_config
 import { GetBiomeOffset, ComputeMagicValueFromDoubles } from './edge_noise.js';
 import { biomeEdgeNoiseFlag } from './wobble_flags.js';
 import { MATERIAL_COLOR_LOOKUP } from './potion_config.js';
-import { PIXEL_SCENE_DATA } from './pixel_scene_generation.js';
+import { PIXEL_SCENE_DATA, sceneDensityClassAt } from './pixel_scene_generation.js';
 import { appSettings } from './settings.js';
 
 export const CONTAINER_TYPES = [
@@ -400,14 +400,25 @@ export function getMaterialAtWorldCoordinates(tileLayers, pixelScenes, worldX, w
  *   coveringScene  first scene whose footprint covers the pixel, painted or not
  *   fillLayer  the constant-material fill layer covering the pixel, or null
  *   colorHex   the source image's 'rrggbb' at the pixel, or null
+ *   densityClass  { biomeName, via } when the answer came from a scene's
+ *                 white/gray "fill with the biome's own material" class
  *
  * `fillLayer` is informational ONLY: a fill layer carries no buffer to sample,
  * so it never sets `material`. That keeps getMaterialAtWorldCoordinates()'s
  * "null means no layer/scene content here" contract byte-for-byte unchanged --
  * callers answer fill biomes from the biome map (FILL_LAYER_MATERIALS) instead.
+ *
+ * A scene's density class is answered by the SAME band lookup the renderer runs
+ * to build the instance (pixel_scene_generation.js sceneDensityClassAt), so a
+ * solid density pixel names its resolved material instead of falling through to
+ * "nothing here" -- which is what it used to do, because the class' colour is a
+ * gray no material table knows. That blind spot is what made the orb rooms read
+ * as air while the renderer was painting their floors correctly. The band table
+ * answering AIR is a real answer and still leaves `material` null, but
+ * `densityClass` is set either way so a caller can tell the two apart.
  */
 export function getMaterialProvenanceAtWorldCoordinates(tileLayers, pixelScenes, worldX, worldY, pwIndex, pwIndexVertical, isNGP = false, gameMode='normal') {
-    const result = { material: null, source: null, layer: null, scene: null, coveringScene: null, fillLayer: null, colorHex: null };
+    const result = { material: null, source: null, layer: null, scene: null, coveringScene: null, fillLayer: null, colorHex: null, densityClass: null };
     // Adjust for PW
     const adjustedWorldX = getWorldCenter(isNGP, gameMode) * 512 + worldX - pwIndex * getWorldSize(isNGP, gameMode) * 512 + (isNGP || gameMode === 'nightmare' ? -8 * pwIndex : 0) - VISUAL_TILE_OFFSET_X;
     const adjustedWorldY = 14 * 512 + worldY - pwIndexVertical * 24570 - VISUAL_TILE_OFFSET_Y;
@@ -487,7 +498,30 @@ export function getMaterialProvenanceAtWorldCoordinates(tileLayers, pixelScenes,
             const hex = (r << 16) | (g << 8) | b;
             const hexStr = `${hex.toString(16).padStart(6, '0')}`;
             //console.log(`Pixel scene color at (${worldX}, ${worldY}) [local: (${localX}, ${localY})]: #${hexStr}`);
-            if (MATERIAL_COLOR_LOOKUP[hexStr]) {
+            // The density class first, exactly as the instance build classifies
+            // its pixels: gray/white (never black -- makeBlackTransparent already
+            // zeroed those) is "fill with the biome's own material", and it wins
+            // over the wang-colour lookup. No material colour in the table is
+            // gray, so the order costs nothing and keeps the two in step.
+            if (r === g && g === b && r > 0) {
+                const density = sceneDensityClassAt(scene.variantKey, worldX, worldY);
+                if (density) {
+                    result.densityClass = { biomeName: density.biomeName, via: density.via };
+                    // A band table accepting nothing at density 1.0 is a real AIR
+                    // answer, so leave `material`, `source` and `scene` alone there
+                    // and let the walk fall through to whatever else covers the
+                    // pixel -- `densityClass` beside `coveringScene` still says
+                    // which class produced the hole.
+                    if (density.material) {
+                        result.material = density.material;
+                        result.source = 'scene';
+                        result.scene = { key: scene.key, name: scene.name, localX, localY, variantKey: shortenedVariantKey };
+                        result.colorHex = hexStr;
+                        return result;
+                    }
+                }
+            }
+            else if (MATERIAL_COLOR_LOOKUP[hexStr]) {
                 result.material = MATERIAL_COLOR_LOOKUP[hexStr];
                 result.source = 'scene';
                 result.scene = { key: scene.key, name: scene.name, localX, localY, variantKey: shortenedVariantKey };

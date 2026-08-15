@@ -1675,6 +1675,15 @@ export const app = {
 			lines.push(`Origin: scene ${scene.key} @ ${scene.localX},${scene.localY}`);
 			if (data) lines.push(`Image: data/pixel_scenes/${data.dir}/${data.name}.png`);
 			if (scene.variantKey) lines.push(`Variant: ${scene.variantKey}`);
+			// The scene's white/gray class is not a material colour: it is "fill
+			// with this biome's own material", resolved through the biome's
+			// <MaterialComponent> bands at density 1.0. Say so, and say which
+			// biome answered -- for a pseudo-biome folder that is the chunk's.
+			if (prov.densityClass) {
+				lines.push(prov.densityClass.via === 'bands'
+					? `Class: density 1.0 through ${prov.densityClass.biomeName} bands`
+					: `Class: density 1.0 -> ${prov.densityClass.biomeName} fill material`);
+			}
 			// The colors-file cell-color override only applies where its alpha is
 			// >= 128; artMask is that test, bit-packed MSB-first at load time. The
 			// file is usually <name>_visual.png, but a good number of scenes are
@@ -1701,9 +1710,15 @@ export const app = {
 			lines.push('Origin: air');
 		}
 		// A scene footprint the pixel falls inside but which painted nothing here.
+		// A density-class pixel whose band table accepted nothing is a different
+		// thing from a transparent one: the scene DID answer, and the answer was
+		// air -- which is what lets a room's background art show through its floor.
 		if (source !== 'scene' && prov && prov.coveringScene) {
 			const scene = prov.coveringScene;
-			lines.push(`In scene: ${scene.key} @ ${scene.localX},${scene.localY} (transparent here)`);
+			lines.push(`In scene: ${scene.key} @ ${scene.localX},${scene.localY} `
+				+ (prov.densityClass
+					? `(density class -> air, ${prov.densityClass.biomeName} bands)`
+					: '(transparent here)'));
 		}
 	},
 

@@ -1136,7 +1136,9 @@ function densityBiomeFor(bands, targetBiome, underlyingBiome) {
 		const conf = GENERATOR_CONFIG[name];
 		if (!conf) continue;
 		const biome = bands.engineBiomeForColor(conf.color & 0xffffff);
-		if (biome && biome.bands.length) return biome;
+		// The NAME rides along so the hover readout can say which biome's bands
+		// answered, which is the whole point of the pseudo-biome fallback.
+		if (biome && biome.bands.length) return { entry: biome, biomeName: name };
 	}
 	return null;
 }
@@ -1146,9 +1148,62 @@ function densityFillMaterialFor(targetBiome, underlyingBiome) {
 	for (const name of [targetBiome, underlyingBiome]) {
 		const conf = name ? GENERATOR_CONFIG[name] : null;
 		const material = conf ? FILL_BIOME_MATERIALS[conf.color & 0xffffff] : undefined;
-		if (material !== undefined) return material;
+		if (material !== undefined) return { material, biomeName: name };
 	}
 	return null;
+}
+
+/**
+ * The two biome names a variant key's `biome=` part carries: the scene's folder
+ * biome and, after `@`, the biome of the chunk it landed in.
+ */
+function variantBiomes(variantKey) {
+	let biome = 'general';
+	for (const part of (variantKey || '').split('&')) {
+		const eq = part.indexOf('=');
+		if (eq >= 0 && part.slice(0, eq) === 'biome') biome = part.slice(eq + 1);
+	}
+	const at = biome.indexOf('@');
+	return {
+		targetBiome: at < 0 ? biome : biome.slice(0, at),
+		underlyingBiome: at < 0 ? null : biome.slice(at + 1),
+	};
+}
+
+/**
+ * What a stamped scene's DENSITY CLASS -- its white/gray pixels, the engine's
+ * "fill with this biome's own material" -- resolves to at one world pixel.
+ *
+ * The same lookup texturePixelSceneForBiome() runs per pixel while it builds an
+ * instance, pulled out so the hover readout can answer for those pixels too
+ * (js/utils.js getMaterialProvenanceAtWorldCoordinates). Without it the readout
+ * walked the scene PNG, found a colour no material table knows, and reported
+ * `Origin: air` over solid rock -- the blind spot that made the orb rooms look
+ * empty while the renderer was painting them correctly.
+ *
+ * Returns null when nothing can answer (no bands loaded and no fill material).
+ * `{ material: null, via: 'bands' }` is NOT that case: it means the band table
+ * accepted nothing at density 1.0, which is a real AIR answer.
+ *
+ * @param {string} variantKey  the instance's variant key (only `biome=` is read)
+ * @param {number} worldX      absolute world coordinates of the pixel
+ * @param {number} worldY
+ * @returns {{material: string|null, biomeName: string, via: 'bands'|'fill'}|null}
+ */
+export function sceneDensityClassAt(variantKey, worldX, worldY) {
+	const { targetBiome, underlyingBiome } = variantBiomes(variantKey);
+	// Gated exactly as the build is: with material textures off the scene paints
+	// the flat fill colour, so claiming a band's answer would name a material the
+	// picture on screen does not show.
+	const bands = sceneTextureAtlas() ? sceneTextureModules.bands : null;
+	const densityBiome = bands ? densityBiomeFor(bands, targetBiome, underlyingBiome) : null;
+	if (densityBiome) {
+		const id = bands.selectComponentForCell(densityBiome.entry, worldX, worldY,
+			bands.computeMaterialNoiseDensity(worldX, worldY, 1.0));
+		return { material: id < 0 ? null : bands.materialNameForId(id), biomeName: densityBiome.biomeName, via: 'bands' };
+	}
+	const fill = densityFillMaterialFor(targetBiome, underlyingBiome);
+	return fill ? { material: fill.material, biomeName: fill.biomeName, via: 'fill' } : null;
 }
 
 /**
@@ -1207,7 +1262,7 @@ export function texturePixelSceneForBiome(sceneName, sourceData, width, height, 
 	// fillMaterial, textured like any other material rather than flattened.
 	const fillMaterial = densityFillMaterialFor(paint.targetBiome, paint.underlyingBiome);
 	const fillRecipe = fillMaterial
-		? recipeForMaterial(fillMaterial, paint.targetColor)
+		? recipeForMaterial(fillMaterial.material, paint.targetColor)
 		: { entry: 0, flat: paint.targetColor, alpha: 255 };
 
 	const densityRecipes = new Map();
@@ -1274,7 +1329,7 @@ export function texturePixelSceneForBiome(sceneName, sourceData, width, height, 
 		let recipe;
 		if (r === g && g === b && r > 0) {
 			if (densityBiome) {
-				const id = bands.selectComponentForCell(densityBiome, wx, wy,
+				const id = bands.selectComponentForCell(densityBiome.entry, wx, wy,
 					bands.computeMaterialNoiseDensity(wx, wy, 1.0));
 				if (id < 0) {
 					if (!airMask) airMask = new Uint8Array(sourceData.length);
@@ -1374,7 +1429,7 @@ export function pixelSceneMaterialGrid(scene, bands) {
 	const targetBiome = at < 0 ? biome : biome.slice(0, at);
 	const densityBiome = densityBiomeFor(bands, targetBiome, underlyingBiome);
 	const fillMaterial = densityFillMaterialFor(targetBiome, underlyingBiome);
-	const fillId = fillMaterial ? bands.materialIdForName(fillMaterial) : -1;
+	const fillId = fillMaterial ? bands.materialIdForName(fillMaterial.material) : -1;
 
 	const w = data.width, h = data.height;
 	const grid = new Int16Array(w * h).fill(SCENE_MAT_UNTOUCHED);
@@ -1386,7 +1441,7 @@ export function pixelSceneMaterialGrid(scene, bands) {
 		if (r === g && g === b && r > 0) {
 			const wx = scene.x + (p % w), wy = scene.y + ((p / w) | 0);
 			const id = densityBiome
-				? bands.selectComponentForCell(densityBiome, wx, wy,
+				? bands.selectComponentForCell(densityBiome.entry, wx, wy,
 					bands.computeMaterialNoiseDensity(wx, wy, 1.0))
 				: -1;
 			// Same rule the bitmap build paints: a table we have answering -1
