@@ -352,7 +352,9 @@ const SCENE_UNTOUCHED = -2;
  *     scene rect is NO CELL to the masks, whatever the world holds there;
  *   - pre-existing world cells inside the rect are stamp targets too;
  *   - type-3 normals and the blit's destination check read the LIVE world
- *     (the composite `mat`), exactly like the runtime stamper.
+ *     (the composite `mat`), exactly like the runtime stamper;
+ *   - is skipped entirely when the scene sets `skip_edge_textures` — the erase
+ *     still happens, so such a scene reads as undressed rather than as terrain.
  * Rolls are salted so they decorrelate from the terrain pass at the same
  * coordinates — the engine's two passes consume independent RNG streams.
  */
@@ -376,6 +378,11 @@ function stampSceneDecals(out, painted, mat, width, height, originX, originY, wo
             out[o] = out[o + 1] = out[o + 2] = out[o + 3] = 0;
         }
     }
+
+    // A `skip_edge_textures` scene stops here: its cells replaced the terrain
+    // (and every stamp the terrain pass had baked under them), but the painter
+    // runs no decal pass of its own.
+    if (scene.skipEdges) return;
 
     // The scene-local neighbour rule: outside the scene rect there is no cell.
     // Inside it, `mat` already holds the composite (scene cell, or the world
