@@ -102,6 +102,27 @@ export const CAVES_SETUP = {
 		mountainCount: [0, 3], mountainSize: [1, 5],
 		blobCount: [5, 15], blobStrength: [1.0, 3], blobRadius: [1, 10],
 	},
+	// Read off pyramid_right.xml / pyramid_left.xml (identical blocks), NOT off
+	// pyramid.xml, whose own <BitmapCaves> is a different and much emptier one
+	// (size_x 516, cave_count 1-2). pyramid.xml, pyramid_right.xml and
+	// pyramid_hallway.xml all declare <Topology name="$biome_pyramid">, so one
+	// grid serves the three; sizeX 512 is what matches the game, which is what
+	// settles whose block wins.
+	//
+	// NOT VALIDATED against a live grid, and the pyramid's foot shows it: chunk
+	// 57,14 (x 11264-11776, y 0-512) paints ~9.2k px of sand over game air, all
+	// of it along the terrain boundary between x 11296 and 11550. East of 11552
+	// telescope's first-solid row matches the game's exactly, column for column.
+	// That boundary is this grid -- not a scene, not a fill.
+	//
+	// pyramid_right.xml also carries six <CaveStructure> entries (pit, deep_pit,
+	// brush_03..06) that are not replayed here. They stamp nothing but consume
+	// draws between phases C and E exactly as hills/winter's do, so phase E's
+	// carves cannot land in the right place without them. Adding them verbatim
+	// moves the error rather than removing it (over-solid 9,189 -> 4,970 px,
+	// under-solid 11 -> 4,967, net worse), so closing this wants a live grid
+	// dump for the key to check against -- the way $biome_desert was taken to
+	// byte-exact -- rather than more guessing from the XML.
 	'$biome_pyramid': {
 		sizeX: 512, sizeY: 256, doBeginningPaths: true,
 		caveCount: [10, 30], surfaceCaves: [1, 3], caveStrength: [0.2, 1],
