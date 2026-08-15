@@ -1106,6 +1106,24 @@ function materialForWangColor(rgb) {
  * Only an entry that actually carries bands counts: the constant-material rooms
  * (temple_altar and friends) have an empty table and are answered by their
  * fillMaterial instead.
+ *
+ * Deliberately NOT gated on `biome.supported`. That flag is about the TOPOLOGY
+ * resolve -- whether the carve branch, the inside-noise variant and the density
+ * modifier of this biome are ported -- and a scene's density class runs none of
+ * it: the coverage is a literal 1.0 that the caller feeds straight into
+ * ComputeMaterialNoiseDensity. The band list is the only thing that has to be
+ * complete, and it is: of the 174 biomes in the table exactly one (lava_90percent
+ * #ffa717) loses a band to `unsupportedBand`, and it loses its only one, so the
+ * `bands.length` test below already excludes it.
+ *
+ * Requiring `supported` cost the 41 biomes that carry bands but fail the topology
+ * checks -- every orb room, every essence room, the gun/null/rock/song/moon rooms,
+ * secret_lab, the pyramid interiors -- which are exactly the rooms whose entire
+ * content is a stamped scene. They all fell back to a single flat fillMaterial.
+ * Measured against the game on the orb room (groundtruth/batch3/orbroom, seed
+ * 786433191): the flat fill matched 52.3% of the scene's 48,936 white pixels,
+ * the band chooser matches 99.4% -- including the 17.9% that are AIR, which is
+ * the orb room's background art showing through its floor.
  */
 function densityBiomeFor(bands, targetBiome, underlyingBiome) {
 	for (const name of [targetBiome, underlyingBiome]) {
@@ -1113,7 +1131,7 @@ function densityBiomeFor(bands, targetBiome, underlyingBiome) {
 		const conf = GENERATOR_CONFIG[name];
 		if (!conf) continue;
 		const biome = bands.engineBiomeForColor(conf.color & 0xffffff);
-		if (biome && biome.supported && biome.bands.length) return biome;
+		if (biome && biome.bands.length) return biome;
 	}
 	return null;
 }
@@ -1240,15 +1258,31 @@ export function texturePixelSceneForBiome(sceneName, sourceData, width, height, 
 		const wy = worldY + ((p / width) | 0);
 
 		// Full coverage through the biome's <MaterialComponent> bands for the gray
-		// class; the wang color's own material for everything else. A band table
-		// that accepts nothing here falls back to the biome's fillMaterial rather
-		// than to air, so a table gap can never punch a hole in a room floor.
-		const { entry, flat, alpha } = (r === g && g === b && r > 0)
-			? densityRecipeFor(densityBiome
-				? bands.selectComponentForCell(densityBiome, wx, wy,
-					bands.computeMaterialNoiseDensity(wx, wy, 1.0))
-				: -1)
-			: wangRecipeFor((r << 16) | (g << 8) | b);
+		// class; the wang color's own material for everything else.
+		//
+		// A band table that accepts nothing at density 1.0 answers AIR, and that is
+		// a real answer rather than a gap: the orb room's floor is 17.9% air in the
+		// game's own dump and the chooser predicts it (see densityBiomeFor). So a
+		// -1 from a table we have goes into the erase mask exactly like FORCE AIR,
+		// which is what lets a room's background art show through its own floor.
+		// Only a biome with NO band table falls back to the flat fillMaterial.
+		let recipe;
+		if (r === g && g === b && r > 0) {
+			if (densityBiome) {
+				const id = bands.selectComponentForCell(densityBiome, wx, wy,
+					bands.computeMaterialNoiseDensity(wx, wy, 1.0));
+				if (id < 0) {
+					if (!airMask) airMask = new Uint8Array(sourceData.length);
+					airMask[i + 3] = 0xff;
+					outData[i + 3] = 0x00;
+					continue;
+				}
+				recipe = densityRecipeFor(id);
+			}
+			else recipe = fillRecipe;
+		}
+		else recipe = wangRecipeFor((r << 16) | (g << 8) | b);
+		const { entry, flat, alpha } = recipe;
 
 		let a = alpha;
 		if (entry > 0) {
@@ -1350,9 +1384,12 @@ export function pixelSceneMaterialGrid(scene, bands) {
 				? bands.selectComponentForCell(densityBiome, wx, wy,
 					bands.computeMaterialNoiseDensity(wx, wy, 1.0))
 				: -1;
-			// Same fallback the bitmap build paints: the biome's own fill
-			// material where no band answers, never a hole.
-			grid[p] = id >= 0 ? id : (fillId >= 0 ? fillId : SCENE_MAT_UNKNOWN);
+			// Same rule the bitmap build paints: a table we have answering -1
+			// is AIR (id 0), and only a biome with no table at all falls back
+			// to its flat fill material.
+			grid[p] = id >= 0 ? id
+				: densityBiome ? 0
+					: (fillId >= 0 ? fillId : SCENE_MAT_UNKNOWN);
 			continue;
 		}
 		const rgb = (r << 16) | (g << 8) | b;
