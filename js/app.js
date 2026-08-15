@@ -75,6 +75,14 @@ function bandColumnPaints(biomeColor) {
 	return BIOME_COLORS_WITH_TERRAIN.has(biomeColor & 0xffffff);
 }
 
+// The background sprite one placed scene draws behind itself, or null. A
+// placement record carries only the scene key; the loaded scene knows which
+// data/pixel_scenes entry it came from, which is what the manifest is keyed by
+// (js/pixel_scene_backgrounds.js).
+function sceneBackgroundArt(scene) {
+	return PIXEL_SCENE_DATA[scene.key]?.backgroundArt ?? null;
+}
+
 function writeBackgroundPixel(imageData, i, color) {
 	const isVoid = color === BACKGROUND_VOID;
 	imageData.data[i*4+0] = isVoid ? 0 : (color >> 16) & 0xFF;
@@ -2649,7 +2657,7 @@ export const app = {
 					if (!scenes) continue;
 					const toDrawX = (x) => x + worldCenter - pwX * worldSize + shiftX;
 					const toDrawY = (y) => y + 14 * 512 - pwY * 24576 + shiftY;
-					drawSceneBackgrounds(this.ctx, scenes, toDrawX, toDrawY, viewRect);
+					drawSceneBackgrounds(this.ctx, scenes, toDrawX, toDrawY, viewRect, sceneBackgroundArt);
 				}
 			});
 			steps.push(() => {

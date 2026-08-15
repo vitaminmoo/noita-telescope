@@ -1,4 +1,5 @@
 import { fetchSafeJson } from "./utils.js";
+import { SCENE_BACKGROUNDS } from "./pixel_scene_backgrounds.js";
 
 // Biome backgrounds, keyed the way the engine keys them.
 //
@@ -265,7 +266,14 @@ export function loadBackgroundArt() {
 		for (const rec of BY_COLOR.values()) {
 			for (const dir of Object.values(rec.edges)) if (dir?.art) wanted.add(dir.art);
 		}
-		for (const p of Object.values(artData.sceneBackgrounds)) wanted.add(p);
+		// Scene backgrounds come from the generated manifest, keyed the way
+		// telescope keys scenes (dir/name). background_data.json carries a
+		// sceneBackgrounds map of its own, keyed by bare material basename,
+		// which is ambiguous across biomes ("altar" is two different scenes in
+		// two biomes with two different backgrounds) and misses every scene
+		// whose background comes from a lua scene table; the manifest supersedes
+		// it, and only the art it references is worth decoding.
+		for (const p of Object.values(SCENE_BACKGROUNDS)) wanted.add(p);
 		for (const g of artData.globalImages) wanted.add(g.file);
 		await Promise.all([...wanted].map(async (p) => {
 			try { ART_BITMAPS.set(p, await loadPNGBitmap('../' + p)); }
@@ -357,11 +365,19 @@ export function drawBackdropRuns(ctx, rows, shiftX, shiftY, viewRect) {
  * Draws the background sprites of every placed pixel scene, then the global
  * <BackgroundImages> art (nearer of the two: lower z draws later). `scenes` is
  * one pixelScenesByPW list; drawX/drawY match the scene layer's own transform.
+ *
+ * `artPathFor` resolves one placed scene to its manifest background path -- the
+ * placement records carry only a scene key, and the key -> data-dir mapping
+ * lives with the scene loader (js/pixel_scene_generation.js).
+ *
+ * The sprite is blitted 1:1 at the scene's top-left with no clip: a background
+ * that is not scene-sized (the mountain hall stubs) overhangs exactly as it
+ * does in game, and one with alpha lets the biome backdrop through.
  */
-export function drawSceneBackgrounds(ctx, scenes, toDrawX, toDrawY, viewRect) {
+export function drawSceneBackgrounds(ctx, scenes, toDrawX, toDrawY, viewRect, artPathFor) {
 	if (!artData) return;
 	for (const scene of scenes) {
-		const path = artData.sceneBackgrounds[scene.key];
+		const path = artPathFor(scene);
 		if (!path) continue;
 		const img = ART_BITMAPS.get(path);
 		if (!img) continue;
