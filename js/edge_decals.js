@@ -397,6 +397,46 @@ export function stampEdgeDecals(mat, width, height, originX, originY, worldSeed,
 const SCENE_UNTOUCHED = -2;
 
 /**
+ * The engine's OTHER scene gate, and the one that decides most scenes.
+ *
+ * PixelScene_TryPaintEntry runs the edge pass only when PixelScenePaintState
+ * +0x1e8 is positive, and the row painter (PixelScene_PaintRowsLambdaBody
+ * @0x00880860) increments that counter once per created cell that is BOTH
+ * outside the colors_filename image's opaque area AND of a material the
+ * EdgeGraphics registry knows. A cell the colors image covers takes its color
+ * from that image instead (Cell::SetColor) and never counts.
+ *
+ * The counter is per SCENE, so the decision is all-or-nothing: a scene whose
+ * `_visual.png` covers every edge-capable cell it paints runs no edge pass at
+ * all, and one uncovered cell turns the whole pass on for every qualifying cell
+ * — covered ones included. That, not `skip_edge_textures`, is why the game
+ * leaves general/essenceroom undressed: its LoadPixelScene omits argument 7 (so
+ * the flag really is false), but essenceroom_visual.png is opaque over 27,348 of
+ * the 27,349 material pixels, and the one it misses is the 0xff31d0b4 spawn
+ * marker, which creates no cell.
+ *
+ * The mask counts a pixel as covered at alpha >= 128 where the engine counts any
+ * non-zero alpha; every shipped colors image is opaque where it paints, so the
+ * two have not been observed to differ.
+ *
+ * Memoised on the grid, which the callers cache per scene placement.
+ */
+function sceneStampsAnyEdge(scene) {
+    if (scene.edgeEligible !== undefined) return scene.edgeEligible;
+    const { grid, artMask, width: sw, height: sh } = scene;
+    let any = false;
+    for (let p = 0; p < sw * sh; p++) {
+        const id = grid[p];
+        // <= 0 is a pixel that creates no cell: untouched world, or forced air.
+        if (id <= 0) continue;
+        if (artMask && (artMask[p >> 3] & (0x80 >> (p & 7)))) continue;
+        if (ENTRIES_BY_ID[id]) { any = true; break; }
+    }
+    scene.edgeEligible = any;
+    return any;
+}
+
+/**
  * The scene painter's own decal pass, per the binary:
  *   - runs AFTER the scene's cells are written (so first the overlay: scene
  *     pixels replace `mat`, and any terrain-pass stamp under them is cleared);
@@ -407,8 +447,10 @@ const SCENE_UNTOUCHED = -2;
  *   - pre-existing world cells inside the rect are stamp targets too;
  *   - type-3 normals and the blit's destination check read the LIVE world
  *     (the composite `mat`), exactly like the runtime stamper;
- *   - is skipped entirely when the scene sets `skip_edge_textures` — the erase
- *     still happens, so such a scene reads as undressed rather than as terrain.
+ *   - is skipped entirely when the scene sets `skip_edge_textures`, and equally
+ *     when its colors image covers every edge-capable cell it paints
+ *     (sceneStampsAnyEdge above) — the erase still happens either way, so such a
+ *     scene reads as undressed rather than as terrain.
  * Rolls are salted so they decorrelate from the terrain pass at the same
  * coordinates — the engine's two passes consume independent RNG streams.
  */
@@ -433,10 +475,10 @@ function stampSceneDecals(out, painted, mat, width, height, originX, originY, wo
         }
     }
 
-    // A `skip_edge_textures` scene stops here: its cells replaced the terrain
-    // (and every stamp the terrain pass had baked under them), but the painter
-    // runs no decal pass of its own.
-    if (scene.skipEdges) return;
+    // A scene whose pass is off stops here: its cells replaced the terrain (and
+    // every stamp the terrain pass had baked under them), but the painter runs
+    // no decal pass of its own.
+    if (scene.skipEdges || !sceneStampsAnyEdge(scene)) return;
 
     // The scene-local neighbour rule: outside the scene rect there is no cell.
     // Inside it, `mat` already holds the composite (scene cell, or the world

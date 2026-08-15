@@ -1367,5 +1367,9 @@ export function pixelSceneMaterialGrid(scene, bands) {
 	return {
 		grid, width: w, height: h, x: scene.x, y: scene.y,
 		skipEdges: !!data.skipEdgeTextures,
+		// The colors-file coverage mask. The scene's edge pass is gated on it as
+		// a whole (js/edge_decals.js sceneStampsAnyEdge), so the decal pass needs
+		// it alongside the materials.
+		artMask: data.artMask || null,
 	};
 }
