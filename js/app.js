@@ -19,7 +19,7 @@ import { GLTerrainRenderer } from './gl/terrain_renderer.js';
 import { getPixelSceneAirMask, getPixelSceneCanvas, pixelSceneMipLevel, loadPixelSceneData, reloadPixelSceneCache, PIXEL_SCENE_DATA } from './pixel_scene_generation.js';
 import { addStaticPixelScenes } from './static_spawns.js';
 import { NollaPrng } from './nolla_prng.js';
-import { appSettings, updateSettings, updateSpellFlags, updateSpecialFlags, RENDER_LAYERS, readRenderLayersFromUI } from './settings.js';
+import { appSettings, updateSettings, updateSettingsFromUI, updateSpellFlags, updateSpecialFlags, RENDER_LAYERS, readRenderLayersFromUI } from './settings.js';
 import { syncWorldWorkerData, getOrGenerateWorld, syncSettingsToWorldWorker } from './world_manager.js';
 import { syncOverlayWorkerData, getOrGenerateOverlay, syncSettingsToOverlayWorker, recolorPixelScenes, invalidatePendingOverlays, requestEdgeDecalTile } from './overlay_manager.js';
 import { drawEdgeDecals, invalidateEdgeDecals, pendingEdgeDecalTiles } from './edge_decal_layer.js';
@@ -3704,6 +3704,12 @@ export const app = {
 	},
 
 	saveSettings() {
+		// Every settings control calls saveSettings() from its onchange, but the
+		// draw gates read appSettings, which was only refreshed inside generate()
+		// (world_manager.js). Sync here so a toggle that just redraws — engine
+		// terrain, material textures, edge decals — takes effect immediately
+		// instead of on the next full world regeneration.
+		updateSettingsFromUI();
 		const settings = {
 			//seed: document.getElementById('seed').value,
 			//ngPlusCount: document.getElementById('ng').value,
