@@ -26,7 +26,7 @@ import { CHUNK_SIZE, WORLD_CHUNK_CENTER_Y } from '../constants.js';
 import { getWorldCenter, getWorldSize } from '../utils.js';
 import { buildChunkTextures, buildNoiseTable512 } from './chunk_textures.js';
 import {
-    buildEngineResources, buildEngineTable, buildMatColorTable, buildSinHashTable, surfaceNoisePhase,
+    buildEngineResources, buildEngineTable, buildMatColorTable, buildSinHashAndGrids, surfaceNoisePhase,
 } from './engine_resources.js';
 import { BIOME_MAP_HEIGHT } from './indirection.js';
 import {
@@ -225,7 +225,8 @@ export class GLTerrainRenderer {
             latMat: engine && createMaterialLatticeTexture(gl, engine.lattice),
             engChunk: engine && createEngineChunkTexture(gl, engine),
             engTable: engine && createFloatTableTexture(gl, buildEngineTable()),
-            sinHash: engine && createR32FTexture(gl, buildSinHashTable()),
+            // sin-hash rows + the seed's BitmapCaves modifier grids (one texture)
+            sinHash: engine && createR32FTexture(gl, buildSinHashAndGrids(opts.seed ?? 0)),
         };
         this.resources = resources;
 

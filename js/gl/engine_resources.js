@@ -19,6 +19,7 @@
 import {
     BIOME_ENGINE, MATERIAL_FLAT_ALPHA_BY_ID, MATERIAL_FLAT_RGB_BY_ID, MATERIAL_NAMES_BY_ID, WANG_PARAMS_BY_ID,
 } from '../engine_resolve/engine_data.js';
+import { CAVES_SETUP, getModifierGrid } from '../engine_resolve/bitmap_caves.js';
 import { buildEngineLattice } from '../engine_resolve/lattice_builder.js';
 import { BIOME_MAP_HEIGHT } from './indirection.js';
 
@@ -114,6 +115,9 @@ export function buildEngineTable() {
         t[o + 16] = (c.insideFBM ? 1 : 0) | (c.insideSquared ? 2 : 0) | (c.insideClamped ? 4 : 0) | (c.insideScaled ? 8 : 0);
         t[o + 17] = c.insideScaleMin; t[o + 18] = c.insideScaleMax;
         t[o + 20] = KIND[c.modKind] ?? 3; t[o + 21] = c.modValue;
+        // kind 3 (grid): which replayed BitmapCaves grid to sample, as a slot in
+        // the buildSinHashAndGrids stack; -1 = params not ported, modifier 1.0
+        t[o + 22] = c.gridKey ? MOD_GRID_KEYS.indexOf(c.gridKey) : -1;
     }
     const wrow = BIOME_ENGINE.length * W * 4;
     WANG_PARAMS_BY_ID.forEach(([scale, threshold, type], id) => {
@@ -141,6 +145,32 @@ export function buildSinHashTable() {
         t[i] = F(m - Math.floor(m));
     }
     return { width: SIN_HASH_W, height: SIN_HASH_H, data: t };
+}
+
+// The replayed BitmapCaves modifier grids ride in the SAME R32F texture as the
+// sin-hash table (the shader is at the WebGL2 16-sampler minimum, so no new
+// sampler): rows 0..511 sin-hash, then 512x256 grids packed two per 1024-wide
+// row band. Grid slot i sits at x = (i&1)*512, y = 512 + (i>>1)*256; the biome
+// table's t5p.z carries the slot. Every CAVES_SETUP grid is 512x256.
+export const MOD_GRID_KEYS = Object.keys(CAVES_SETUP).sort();
+export const MOD_GRID_W = 512, MOD_GRID_H = 256;
+export function buildSinHashAndGrids(worldSeed) {
+    const sh = buildSinHashTable();
+    const bands = Math.ceil(MOD_GRID_KEYS.length / 2);
+    const H = SIN_HASH_H + bands * MOD_GRID_H;
+    const t = new Float32Array(SIN_HASH_W * H);
+    t.set(sh.data, 0);
+    MOD_GRID_KEYS.forEach((key, i) => {
+        const g = getModifierGrid(worldSeed, key);
+        if (g.W !== MOD_GRID_W || g.H !== MOD_GRID_H)
+            throw new Error(`modifier grid ${key} is ${g.W}x${g.H}, expected 512x256`);
+        const ox = (i & 1) * MOD_GRID_W, oy = SIN_HASH_H + (i >> 1) * MOD_GRID_H;
+        for (let y = 0; y < MOD_GRID_H; y++) {
+            t.set(g.data.subarray(y * MOD_GRID_W, (y + 1) * MOD_GRID_W),
+                (oy + y) * SIN_HASH_W + ox);
+        }
+    });
+    return { width: SIN_HASH_W, height: H, data: t };
 }
 
 export function buildMatColorTable(matAtlas) {

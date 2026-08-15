@@ -70,8 +70,10 @@ uniform highp usampler2D u_engChunkTex; // mapW x 48 R16UI: biome slot | mode<<8
 uniform highp sampler2D u_engTableTex;  // 512 x (nBiomes+1) RGBA32F: per-biome band table
                                         // (cols 0..47) + topology-0 params (cols 48..53);
                                         // last row = wang sampler params by material id
-uniform highp sampler2D u_sinHashTex;   // 1024x512 R32F: exact frac(sin(n)*43758.5)
-                                        // for integer n in [-262144, 262143]
+uniform highp sampler2D u_sinHashTex;   // R32F: rows 0..511 exact frac(sin(n)*43758.5)
+                                        // for integer n in [-262144, 262143]; rows 512+
+                                        // the seed's 512x256 BitmapCaves modifier grids,
+                                        // two per row band (engine_resources.js)
 uniform bool u_engineTerrain;
 uniform float u_surfacePhase;           // per-seed surface-noise X phase (BiomeGrid+0x48)
 
@@ -654,6 +656,26 @@ float engSinHash(float v) {
     float m = sin(v) * 43758.546875;
     return m - floor(m);
 }
+// Replayed BitmapCaves density-modifier grid (bitmap_caves.js), stacked below
+// the sin-hash rows of u_sinHashTex: grid gi at x = (gi&1)*512, y = 512 + (gi>>1)*256,
+// wrapped toroidally. FloatGrid2D_SampleBilinearSmooth @0x00870e60: smoothstep-
+// faded bilinear over the wrapped corners.
+float modGridCell(int gi, int x, int y) {
+    int px = ((x % 512) + 512) % 512;
+    int py = ((y % 256) + 256) % 256;
+    return texelFetch(u_sinHashTex, ivec2(((gi & 1) << 9) + px, 512 + ((gi >> 1) << 8) + py), 0).r;
+}
+float modGridSample(int gi, float sx, float sy) {
+    int x0 = int(floor(sx)), y0 = int(floor(sy));
+    float fx = sx - float(x0), fy = sy - float(y0);
+    float wx = (3.0 - 2.0 * fx) * fx * fx;
+    float wy = (3.0 - 2.0 * fy) * fy * fy;
+    float c00 = modGridCell(gi, x0, y0),     c10 = modGridCell(gi, x0 + 1, y0);
+    float c01 = modGridCell(gi, x0, y0 + 1), c11 = modGridCell(gi, x0 + 1, y0 + 1);
+    float top = c00 + wx * (c10 - c00);
+    float bot = c01 + wx * (c11 - c01);
+    return top + wy * (bot - top);
+}
 float engCarveVN(float x, float y) {
     int ix = int(floor(x)), iy = int(floor(y));
     float fx = x - float(ix), fy = y - float(iy);
@@ -731,6 +753,17 @@ float engEvalCaveMat(int slot, int leftSlot, ivec2 w) {
     bool blendMod = false;
     if (mk == 1) { m = t5p.y; if (m < 1.0) blendMod = true; }
     else if (mk == 2) { m = 0.0; blendMod = true; }
+    else if (mk == 3) {
+        int gi = int(t5p.z);
+        if (gi >= 0) {  // -1: <BitmapCaves> params not ported, keep m = 1.0
+            // sample coords include the grid's node+0x94 offset (w*0.5/0.1 =
+            // 2560 for the 512-wide grids), unlike the const/empty blend below
+            float gx = (wx * 0.49162514 + 2560.0) * 0.1;
+            float gy = (2560.0 * 6.86035959282328e-7 + wy * 0.49162514) * 0.1;
+            m = modGridSample(gi, gx, gy);
+            if (m < 1.0) m = m + magicNoise(gx, gy) * ((1.0 - m) * 0.495);
+        }
+    }
     if (blendMod) {
         float gx = (wx * 0.49162514) * 0.1;
         float gy = (wy * 0.49162514) * 0.1;
