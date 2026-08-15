@@ -1096,3 +1096,83 @@ export function texturePixelSceneForBiome(sceneName, sourceData, width, height, 
 
 	return { pixels: outData, airMask };
 }
+
+// ---------------------------------------------------------------------------
+// Scene material identity, for the edge-decal pass
+//
+// PixelScene_TryPaintEntry @0x00880fb0 runs its OWN EdgeGraphics pass after
+// writing a scene's cells (BiomeMaterials_PaintEdgeMaterial @0x00721da0), so
+// scene-painted materials get dressed exactly like generated terrain. That pass
+// needs the material IDENTITY of every scene pixel, which is the same
+// classification texturePixelSceneForBiome() runs for colors:
+//   alpha 0 / #000000  -> untouched, the world cell under it stays
+//   #000042            -> FORCE AIR, the world cell is removed
+//   gray/white         -> density 1.0 through the biome's band chooser
+//   anything else      -> the wang color's own material
+// ---------------------------------------------------------------------------
+
+/** The scene leaves this pixel alone; whatever cell the world has stays. */
+export const SCENE_MAT_UNTOUCHED = -2;
+/** A painted cell whose material the engine tables don't carry (prop art,
+ *  unmapped wang colors). It blocks edges like any solid cell but can never
+ *  stamp decals of its own. Large so it can live in an Int16Array beside
+ *  real ids without colliding with them. */
+export const SCENE_MAT_UNKNOWN = 0x7ffe;
+
+/**
+ * The per-pixel material ids one stamped scene instance paints, in the engine's
+ * classification above. `bands` is the engine_resolve/band_select module (passed
+ * in so this file keeps not importing the engine tables statically).
+ *
+ * Returns { grid: Int16Array, width, height, x, y } or null when the scene's
+ * pixels aren't loaded.
+ */
+export function pixelSceneMaterialGrid(scene, bands) {
+	const data = PIXEL_SCENE_DATA[scene.key];
+	if (!data || !ArrayBuffer.isView(data.imgElement)) return null;
+	// Material substitutions first, in wang color space, exactly as the bitmap
+	// build runs them; the biome part names the band table for the gray class.
+	let pixels = data.imgElement;
+	let biome = 'general';
+	for (const part of (scene.variantKey || '').split('&')) {
+		const eq = part.indexOf('=');
+		if (eq < 0) continue;
+		if (part.slice(0, eq) === 'biome') biome = part.slice(eq + 1);
+		else pixels = recolorPixelScene(pixels, parseInt(part.slice(0, eq), 16), parseInt(part.slice(eq + 1), 16));
+	}
+	const at = biome.indexOf('@');
+	const underlyingBiome = at < 0 ? null : biome.slice(at + 1);
+	const targetBiome = at < 0 ? biome : biome.slice(0, at);
+	const densityBiome = densityBiomeFor(bands, targetBiome, underlyingBiome);
+	const fillMaterial = densityFillMaterialFor(targetBiome, underlyingBiome);
+	const fillId = fillMaterial ? bands.materialIdForName(fillMaterial) : -1;
+
+	const w = data.width, h = data.height;
+	const grid = new Int16Array(w * h).fill(SCENE_MAT_UNTOUCHED);
+	const wangIds = new Map();
+	for (let p = 0, i = 0; p < w * h; p++, i += 4) {
+		if (pixels[i + 3] === 0) continue;
+		const r = pixels[i], g = pixels[i + 1], b = pixels[i + 2];
+		if (r === 0x00 && g === 0x00 && b === 0x42) { grid[p] = 0; continue; }
+		if (r === g && g === b && r > 0) {
+			const wx = scene.x + (p % w), wy = scene.y + ((p / w) | 0);
+			const id = densityBiome
+				? bands.selectComponentForCell(densityBiome, wx, wy,
+					bands.computeMaterialNoiseDensity(wx, wy, 1.0))
+				: -1;
+			// Same fallback the bitmap build paints: the biome's own fill
+			// material where no band answers, never a hole.
+			grid[p] = id >= 0 ? id : (fillId >= 0 ? fillId : SCENE_MAT_UNKNOWN);
+			continue;
+		}
+		const rgb = (r << 16) | (g << 8) | b;
+		let id = wangIds.get(rgb);
+		if (id === undefined) {
+			const name = materialForWangColor(rgb);
+			id = name ? bands.materialIdForName(name) : -1;
+			wangIds.set(rgb, id);
+		}
+		grid[p] = id >= 0 ? id : SCENE_MAT_UNKNOWN;
+	}
+	return { grid, width: w, height: h, x: scene.x, y: scene.y };
+}

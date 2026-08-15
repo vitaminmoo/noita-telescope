@@ -190,8 +190,11 @@ function cardinalAngle(m, count) {
  * @param {number} originX  world x of column 0
  * @param {number} originY  world y of row 0
  * @param {number} worldSeed
- * @param {{chunkShiftX?: number, chunkShiftY?: number}} [opts] world coordinate
- *        of a chunk boundary, mod 512 (the biome grid's x_shift / y_shift).
+ * @param {{chunkShiftX?: number, chunkShiftY?: number, scenes?: Array<object>}} [opts]
+ *        chunkShiftX/Y: world coordinate of a chunk boundary, mod 512 (the biome
+ *        grid's x_shift / y_shift). scenes: pixel-scene material grids
+ *        (pixelSceneMaterialGrid) overlapping the rect, in paint order — each
+ *        runs the engine's scene-time decal pass after the terrain passes.
  * @returns {Uint8ClampedArray} RGBA over the padded rect; composite it over the
  *          terrain with plain source-over, after cropping the halo off.
  */
@@ -310,7 +313,170 @@ export function stampEdgeDecals(mat, width, height, originX, originY, worldSeed,
             }
         }
     }
+    // The engine paints pixel scenes on the main thread, after chunk generation,
+    // and each scene runs its own decal pass over its cells
+    // (PixelScene_TryPaintEntry @0x00880fb0 -> BiomeMaterials_PaintEdgeMaterial
+    // @0x00721da0). Writing a scene cell replaces the generated cell — and with
+    // it any decal the terrain pass had baked there — so the overlay first
+    // erases stamps under every pixel the scene paints or force-airs, then runs
+    // the scene-local pass. `mat` is mutated into the post-scene composite,
+    // which is what later scenes and their type-3 normals must see.
+    if (opts.scenes) {
+        if (opts.stats) {
+            let a = 0; for (let i = 3; i < out.length; i += 4) if (out[i]) a++;
+            opts.stats.terrainStamped = a;
+        }
+        for (const scene of opts.scenes) {
+            stampSceneDecals(out, painted, mat, width, height, originX, originY, worldSeed, scene);
+        }
+        if (opts.stats) {
+            let a = 0; for (let i = 3; i < out.length; i += 4) if (out[i]) a++;
+            opts.stats.afterScenes = a;
+            let cells = 0; for (const s of opts.scenes) for (const v of s.grid) if (v !== SCENE_UNTOUCHED) cells++;
+            opts.stats.sceneCells = cells;
+        }
+    }
     return out;
+}
+
+/** pixelSceneMaterialGrid's "the world cell under this pixel stays" value. */
+const SCENE_UNTOUCHED = -2;
+
+/**
+ * The scene painter's own decal pass, per the binary:
+ *   - runs AFTER the scene's cells are written (so first the overlay: scene
+ *     pixels replace `mat`, and any terrain-pass stamp under them is cleared);
+ *   - scans the scene rect INSET 1px on all sides — not the chunk pass's 8px;
+ *   - its neighbour context is the SCENE-LOCAL grid: scene cells plus the
+ *     pre-existing world cells at transparent scene pixels. A cell outside the
+ *     scene rect is NO CELL to the masks, whatever the world holds there;
+ *   - pre-existing world cells inside the rect are stamp targets too;
+ *   - type-3 normals and the blit's destination check read the LIVE world
+ *     (the composite `mat`), exactly like the runtime stamper.
+ * Rolls are salted so they decorrelate from the terrain pass at the same
+ * coordinates — the engine's two passes consume independent RNG streams.
+ */
+function stampSceneDecals(out, painted, mat, width, height, originX, originY, worldSeed, scene) {
+    const { grid, width: sw, height: sh } = scene;
+    const baseX = scene.x - originX, baseY = scene.y - originY;
+    if (baseX + sw <= 0 || baseY + sh <= 0 || baseX >= width || baseY >= height) return;
+
+    // The overlay: everything the scene paints (or erases) replaces the world.
+    const ox0 = Math.max(0, -baseX), ox1 = Math.min(sw, width - baseX);
+    const oy0 = Math.max(0, -baseY), oy1 = Math.min(sh, height - baseY);
+    for (let ly = oy0; ly < oy1; ly++) {
+        const srow = ly * sw, trow = (baseY + ly) * width + baseX;
+        for (let lx = ox0; lx < ox1; lx++) {
+            const v = grid[srow + lx];
+            if (v === SCENE_UNTOUCHED) continue;
+            const i = trow + lx;
+            mat[i] = v;
+            painted[i] = 0;
+            const o = i * 4;
+            out[o] = out[o + 1] = out[o + 2] = out[o + 3] = 0;
+        }
+    }
+
+    // The scene-local neighbour rule: outside the scene rect there is no cell.
+    // Inside it, `mat` already holds the composite (scene cell, or the world
+    // cell a transparent pixel kept), and the scan interior keeps every
+    // neighbour read within the padded rect.
+    const cellAt = (lx, ly) => {
+        if (lx < 0 || ly < 0 || lx >= sw || ly >= sh) return 0;
+        return mat[(baseY + ly) * width + baseX + lx];
+    };
+
+    const sceneSeed = (worldSeed ^ 0x53434e45) | 0;   // 'SCNE'
+    const mask = new Uint8Array(9);
+    const sy0 = Math.max(1, 1 - baseY), sy1 = Math.min(sh - 1, height - 1 - baseY);
+    const sx0 = Math.max(1, 1 - baseX), sx1 = Math.min(sw - 1, width - 1 - baseX);
+    for (let ly = sy0; ly < sy1; ly++) {
+        const ty = baseY + ly;
+        for (let lx = sx0; lx < sx1; lx++) {
+            const tx = baseX + lx;
+            const i = ty * width + tx;
+            const id = mat[i];
+            if (id <= 0) continue;
+            const entries = ENTRIES_BY_ID[id];
+            if (!entries) continue;
+
+            const typeId = TYPE_BY_ID[id];
+            let matCount = 0, typeCount = 0;
+            for (let dy = -1; dy <= 1; dy++) {
+                for (let dx = -1; dx <= 1; dx++) {
+                    const m = cellAt(lx + dx, ly + dy);
+                    const k = (dy + 1) * 3 + (dx + 1);
+                    if (m === id) { matCount++; typeCount++; mask[k] = 3; }
+                    else if (m > 0 && TYPE_BY_ID[m] === typeId) { typeCount++; mask[k] = 1; }
+                    else mask[k] = 0;
+                }
+            }
+            if (matCount >= 8) continue;
+
+            const wx = originX + tx, wy = originY + ty;
+            for (let e = 0; e < entries.length; e++) {
+                const [type, percent, overwrite, reqSameMat, reqSameType, colorARGB, images] = entries[e];
+                if (rand01(hash32(wx, wy, sceneSeed, e, 0)) > percent) continue;
+
+                if (type !== EDGE_TYPE_NORMAL_BASED && (reqSameMat || reqSameType)) {
+                    const bit = reqSameMat ? 1 : 0;
+                    const s = ((mask[1] >> bit) & 1) + ((mask[3] >> bit) & 1) +
+                        ((mask[5] >> bit) & 1) + ((mask[7] >> bit) & 1);
+                    if (s !== 2 && s !== 3) continue;
+                }
+
+                let image, angle = 0;
+                if (type === EDGE_TYPE_EVERYWHERE) {
+                    const r = rand01(hash32(wx, wy, sceneSeed, e, 1));
+                    image = images[Math.min(images.length - 1, (r * images.length) | 0)];
+                } else if (type === EDGE_TYPE_CARDINAL_DIRECTIONS || type === EDGE_TYPE_NORMAL_BASED) {
+                    if (type === EDGE_TYPE_NORMAL_BASED) {
+                        angle = surfaceNormalAngle(mat, width, height, tx, ty, id, typeId, !!reqSameType);
+                        if (angle < 0) continue;
+                    } else if (reqSameMat) {
+                        angle = cardinalAngle(bitMask(mask, 1), matCount);
+                    } else {
+                        angle = cardinalAngle(bitMask(mask, 0), typeCount);
+                    }
+                    const start = hash32(wx, wy, sceneSeed, e, 1) % images.length;
+                    image = pickAngleImage(images, angle, start);
+                    if (image < 0) continue;
+                } else if (type === EDGE_TYPE_COLOR_EDGE_PIXELS) {
+                    const a = (colorARGB >>> 24) & 0xff;
+                    if (!a || (!overwrite && painted[i])) continue;
+                    const o = i * 4;
+                    out[o] = (colorARGB >>> 16) & 0xff;
+                    out[o + 1] = (colorARGB >>> 8) & 0xff;
+                    out[o + 2] = colorARGB & 0xff;
+                    out[o + 3] = a;
+                    painted[i] = 1;
+                    continue;
+                } else {
+                    continue;
+                }
+
+                let cx = tx, cy = ty;
+                const flags = EDGE_IMAGES[image][6];
+                if (type !== EDGE_TYPE_EVERYWHERE &&
+                    (flags & (IMG_FLAG_HORIZONTAL_STRIPE | IMG_FLAG_VERTICAL_STRIPE))) {
+                    if (angle >= 135 && angle < 225) cx += 1;
+                    else if (angle >= 225 && angle < 315) cy += 1;
+                }
+
+                let flip = 0;
+                let transpose = false;
+                if (flags & IMG_FLAG_RANDOM_ROTATION) {
+                    if (rand01(hash32(wx, wy, sceneSeed, e, 2)) > 0.5) flip |= 1;
+                    if (rand01(hash32(wx, wy, sceneSeed, e, 3)) > 0.5) flip |= 2;
+                    transpose = rand01(hash32(wx, wy, sceneSeed, e, 4)) > 0.5;
+                }
+                // The runtime stamper never clips to a chunk (it paints any
+                // resident cell), so no chunkLocal here.
+                blitEdgeSprite(out, painted, mat, width, height, cx, cy, id, overwrite,
+                    image, flip, transpose, null, originX + cx, originY + cy);
+            }
+        }
+    }
 }
 
 /** The 3x3 mask as 0/1 for one of the two equivalence tests. */

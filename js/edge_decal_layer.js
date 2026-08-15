@@ -7,10 +7,11 @@
 // parallel world: a PW shifts which world coordinates are on screen, and the
 // stamp is a pure function of those, so the same cache serves every PW.
 //
-// The decals bake into cell colors in game, so they belong immediately above the
-// terrain and below the pixel scenes — a scene's own cells get dressed by the
-// engine too, but that needs the scene's materials in the field and is not part
-// of this pass yet.
+// The decals bake into cell colors in game. A tile carries the engine's full
+// stamp history — the chunk-generation pass over the terrain, then each pixel
+// scene's own paint-time pass over its cells (which also erases the terrain
+// stamps under the cells the scene replaced) — so the layer draws ABOVE the
+// pixel scenes: every texel left in a tile belongs on top of whatever is under it.
 import { CHUNK_SIZE, WORLD_CHUNK_CENTER_Y } from './constants.js';
 import { getWorldCenter, getWorldSize } from './utils.js';
 
@@ -97,9 +98,11 @@ export function drawEdgeDecals(ctx, app, viewRect, request) {
                 continue;
             }
             if (asked >= REQUESTS_PER_DRAW || pending.has(tileKey)) continue;
+            // A declined request (=== false: scene placement not ready yet) is
+            // not marked pending, so the tile is asked for again on a later draw.
+            if (request(key, tx, ty) === false) continue;
             pending.add(tileKey);
             asked++;
-            request(key, tx, ty);
         }
     }
     return true;

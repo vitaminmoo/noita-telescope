@@ -1,5 +1,6 @@
 // overlay_worker.js
-import { injectPixelSceneData, PIXEL_SCENE_DATA, recolorPixelScene, recolorPixelSceneForBiome } from './pixel_scene_generation.js';
+import { injectPixelSceneData, PIXEL_SCENE_DATA, pixelSceneMaterialGrid, recolorPixelScene, recolorPixelSceneForBiome } from './pixel_scene_generation.js';
+import * as bandSelect from './engine_resolve/band_select.js';
 import { createTileOverlaysCheap, createTileOverlays, createTileOverlaysExpanded } from './image_processing.js';
 import { appSettings, updateSettings } from './settings.js';
 import { CHUNK_SIZE } from './constants.js';
@@ -47,9 +48,26 @@ self.onmessage = async function(e) {
 // ---------------------------------------------------------------------------
 let decalField = null;
 let decalFieldKey = null;
+// A scene's material grid is a pure function of (scene, variant, position), and
+// neighbouring tiles keep asking for the same scenes, so keep a bounded cache.
+const sceneGridCache = new Map();
+const SCENE_GRID_CACHE_MAX = 128;
+
+function sceneGridFor(scene) {
+	const key = `${scene.key}/${scene.variantKey || ''}@${scene.x},${scene.y}`;
+	let grid = sceneGridCache.get(key);
+	if (grid === undefined) {
+		grid = pixelSceneMaterialGrid(scene, bandSelect);
+		if (sceneGridCache.size >= SCENE_GRID_CACHE_MAX) {
+			sceneGridCache.delete(sceneGridCache.keys().next().value);
+		}
+		sceneGridCache.set(key, grid);
+	}
+	return grid;
+}
 
 async function generateEdgeDecalTileWorker(msg) {
-	const { worldKey, tx, ty, seed, ngPlusCount, gameMode } = msg;
+	const { worldKey, tx, ty, seed, ngPlusCount, gameMode, scenes } = msg;
 	let bitmap = null;
 	if (workerTileLayers && workerBiomeData) {
 		await initEdgeDecalAtlas();
@@ -58,6 +76,7 @@ async function generateEdgeDecalTileWorker(msg) {
 			decalField = createMaterialField(workerTileLayers, workerBiomeData,
 				GENERATOR_CONFIG, mapWidth, seed);
 			decalFieldKey = worldKey;
+			sceneGridCache.clear();
 		}
 		const P = EDGE_DECAL_HALO;
 		const size = EDGE_DECAL_TILE + 2 * P;
@@ -68,10 +87,17 @@ async function generateEdgeDecalTileWorker(msg) {
 		// both shifts are whole chunks for every shipped map width, but the stamp
 		// clips to its own chunk so pass it rather than assume.
 		const mapWidth = getWorldSize(ngPlusCount > 0, gameMode);
+		const sceneGrids = (scenes || []).map(sceneGridFor).filter(Boolean);
+		const stats = {};
 		const rgba = stampEdgeDecals(mat, size, size, x0, y0, seed, {
 			chunkShiftX: (mapWidth * 256) % CHUNK_SIZE,
 			chunkShiftY: (14 * CHUNK_SIZE) % CHUNK_SIZE,
+			// The scenes overlapping this tile, in paint order: each one runs the
+			// engine's scene-time decal pass on top of the terrain passes.
+			scenes: sceneGrids,
+			stats,
 		});
+		var decalDebug = { scenesSent: (scenes || []).length, gridsBuilt: sceneGrids.length, ...stats };
 
 		const T = EDGE_DECAL_TILE;
 		const cropped = new Uint8ClampedArray(T * T * 4);
@@ -87,6 +113,7 @@ async function generateEdgeDecalTileWorker(msg) {
 	self.postMessage({
 		type: 'EDGE_DECAL_TILE',
 		worldKey, tx, ty, bitmap,
+		debug: typeof decalDebug !== 'undefined' ? decalDebug : null,
 	}, bitmap ? [bitmap] : []);
 }
 

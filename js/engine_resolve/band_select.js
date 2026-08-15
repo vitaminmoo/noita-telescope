@@ -138,3 +138,13 @@ export function selectComponentForCell(biome, worldX, worldY, density) {
 export function materialNameForId(id) {
 	return (id >= 0 && id < MATERIAL_NAMES_BY_ID.length) ? MATERIAL_NAMES_BY_ID[id] : null;
 }
+
+/** The inverse: engine material id for a name, or -1 when the tables lack it. */
+let _idByName = null;
+export function materialIdForName(name) {
+	if (!_idByName) {
+		_idByName = new Map();
+		MATERIAL_NAMES_BY_ID.forEach((n, i) => { if (n) _idByName.set(n, i); });
+	}
+	return _idByName.get(name) ?? -1;
+}

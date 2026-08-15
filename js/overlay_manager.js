@@ -1,6 +1,7 @@
 // world_manager.js
 import { app } from './app.js';
-import { putEdgeDecalTile } from './edge_decal_layer.js';
+import { EDGE_DECAL_TILE, putEdgeDecalTile } from './edge_decal_layer.js';
+import { EDGE_DECAL_HALO } from './edge_decals.js';
 import { PIXEL_SCENE_DATA, setPixelSceneVariantRebuilder } from './pixel_scene_generation.js';
 import { appSettings, updateSettingsFromUI } from './settings.js';
 
@@ -32,6 +33,12 @@ overlayWorker.onmessage = async (e) => {
 		app.draw();
 	}
 	else if (msg.type === 'EDGE_DECAL_TILE') {
+		// Kept for harness inspection; bounded so a long session cannot grow it.
+		if (msg.debug) {
+			const d = (app._decalDebug ??= []);
+			d.push({ tx: msg.tx, ty: msg.ty, ...msg.debug });
+			if (d.length > 64) d.shift();
+		}
 		if (msg.bitmap && putEdgeDecalTile(msg.worldKey, msg.tx, msg.ty, msg.bitmap)) app.draw();
 	}
 	else if (msg.type === 'OVERLAY_GENERATED') {
@@ -163,6 +170,29 @@ export function getOrGenerateOverlay(pw, pwVertical) {
 
 /** Asks the worker for one world-space edge-decal tile (edge_decal_layer.js). */
 export function requestEdgeDecalTile(worldKey, tx, ty) {
+	// The pixel scenes overlapping the tile's padded rect, in paint order: the
+	// engine dresses a scene's cells with its own decal pass at paint time, so
+	// the worker needs to know what landed here. Tiles are world-space and
+	// PW-independent, and so are scene positions (scene.x/y are absolute), so
+	// the main-world list answers every PW.
+	//
+	// No list yet (world still generating) -> decline, so the layer retries on a
+	// later draw instead of caching a tile with the scene stamps missing.
+	const scenes = [];
+	const list = app.pixelScenesByPW?.['0,0'] ?? app.pixelScenesByPW?.[`${app.pw},0`];
+	if (!list) return false;
+	{
+		const P = EDGE_DECAL_HALO;
+		const left = tx * EDGE_DECAL_TILE - P, right = left + EDGE_DECAL_TILE + 2 * P;
+		const top = ty * EDGE_DECAL_TILE - P, bottom = top + EDGE_DECAL_TILE + 2 * P;
+		for (const scene of list) {
+			const data = PIXEL_SCENE_DATA[scene.key];
+			if (!data) continue;
+			if (scene.x + data.width <= left || scene.x >= right ||
+				scene.y + data.height <= top || scene.y >= bottom) continue;
+			scenes.push({ key: scene.key, variantKey: scene.variantKey, x: scene.x, y: scene.y });
+		}
+	}
 	overlayWorker.postMessage({
 		cmd: 'GENERATE_EDGE_DECAL_TILE',
 		worldKey,
@@ -170,8 +200,10 @@ export function requestEdgeDecalTile(worldKey, tx, ty) {
 		ty,
 		seed: app.seed,
 		ngPlusCount: app.ngPlusCount,
-		gameMode: app.gameMode
+		gameMode: app.gameMode,
+		scenes
 	});
+	return true;
 }
 
 export function isOverlayPending(pw, pwVertical) {

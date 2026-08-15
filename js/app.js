@@ -3009,17 +3009,6 @@ export const app = {
 		}
 		if (prof) markLayer(prof, 'tileOverlays');
 
-		// Layer 4b
-		// Edge decals: the sprite band the engine bakes into cell colors along
-		// material borders. It belongs on the terrain, under the pixel scenes,
-		// because that is where the game puts it. Only the engine-resolved GL
-		// terrain has per-pixel material identity to hang it off, hence the gate.
-		if (L.tileOverlays && appSettings.edgeDecals && appSettings.engineTerrain
-			&& appSettings.terrainRenderer === 'gl' && biomeOverlayMode !== 'none') {
-			drawEdgeDecals(this.ctx, this, viewRect, requestEdgeDecalTile);
-			if (prof) markLayer(prof, 'edgeDecals');
-		}
-
 		// Layer 5
 		// Pixel scenes
 		if (L.pixelScenes) {
@@ -3141,6 +3130,20 @@ export const app = {
 			}
 		}
 		if (prof) markLayer(prof, 'pixelScenes');
+
+		// Layer 5b
+		// Edge decals: the sprite band the engine bakes into cell colors along
+		// material borders. Drawn ABOVE the pixel scenes because the tiles carry
+		// the engine's full stamp history: the terrain pass, then each scene's
+		// own paint-time pass — a scene erases the terrain stamps under the
+		// cells it replaces and dresses its own, so every texel left in a tile
+		// belongs on top. Only the engine-resolved GL terrain has per-pixel
+		// material identity to hang the pass off, hence the gate.
+		if (L.tileOverlays && appSettings.edgeDecals && appSettings.engineTerrain
+			&& appSettings.terrainRenderer === 'gl' && biomeOverlayMode !== 'none') {
+			drawEdgeDecals(this.ctx, this, viewRect, requestEdgeDecalTile);
+			if (prof) markLayer(prof, 'edgeDecals');
+		}
 
 		// Layer 6
 		// Debug overlays (tile bounds, pathfinding)
