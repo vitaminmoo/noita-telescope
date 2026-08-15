@@ -8,7 +8,7 @@ import { generateBiomeTiles } from './tile_generator.js';
 import { scanSpawnFunctions, getSpecialPoIs, prescanSpawnFunctions } from './poi_scanner.js';
 import { performSearch, navigateSearch, cancelSearch, isSearchActive, clearHighlights, performLocalSearch, syncSearchWorkerData, activeLocalSearchArea, syncSettingsToSearchWorker, continueSearchSequence } from './search_manager.js';
 import { TIME_UNTIL_LOADING, POI_RADIUS, CHUNK_SIZE, BIOME_EDGE_NOISE_PADDING_PIXELS, VISUAL_TILE_OFFSET_X, VISUAL_TILE_OFFSET_Y, MIN_CAM_Z, SKY_EXTRA_HEIGHT } from './constants.js';
-import { getBiomeAtWorldCoordinates, getMaterialAtWorldCoordinates, getWorldCenter, getWorldSize, getPWLimit, MATERIAL_CONTAINER_TYPES } from './utils.js';
+import { getBiomeAtWorldCoordinates, getMaterialProvenanceAtWorldCoordinates, getWorldCenter, getWorldSize, getPWLimit, MATERIAL_CONTAINER_TYPES } from './utils.js';
 import { renderWallMessages } from './wall_messages.js';
 import { findEyeMessages, renderEyeMessages } from './eye_messages.js';
 import { BIOME_COLOR_LOOKUP, createBiomeMapAlphaMask, createTileOverlays, createTileOverlaysCheap, createTileOverlaysExpanded, terrainFillColor } from './image_processing.js';
@@ -22,7 +22,10 @@ import { NollaPrng } from './nolla_prng.js';
 import { appSettings, updateSettings, updateSettingsFromUI, updateSpellFlags, updateSpecialFlags, RENDER_LAYERS, readRenderLayersFromUI } from './settings.js';
 import { syncWorldWorkerData, getOrGenerateWorld, syncSettingsToWorldWorker } from './world_manager.js';
 import { syncOverlayWorkerData, getOrGenerateOverlay, syncSettingsToOverlayWorker, recolorPixelScenes, invalidatePendingOverlays, requestEdgeDecalTile } from './overlay_manager.js';
-import { drawEdgeDecals, invalidateEdgeDecals, pendingEdgeDecalTiles } from './edge_decal_layer.js';
+import { drawEdgeDecals, edgeDecalAt, invalidateEdgeDecals, pendingEdgeDecalTiles } from './edge_decal_layer.js';
+import { getMaterialAtlas, initMaterialAtlas, materialAlpha, materialAtlasEntry, materialTexelInfo } from './gl/material_atlas.js';
+import { ENGINE_MODE_FALLBACK, ENGINE_MODE_TOPO2 } from './gl/engine_resources.js';
+import { MATERIAL_BY_NAME } from './potion_config.js';
 import { getBiomeModifiers, getStartingWeather } from './misc_generation.js';
 import { getCauldronState, getCauldronVariation } from './cauldron.js';
 import { WAND_TIERS } from './wand_config.js';
@@ -239,6 +242,10 @@ export const app = {
 	cam: { x: CHUNK_SIZE*35, y: CHUNK_SIZE*24, z: 0.0625 },
 	drag: { on: false, lx: 0, ly: 0, startX: -10, startY: -10 },
 	pinnedTooltip: null,
+	// Last canvas pixel read back for the hover tooltip's color swatch; x is reset
+	// to -1 by drawNow() so a repaint always re-reads (displayedColorAt).
+	colorProbe: { x: -1, y: -1, rgb: 0 },
+	copyFlashTimer: 0,
 	pw: 0,
 	pwVertical: 0,
 	seed: 0,
@@ -882,6 +889,12 @@ export const app = {
 				// Treat as click if not dragged
 				const hit = this.getHitObject(e);
 				let pinchange = false;
+				// Plain click on the map (nothing pinnable under the cursor): copy the
+				// hover tooltip. Guarded on the canvas because this handler is on
+				// `window`, so every click in the side panels lands here too.
+				if (!hit && e.target === this.canvas) {
+					this.copyCoordsTooltip();
+				}
 				if (hit) {
 					this.pinnedTooltip = hit;
 					const tip = document.getElementById('tooltip');
@@ -1522,47 +1535,18 @@ export const app = {
 			const rect = document.getElementById('view').getBoundingClientRect();
 			const wx = (e.clientX - rect.left - this.canvas.width/2) / this.cam.z + this.cam.x;
 			const wy = (e.clientY - rect.top - this.canvas.height/2) / this.cam.z + this.cam.y;
-			
+
 			const coordsDiv = document.getElementById('coords');
 			coordsDiv.style.display = 'block';
 			coordsDiv.style.left = (e.clientX - rect.left + 15) + 'px';
 			coordsDiv.style.top = (e.clientY - rect.top - 25) + 'px';
-			
+
 			// Absolute coordinate math
 			const absX = Math.floor(wx - 512*getWorldCenter(this.isNGP, this.gameMode)) + (this.pw * 512 * getWorldSize(this.isNGP, this.gameMode));
 			const absY = Math.floor(wy - 512*14 + (this.pwVertical * 512 * 48));
-			let biomeName = '';
-			// Get biome
-			const biomeResult = getBiomeAtWorldCoordinates(this.biomeData, absX, absY, this.isNGP, this.gameMode, appSettings.enableEdgeNoise);
-			if (biomeResult && biomeResult.biome) {
-				// For the display name, let's just use the generator config
-				const biomeDisplayName = GENERATOR_CONFIG[biomeResult.biome]?.name || biomeResult.biome;
-				biomeName = `<br>Biome: ${biomeDisplayName}`;
-				if (this.biomeModifiers && this.biomeModifiers[biomeResult.biome]) {
-					const biomeModifier = this.biomeModifiers[biomeResult.biome];
-					const biomeModifierName = getDisplayName(biomeModifier.id);
-					const requiresFlag = biomeModifier.requires_flag ? `<br>(requires flag: ${biomeModifier.requires_flag})` : '';
-					biomeName += `<br>Modifier: ${biomeModifierName}${requiresFlag}`;
-				}
-			}
-			let materialName = '';
-			let material = null;
-			if (this.tileLayers && this.tileLayers.length > 0 && this.pixelScenesByPW && this.pixelScenesByPW[`${this.pw},${this.pwVertical}`]) {
-				// Get material
-				material = getMaterialAtWorldCoordinates(this.tileLayers, this.pixelScenesByPW[`${this.pw},${this.pwVertical}`], absX, absY, this.pw, this.pwVertical, this.isNGP, this.gameMode);
-			}
-			// Fill biomes (solid_wall etc.) have no layer.buffer to sample, so
-			// answer from the wobble-resolved chunk color. Last so real layer or
-			// pixel-scene content always wins. FILL_LAYER_MATERIALS, not
-			// FILL_BIOME_MATERIALS: a `sceneOnly` room's chunk is air wherever its
-			// scene does not cover it, so naming its material there would be a lie.
-			if (!material && biomeResult) {
-				material = FILL_LAYER_MATERIALS[biomeResult.colorInt] ?? null;
-			}
-			if (material) {
-				materialName = `<br>Material: ${getDisplayName(material)}`;
-			}
-			coordsDiv.innerHTML = `${absX}, ${absY}${biomeName}${materialName}`;
+			coordsDiv.innerHTML = this.pixelInfoLines(absX, absY,
+				Math.floor(e.clientX - rect.left), Math.floor(e.clientY - rect.top)).join('<br>');
+			coordsDiv.classList.remove('copied');
 
 			if (this.pinnedTooltip) return; // Don't update tooltip on hover if one is pinned
 
@@ -1575,6 +1559,204 @@ export const app = {
 			updateTooltip(e, hit, tip);
 			toggleTooltipPinned(tip, false);
 		}
+	},
+
+	// The composited color under the cursor, read straight back from the main 2D
+	// canvas: the GL terrain pass renders to its own offscreen canvas that drawNow()
+	// blits into this one, so this context holds the final pixel of every layer.
+	//
+	// A 1x1 getImageData is a partial readback, but it still syncs with the GPU, so
+	// it is cached per (pixel, frame): the cache is dropped by drawNow() and by the
+	// cursor moving, which bounds this at one readback per drawn frame while panning
+	// and one per cursor pixel while still.
+	displayedColorAt(canvasX, canvasY) {
+		if (canvasX < 0 || canvasY < 0 || canvasX >= this.canvas.width || canvasY >= this.canvas.height) return null;
+		const probe = this.colorProbe;
+		if (probe.x === canvasX && probe.y === canvasY) return probe.rgb;
+		const d = this.ctx.getImageData(canvasX, canvasY, 1, 1).data;
+		probe.x = canvasX;
+		probe.y = canvasY;
+		probe.rgb = (d[0] << 16) | (d[1] << 8) | d[2];
+		return probe.rgb;
+	},
+
+	// One tooltip line per fact about the hovered world pixel: what it is, which
+	// pipeline stage painted it, and what that paint was sampled from. Runs per
+	// mousemove, so every lookup here is O(1) against data the draw path already
+	// built -- no scene, atlas or overlay rebuilds.
+	pixelInfoLines(absX, absY, canvasX, canvasY) {
+		const lines = [`${absX}, ${absY}`];
+
+		// Get biome
+		const biomeResult = getBiomeAtWorldCoordinates(this.biomeData, absX, absY, this.isNGP, this.gameMode, appSettings.enableEdgeNoise);
+		if (biomeResult && biomeResult.biome) {
+			// For the display name, let's just use the generator config
+			lines.push(`Biome: ${GENERATOR_CONFIG[biomeResult.biome]?.name || biomeResult.biome}`);
+			if (this.biomeModifiers && this.biomeModifiers[biomeResult.biome]) {
+				const biomeModifier = this.biomeModifiers[biomeResult.biome];
+				lines.push(`Modifier: ${getDisplayName(biomeModifier.id)}`);
+				if (biomeModifier.requires_flag) lines.push(`(requires flag: ${biomeModifier.requires_flag})`);
+			}
+		}
+
+		const rgb = this.displayedColorAt(canvasX, canvasY);
+		if (rgb !== null) {
+			const hex = rgb.toString(16).padStart(6, '0');
+			lines.push(`Color: <span class="coords-swatch" style="background:#${hex}"></span> #${hex}`);
+		}
+
+		let prov = null;
+		if (this.tileLayers && this.tileLayers.length > 0 && this.pixelScenesByPW && this.pixelScenesByPW[`${this.pw},${this.pwVertical}`]) {
+			// Get material, and which stage painted it
+			prov = getMaterialProvenanceAtWorldCoordinates(this.tileLayers, this.pixelScenesByPW[`${this.pw},${this.pwVertical}`], absX, absY, this.pw, this.pwVertical, this.isNGP, this.gameMode);
+		}
+		let material = prov ? prov.material : null;
+		let source = prov ? prov.source : null;
+		// Fill biomes (solid_wall etc.) have no layer.buffer to sample, so
+		// answer from the wobble-resolved chunk color. Last so real layer or
+		// pixel-scene content always wins. FILL_LAYER_MATERIALS, not
+		// FILL_BIOME_MATERIALS: a `sceneOnly` room's chunk is air wherever its
+		// scene does not cover it, so naming its material there would be a lie.
+		if (!material && biomeResult) {
+			material = FILL_LAYER_MATERIALS[biomeResult.colorInt] ?? null;
+			if (material) source = 'fill';
+		}
+		if (material) {
+			const displayName = getDisplayName(material);
+			const alpha = materialAlpha(material);
+			lines.push(`Material: ${displayName === material ? material : `${displayName} (${material})`}`
+				+ (alpha < 255 ? ` alpha ${alpha}/255` : ''));
+		}
+
+		this.pushOriginLines(lines, prov, source);
+		this.pushTextureLines(lines, material, absX, absY);
+		if (biomeResult) lines.push(`Chunk: ${biomeResult.pos.x},${biomeResult.pos.y} ${this.chunkPaintState(biomeResult)}`);
+
+		// Edge decals bake into the engine's cell colors, so a decal texel sits on
+		// top of whatever the origin above painted.
+		const decal = (appSettings.edgeDecals && appSettings.engineTerrain
+			&& appSettings.terrainRenderer === 'gl') ? edgeDecalAt(absX, absY) : null;
+		if (decal && decal.a > 0) {
+			const dhex = ((decal.r << 16) | (decal.g << 8) | decal.b).toString(16).padStart(6, '0');
+			lines.push(`Decal: <span class="coords-swatch" style="background:#${dhex}"></span> #${dhex}`
+				+ (decal.a < 255 ? ` a${decal.a}` : '') + ` (tile ${decal.tx},${decal.ty})`);
+		}
+		return lines;
+	},
+
+	// "What painted this pixel": the pipeline stage that answered, and where in
+	// that stage's source image the pixel sits.
+	pushOriginLines(lines, prov, source) {
+		if (source === 'scene') {
+			const scene = prov.scene;
+			const data = PIXEL_SCENE_DATA[scene.key];
+			lines.push(`Origin: scene ${scene.key} @ ${scene.localX},${scene.localY}`);
+			if (data) lines.push(`Image: data/pixel_scenes/${data.dir}/${data.name}.png`);
+			if (scene.variantKey) lines.push(`Variant: ${scene.variantKey}`);
+			// The _visual.png cell-color override only applies where its alpha is
+			// >= 128; artMask is that test, bit-packed MSB-first at load time.
+			if (data && data.artMask) {
+				const p = scene.localY * data.width + scene.localX;
+				const covered = (data.artMask[p >> 3] & (0x80 >> (p & 7))) !== 0;
+				lines.push(covered
+					? `Art: visual override (${data.name}_visual.png)`
+					: `Art: material color (${data.name}_visual.png does not cover)`);
+			}
+		}
+		else if (source === 'layer') {
+			lines.push(`Origin: ${prov.layer.kind} layer ${prov.layer.biomeName} @ ${prov.layer.localX},${prov.layer.localY}`);
+		}
+		else if (source === 'fill') {
+			// Fill biomes have no per-pixel source image: the whole chunk is one material.
+			lines.push(`Origin: chunk fill${prov && prov.fillLayer ? ` (${prov.fillLayer.biomeName})` : ''}`);
+		}
+		else {
+			// Nothing painted the cell; the Chunk line below says whether that is the
+			// engine pass answering "air here" or a chunk telescope never generates.
+			lines.push('Origin: air');
+		}
+		// A scene footprint the pixel falls inside but which painted nothing here.
+		if (source !== 'scene' && prov && prov.coveringScene) {
+			const scene = prov.coveringScene;
+			lines.push(`In scene: ${scene.key} @ ${scene.localX},${scene.localY} (transparent here)`);
+		}
+	},
+
+	// How the chunk this pixel sits in gets painted: which engine-resolve mode the
+	// GL pass runs for it, or whether nothing paints it at all (the checkerboard
+	// buildUnpaintedMask() marks).
+	chunkPaintState(biomeResult) {
+		if (!biomeResult) return 'unknown chunk';
+		const idx = biomeResult.pos.y * this.w + biomeResult.pos.x;
+		const modes = (appSettings.engineTerrain && this.glTerrain
+			&& this.glTerrain.engineChunkWidth === this.w) ? this.glTerrain.engineChunkModes : null;
+		if (modes && idx < modes.length) {
+			const mode = (modes[idx] >> 8) & 3;
+			if (mode !== ENGINE_MODE_FALLBACK) return `engine ${mode === ENGINE_MODE_TOPO2 ? 'topo2' : 'topo0'}`;
+		}
+		if (this.unpaintedCovered && idx < this.unpaintedCovered.length && !this.unpaintedCovered[idx]) {
+			return 'unpainted (checkerboard)';
+		}
+		return modes ? 'layer fallback' : 'layer pipeline';
+	},
+
+	// The engine bakes a cell's color from its material texture at the cell's own
+	// absolute world coordinates (material_atlas.js), so a textured material's
+	// pixel identity is the texture file plus that texel.
+	pushTextureLines(lines, material, absX, absY) {
+		if (!material) return;
+		const data = MATERIAL_BY_NAME.get(material);
+		if (!data) return;
+		const flatHex = (parseInt(data.texture_color, 16) & 0xffffff).toString(16).padStart(6, '0');
+		if (!data.texture) {
+			lines.push(`Texture: flat <span class="coords-swatch" style="background:#${flatHex}"></span> #${flatHex} (texture_color)`);
+			return;
+		}
+		// The detail pass is off below MATERIAL_DETAIL_MIN_ZOOM (sub-pixel texels
+		// only alias), so what is actually on screen is the flat color instead.
+		const detailOff = !(appSettings.materialTextures && appSettings.recolorMaterials
+			&& this.cam.z >= MATERIAL_DETAIL_MIN_ZOOM);
+		const flatNote = detailOff ? `, drawn flat #${flatHex}` : '';
+		// The atlas is fetched by the GL renderer; kick it off if the CPU bake is
+		// the active path so the texel coords appear on a later hover.
+		const atlas = getMaterialAtlas();
+		const entry = atlas ? materialAtlasEntry(atlas, material) : 0;
+		if (!entry) {
+			if (!atlas) initMaterialAtlas().catch(() => {});
+			lines.push(`Texture: ${data.texture}${flatNote}`);
+			return;
+		}
+		const texel = materialTexelInfo(atlas, entry, absX, absY);
+		const texelHex = (texel.rgba & 0xffffff).toString(16).padStart(6, '0');
+		const swatch = texel.rgba < 0 ? '(transparent texel)'
+			: `<span class="coords-swatch" style="background:#${texelHex}"></span> #${texelHex}`;
+		lines.push(`Texture: ${data.texture} ${texel.w}x${texel.h} @ ${texel.texelX},${texel.texelY} ${swatch}${flatNote}`);
+	},
+
+	// Copies the hover tooltip's plain text, with a brief flash on the tooltip.
+	// Called from the mouseup click path, so it only runs for a real click on the
+	// map that did not hit a PoI.
+	async copyCoordsTooltip() {
+		const coordsDiv = document.getElementById('coords');
+		if (!coordsDiv || coordsDiv.style.display === 'none') return;
+		const text = coordsDiv.innerText;
+		if (!text) return;
+		try {
+			await navigator.clipboard.writeText(text);
+		} catch {
+			// No clipboard permission (or a non-secure context): the old selection trick
+			const area = document.createElement('textarea');
+			area.value = text;
+			area.style.position = 'fixed';
+			area.style.opacity = '0';
+			document.body.appendChild(area);
+			area.select();
+			try { document.execCommand('copy'); } catch { /* nothing else to try */ }
+			area.remove();
+		}
+		coordsDiv.classList.add('copied');
+		clearTimeout(this.copyFlashTimer);
+		this.copyFlashTimer = setTimeout(() => coordsDiv.classList.remove('copied'), 900);
 	},
 
 	async preload() {
@@ -2271,6 +2453,7 @@ export const app = {
 	// everything else. Checkerboarding them would flag 38 correct chunks as missing.
 	buildUnpaintedMask() {
 		this.unpaintedMask = null;
+		this.unpaintedCovered = null;
 		this.unpaintedChunkCount = 0;
 		if (!this.tileLayers || !this.tileLayers.length || !this.w || !this.h) return;
 		const w = this.w, h = this.h;
@@ -2315,6 +2498,7 @@ export const app = {
 			}
 		}
 		this.unpaintedMaskUsedEngine = !!engModes;
+		this.unpaintedCovered = covered; // kept for the hover tooltip's per-chunk lookup
 		const canvas = document.createElement('canvas');
 		canvas.width = w;
 		canvas.height = h;
@@ -2566,6 +2750,7 @@ export const app = {
 		// markLayer() call below is a single null check when profiling is off.
 		const L = appSettings.renderLayers;
 		const prof = this.startLayerProfile();
+		this.colorProbe.x = -1; // the tooltip's cached readback belongs to the old frame
 		this.ctx.fillStyle = '#050505';
 		this.ctx.fillRect(0,0,this.canvas.width,this.canvas.height);
 		if (!this.biomeData) return;

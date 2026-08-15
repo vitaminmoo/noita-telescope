@@ -115,6 +115,22 @@ export function materialTexelRGBA(atlas, entry, worldX, worldY) {
     return ((a << 24) | (atlas.data[o] << 16) | (atlas.data[o + 1] << 8) | atlas.data[o + 2]) >>> 0;
 }
 
+/**
+ * The texture rect a material's cell color is sampled from, plus the texel this
+ * world pixel lands on: { w, h, texelX, texelY, rgba }, rgba as materialTexelRGBA
+ * (-1 when the texel is transparent). For the hover tooltip -- the shader does
+ * the same arithmetic inline.
+ */
+export function materialTexelInfo(atlas, entry, worldX, worldY) {
+    const m = (entry - 1) * 4;
+    const rw = atlas.meta[m + 2], rh = atlas.meta[m + 3];
+    return {
+        w: rw, h: rh,
+        texelX: pmod(worldX, rw), texelY: pmod(worldY, rh),
+        rgba: materialTexelRGBA(atlas, entry, worldX, worldY),
+    };
+}
+
 /** Compositing alpha of a material name (XML color alpha, water 0xA0). */
 export function materialAlpha(name) {
     return MATERIAL_ALPHA_BY_NAME.get(name) ?? 255;

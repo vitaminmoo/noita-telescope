@@ -455,6 +455,7 @@ export async function loadPixelSceneData() {
 						key: key,
 						biome: biome,
 						name: scene.name,
+						dir: alias, // data/pixel_scenes/<dir>/<name>.png -- the key can differ (getPixelSceneKey)
 						imgElement: imgData.data, // Store the image data directly since we need to manipulate it for recoloring
 						width: imgData.width,
 						height: imgData.height,

@@ -385,6 +385,29 @@ export function getResolvedBiome(biomeData, worldX, worldY, isNGP = false, gameM
 }
 
 export function getMaterialAtWorldCoordinates(tileLayers, pixelScenes, worldX, worldY, pwIndex, pwIndexVertical, isNGP = false, gameMode='normal') {
+    return getMaterialProvenanceAtWorldCoordinates(tileLayers, pixelScenes, worldX, worldY, pwIndex, pwIndexVertical, isNGP, gameMode).material;
+}
+
+/**
+ * Same walk as getMaterialAtWorldCoordinates(), but it reports WHICH stage
+ * answered and where in that stage's source image the pixel sits -- what the
+ * hover tooltip needs to name the pixel's origin.
+ *
+ * Returns { material, source, layer, scene, fillLayer, colorHex }:
+ *   source     'layer' (wang/static tile buffer) | 'scene' (pixel scene) | null
+ *   layer      { biomeName, localX, localY, kind } in wang-buffer cells, or null
+ *   scene      { key, name, localX, localY, variantKey } or null
+ *   coveringScene  first scene whose footprint covers the pixel, painted or not
+ *   fillLayer  the constant-material fill layer covering the pixel, or null
+ *   colorHex   the source image's 'rrggbb' at the pixel, or null
+ *
+ * `fillLayer` is informational ONLY: a fill layer carries no buffer to sample,
+ * so it never sets `material`. That keeps getMaterialAtWorldCoordinates()'s
+ * "null means no layer/scene content here" contract byte-for-byte unchanged --
+ * callers answer fill biomes from the biome map (FILL_LAYER_MATERIALS) instead.
+ */
+export function getMaterialProvenanceAtWorldCoordinates(tileLayers, pixelScenes, worldX, worldY, pwIndex, pwIndexVertical, isNGP = false, gameMode='normal') {
+    const result = { material: null, source: null, layer: null, scene: null, coveringScene: null, fillLayer: null, colorHex: null };
     // Adjust for PW
     const adjustedWorldX = getWorldCenter(isNGP, gameMode) * 512 + worldX - pwIndex * getWorldSize(isNGP, gameMode) * 512 + (isNGP || gameMode === 'nightmare' ? -8 * pwIndex : 0) - VISUAL_TILE_OFFSET_X;
     const adjustedWorldY = 14 * 512 + worldY - pwIndexVertical * 24570 - VISUAL_TILE_OFFSET_Y;
@@ -403,12 +426,15 @@ export function getMaterialAtWorldCoordinates(tileLayers, pixelScenes, worldX, w
             // have none: their material is answered from the biome map instead
             // (app.js), and they must not shadow a pixel scene carved into them.
             const buffer = layer.buffer;
-            if (!buffer) continue;
+            if (!buffer) {
+                if (!result.fillLayer && layer.isFill) result.fillLayer = layer;
+                continue;
+            }
 
             // Index: (y + offset) * width + x, then * 3 for RGB
             const idx = ((localY + 4) * layer.width + localX) * 3;
-            
-            if (idx + 2 >= buffer.length) return null;
+
+            if (idx + 2 >= buffer.length) return result;
 
             const r = buffer[idx];
             const g = buffer[idx + 1];
@@ -419,7 +445,13 @@ export function getMaterialAtWorldCoordinates(tileLayers, pixelScenes, worldX, w
             // 4. Return the material name from your existing table
             //console.log(`Material color at (${worldX}, ${worldY}) [local: (${localX}, ${localY})]: #${hexStr}`);
             if (MATERIAL_COLOR_LOOKUP[hexStr]) {
-                return MATERIAL_COLOR_LOOKUP[hexStr];
+                result.material = MATERIAL_COLOR_LOOKUP[hexStr];
+                result.source = 'layer';
+                // Generated wang layers carry tileIndices; the hand-authored ones
+                // (generateStaticTile) are a straight image blit.
+                result.layer = { biomeName: layer.biomeName, localX, localY, kind: layer.tileIndices ? 'wang' : 'static' };
+                result.colorHex = hexStr;
+                return result;
             }
             //break; // No need to check other layers if we've found the correct one, hopefully
             // Actually nevermind, forgot about the single chunk fungal caverns inside the range of other biomes
@@ -432,6 +464,11 @@ export function getMaterialAtWorldCoordinates(tileLayers, pixelScenes, worldX, w
         const localX = worldX - scene.x;
         const localY = worldY - scene.y;
         if (localX >= 0 && localX < scene.width && localY >= 0 && localY < scene.height) {
+            // Remembered even when the scene paints nothing here, so the tooltip can
+            // still say which scene's footprint the pixel falls inside.
+            if (!result.coveringScene) {
+                result.coveringScene = { key: scene.key, name: scene.name, localX, localY };
+            }
             // Use original scene data via key to avoid recoloring issues
             // Need to use a variant though if there were random materials
             let imgData;
@@ -451,7 +488,11 @@ export function getMaterialAtWorldCoordinates(tileLayers, pixelScenes, worldX, w
             const hexStr = `${hex.toString(16).padStart(6, '0')}`;
             //console.log(`Pixel scene color at (${worldX}, ${worldY}) [local: (${localX}, ${localY})]: #${hexStr}`);
             if (MATERIAL_COLOR_LOOKUP[hexStr]) {
-                return MATERIAL_COLOR_LOOKUP[hexStr];
+                result.material = MATERIAL_COLOR_LOOKUP[hexStr];
+                result.source = 'scene';
+                result.scene = { key: scene.key, name: scene.name, localX, localY, variantKey: shortenedVariantKey };
+                result.colorHex = hexStr;
+                return result;
             }
             else {
                 //console.log(`No material found for pixel scene color #${hexStr} at (${worldX}, ${worldY}) in scene ${scene.name}.`);
@@ -459,7 +500,7 @@ export function getMaterialAtWorldCoordinates(tileLayers, pixelScenes, worldX, w
             // Might be in a different pixel scene that is nested or something, but seems unlikely.
         }
     }
-    return null;
+    return result;
 }
 
 export function getPWIndices(worldX, worldY, pw = 0, pwVertical = 0, isNGP = false, gameMode='normal') {

@@ -255,10 +255,14 @@ export const MATERIAL_DATA = await fetchSafeJson('../data/material_data.json');
 export const MATERIAL_WANG_COLORS = {};
 export const POTION_COLORS = {};
 export const TEXTURE_COLORS = {};
+// Whole (parent-resolved) material record by name, for callers that want more
+// than one of the tables above -- the hover tooltip's texture/flat-color line.
+export const MATERIAL_BY_NAME = new Map();
 for (const material of MATERIAL_DATA) {
 	MATERIAL_WANG_COLORS[material.name] = material.wang;
 	POTION_COLORS[material.name] = material.color;
 	TEXTURE_COLORS[material.name] = material.texture_color;
+	MATERIAL_BY_NAME.set(material.name, material);
 }
 
 // Use texture colors in this

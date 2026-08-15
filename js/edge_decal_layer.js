@@ -60,6 +60,38 @@ export function putEdgeDecalTile(key, tx, ty, bitmap) {
     return true;
 }
 
+// 1x1 scratch for edgeDecalAt(). willReadFrequently keeps it CPU-backed, so the
+// per-hover getImageData is a plain array read rather than a GPU sync.
+let probeCtx = null;
+
+/**
+ * The decal texel covering an absolute world pixel, for the hover tooltip:
+ * { tx, ty, r, g, b, a }, or null when no tile is cached there (the pass is off,
+ * zoomed out, or the tile has not arrived yet). One 1x1 drawImage + getImageData,
+ * off the draw path entirely.
+ *
+ * Tile space IS absolute world space -- drawEdgeDecals() only ever runs at
+ * pwVertical 0, and its offX/offY are exactly the hover tooltip's abs-coord
+ * conversion -- so no PW arithmetic is needed here.
+ */
+export function edgeDecalAt(worldX, worldY) {
+    const tx = Math.floor(worldX / EDGE_DECAL_TILE);
+    const ty = Math.floor(worldY / EDGE_DECAL_TILE);
+    const bitmap = tiles.get(`${tx},${ty}`);
+    if (!bitmap) return null;
+    if (!probeCtx) {
+        const c = document.createElement('canvas');
+        c.width = 1;
+        c.height = 1;
+        probeCtx = c.getContext('2d', { willReadFrequently: true });
+    }
+    probeCtx.clearRect(0, 0, 1, 1);
+    probeCtx.drawImage(bitmap,
+        worldX - tx * EDGE_DECAL_TILE, worldY - ty * EDGE_DECAL_TILE, 1, 1, 0, 0, 1, 1);
+    const [r, g, b, a] = probeCtx.getImageData(0, 0, 1, 1).data;
+    return { tx, ty, r, g, b, a };
+}
+
 /**
  * Blits the decal tiles covering `viewRect` and asks for the missing ones.
  *

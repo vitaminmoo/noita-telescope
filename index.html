@@ -98,7 +98,16 @@
         #coords {
             position: absolute; pointer-events: none; color: #00ff00; font-size: 12px;
             text-shadow: 1px 1px 2px #000; display: none; z-index: 90; font-weight: bold;
+            font-family: ui-monospace, "DejaVu Sans Mono", Consolas, monospace; line-height: 1.4;
         }
+        #coords .coords-swatch {
+            display: inline-block; width: 9px; height: 9px; vertical-align: -1px;
+            border: 1px solid #000; image-rendering: pixelated;
+        }
+        /* Click-to-copy flash. ::after content stays out of innerText, so it is
+           never copied along with the tooltip body. */
+        #coords.copied { color: #ffffff; }
+        #coords.copied::after { content: ' [copied]'; color: #ffd100; }
 
         /* Item UI */
         .item-header { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; border-bottom: 1px solid #444; padding-bottom: 8px; }
