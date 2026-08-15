@@ -7,7 +7,9 @@
 // Layouts (all consumed with texelFetch, NEAREST, no filtering):
 //   engChunk  R16UI  mapW x 48       bits 0-7 biome slot, 8-9 mode
 //                                    (0 topo0, 1 topo2, 2 fallback),
-//                                    bit 10 noise_biome_edges
+//                                    bit 10 noise_biome_edges,
+//                                    bit 11 the generator paints nothing here
+//                                    (`sceneOnly`: empty wang_template_file)
 //   engTable  RGBA32F 512 x (n+1)    buildEngineTable — per-biome band table
 //                                    (cols 0..47: header texel + 5 texels/band),
 //                                    topology-0 params (cols 48..53), and the
@@ -21,6 +23,7 @@ import {
 } from '../engine_resolve/engine_data.js';
 import { CAVES_SETUP, getModifierGrid } from '../engine_resolve/bitmap_caves.js';
 import { buildEngineLattice } from '../engine_resolve/lattice_builder.js';
+import { SCENE_ONLY_COLORS } from '../generator_config.js';
 import { BIOME_MAP_HEIGHT } from './indirection.js';
 
 export const ENGINE_MODE_TOPO0 = 0;
@@ -62,7 +65,15 @@ export function buildEngineResources(layers, biomeData, generatorConfig, mapWidt
             if (b.topo === 2) mode = lattice.chunkCovered[i] ? ENGINE_MODE_TOPO2 : ENGINE_MODE_FALLBACK;
             else mode = ENGINE_MODE_TOPO0;
         }
-        chunk[i] = (slot ?? 0) | (mode << 8) | ((b && b.noiseBiomeEdges) ? 1 << 10 : 0);
+        // A `sceneOnly` room paints no terrain at all (BIOME_WANG_TILE with an
+        // empty wang_template_file — the generator writes nothing and everything
+        // in the chunk comes from the room's pixel scene). The engine path gets
+        // that right on its own, but the legacy fallback re-resolves the biome
+        // with the CPU pipeline's own edge-noise rules and can land on a
+        // NEIGHBOUR's fill chunk, painting solid rock over the room's air. Flag
+        // the chunk so the fallback can answer "air" the way the game does.
+        chunk[i] = (slot ?? 0) | (mode << 8) | ((b && b.noiseBiomeEdges) ? 1 << 10 : 0)
+            | (SCENE_ONLY_COLORS.has(color) ? 1 << 11 : 0);
     }
     return { lattice, chunk, width: mapWidth, height: mapHeight };
 }

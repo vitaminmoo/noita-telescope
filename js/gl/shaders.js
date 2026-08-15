@@ -903,6 +903,14 @@ void main() {
         ivec2 cell = engResolveCell(w);
         uint info = engInfoAt(cell.x, cell.y);
         uint mode = (info >> 8) & 3u;
+        // The resolved cell's biome paints no terrain at all (a sceneOnly room:
+        // BIOME_WANG_TILE with an empty wang_template_file). Answer air
+        // here rather than falling through: the legacy pipeline re-resolves the
+        // biome with its own edge-noise rules, and where those disagree with the
+        // engine's wobble it paints a NEIGHBOUR's fill material over the room's
+        // air — e.g. rock_room chunk 28,20 on seed 786433191, where the game
+        // leaves air and telescope drew solid rock_hard_border.
+        if ((info & 2048u) != 0u) return;
         if (mode != 2u) {
             int slot = int(info & 0xffu);
             int mat;
