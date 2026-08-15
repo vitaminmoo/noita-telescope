@@ -31,7 +31,11 @@ import { setupProgressUI, updateUsedSpellProgress } from './progress.js';
 import { renderStars } from './star_decorations.js';
 import { getFungalShifts } from './fungal_shifts.js';
 import { pickAlchemyMaterials } from './alchemy.js';
-import { BACKGROUND_VOID, backgroundLayerColor, buildBackgroundEdges, loadBackgroundEdgeMasks, tintedEdgeStrip } from './biome_backgrounds.js';
+import {
+	BACKGROUND_VOID, backgroundLayerColor, buildBackdropRuns, buildBackgroundEdges,
+	drawBackdropRuns, drawGlobalBackgroundImages, drawSceneBackgrounds, edgeStripArt,
+	loadBackgroundArt, loadBackgroundEdgeMasks, tintedEdgeStrip,
+} from './biome_backgrounds.js';
 
 // Width of a background boundary strip in world pixels, matching the engine art.
 const STRIP_WORLD_PX = 64;
@@ -278,6 +282,7 @@ export const app = {
 		// Background boundary art. Fire and forget: the draw path skips strips whose
 		// mask has not arrived yet, and redraws pick them up once it has.
 		loadBackgroundEdgeMasks().then(() => this.draw());
+		loadBackgroundArt().then(() => this.draw());
 		const vp = document.getElementById('view');
 
 		const resize = () => {
@@ -2026,6 +2031,12 @@ export const app = {
 		this.backgroundEdges = buildBackgroundEdges(this.biomeData.pixels, this.w, this.h, skyCells);
 		this.backgroundEdgesHeaven = buildBackgroundEdges(this.biomeData.heavenPixels, this.w, this.h, heavenSkip);
 		this.backgroundEdgesHell = buildBackgroundEdges(this.biomeData.hellPixels, this.w, this.h, hellSkip);
+
+		// Runs of chunks sharing a background_image, for the full-art backdrop
+		// tiling (drawBackgroundStack). Same skip semantics as the strips.
+		this.backdropRuns = buildBackdropRuns(this.biomeData.pixels, this.w, this.h, skyCells);
+		this.backdropRunsHeaven = buildBackdropRuns(this.biomeData.heavenPixels, this.w, this.h, heavenSkip);
+		this.backdropRunsHell = buildBackdropRuns(this.biomeData.hellPixels, this.w, this.h, hellSkip);
 	},
 
 	// The terrain a vertical band actually contains, at one pixel per chunk.
@@ -2367,6 +2378,64 @@ export const app = {
 	// draw the strip's alpha filled with the winner's flat color (see
 	// js/biome_backgrounds.js), which is why this sits on top of the per-chunk
 	// background fill rather than replacing it.
+	// The full background stack for every world copy in view, in the engine's
+	// z order (docs/worldgen/background_rendering.md: the background SceneGraph
+	// draws HIGH z first): flat fallback -> backdrop tiles (z~99) -> boundary
+	// strips -> pixel-scene backgrounds (z=50) -> <BackgroundImages> (z=30).
+	// The cell layers then composite over this with straight src-over alpha,
+	// exactly like the game's cell grid over its background sprites.
+	//
+	// `reverse` flips the order for the destination-over air-hole refill in the
+	// pixel-scene layer: with destination-over, later draws land *behind*
+	// earlier ones, so front-to-back paints the same stack into the holes.
+	drawBackgroundStack(worldOffsets, viewRect, offscreen, reverse = false) {
+		const rawMap = document.getElementById('debug-original-biome-map').checked;
+		const worldCenter = getWorldCenter(this.isNGP, this.gameMode) * 512;
+		const worldSize = getWorldSize(this.isNGP, this.gameMode) * 512;
+		const steps = [];
+		steps.push(() => {
+			for (let worldKey of this.worldsInView) {
+				const { pwY, shiftX, shiftY } = worldOffsets[worldKey];
+				this.ctx.drawImage(this.biomeBackgroundImage(pwY), shiftX, shiftY, this.w * 512, this.h * 512);
+			}
+		});
+		if (!rawMap) {
+			// Below ~8 screen px per chunk the tiling detail is invisible and the
+			// flat per-image colors are already what the eye averages the art to.
+			if (512 * this.cam.z >= 8) {
+				steps.push(() => {
+					for (let worldKey of this.worldsInView) {
+						const { pwY, shiftX, shiftY } = worldOffsets[worldKey];
+						const runs = pwY === 0 ? this.backdropRuns
+							: pwY > 0 ? this.backdropRunsHell : this.backdropRunsHeaven;
+						if (runs) drawBackdropRuns(this.ctx, runs, shiftX, shiftY, viewRect);
+					}
+				});
+			}
+			steps.push(() => this.drawBackgroundEdges(worldOffsets, viewRect, offscreen));
+			steps.push(() => {
+				for (let worldKey of this.worldsInView) {
+					const { pwX, pwY, shiftX, shiftY } = worldOffsets[worldKey];
+					const scenes = this.pixelScenesByPW && this.pixelScenesByPW[`${pwX},${pwY}`];
+					if (!scenes) continue;
+					const toDrawX = (x) => x + worldCenter - pwX * worldSize + shiftX;
+					const toDrawY = (y) => y + 14 * 512 - pwY * 24576 + shiftY;
+					drawSceneBackgrounds(this.ctx, scenes, toDrawX, toDrawY, viewRect);
+				}
+			});
+			steps.push(() => {
+				for (let worldKey of this.worldsInView) {
+					const { pwX, pwY, shiftX, shiftY } = worldOffsets[worldKey];
+					const toDrawX = (x) => x + worldCenter - pwX * worldSize + shiftX;
+					const toDrawY = (y) => y + 14 * 512 - pwY * 24576 + shiftY;
+					drawGlobalBackgroundImages(this.ctx, toDrawX, toDrawY, viewRect);
+				}
+			});
+		}
+		if (reverse) steps.reverse();
+		for (const step of steps) step();
+	},
+
 	drawBackgroundEdges(worldOffsets, viewRect, offscreen) {
 		if (!this.backgroundEdges) return;
 		// The strips are 64 world px wide; below a few screen pixels they are not
@@ -2386,7 +2455,9 @@ export const app = {
 				for (const e of edges[r]) {
 					const dx = shiftX + e.dx, dy = shiftY + e.dy;
 					if (offscreen(dx, dy, e.dw, e.dh)) continue;
-					const strip = tintedEdgeStrip(e.mask, e.color);
+					// The real strip art when it's loaded, the flat-tinted alpha
+					// mask until then.
+					const strip = edgeStripArt(e) ?? tintedEdgeStrip(e.mask, e.color);
 					if (!strip) continue;
 					this.ctx.drawImage(strip, e.sx, e.sy, e.sw, e.sh, dx, dy, e.dw, e.dh);
 				}
@@ -2485,11 +2556,7 @@ export const app = {
 		// Layer 1
 		// Background biome colors
 		if (L.biomeBackground) {
-			for (let worldKey of this.worldsInView) {
-				const { pwY, shiftX, shiftY } = worldOffsets[worldKey];
-				this.ctx.drawImage(this.biomeBackgroundImage(pwY), shiftX, shiftY, this.w * 512, this.h * 512);
-			}
-			this.drawBackgroundEdges(worldOffsets, viewRect, offscreen);
+			this.drawBackgroundStack(worldOffsets, viewRect, offscreen);
 		}
 		if (prof) markLayer(prof, 'biomeBackground');
 
@@ -3072,7 +3139,7 @@ export const app = {
 				// behind the terrain, and forced air correctly reads as empty.
 				if (airErased && L.biomeBackground) {
 					this.ctx.globalCompositeOperation = 'destination-over';
-					this.ctx.drawImage(this.biomeBackgroundImage(pwY), shiftX, shiftY, this.w * 512, this.h * 512);
+					this.drawBackgroundStack(worldOffsets, viewRect, offscreen, true);
 					this.ctx.globalCompositeOperation = 'source-over';
 				}
 

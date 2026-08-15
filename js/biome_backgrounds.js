@@ -47,20 +47,24 @@ const IMAGE_INDEX = new Map(BACKGROUND_IMAGE_PATHS.map((p, i) => [p, i]));
 const IMAGE_COLORS = BACKGROUND_IMAGE_PATHS.map((p) => parseInt(data.images[p].color, 16));
 
 // biome-map RGB -> everything the background layer needs about that biome.
+function edgeRec(path) {
+	if (!path) return null;
+	return { art: path, mask: data.edgeMasks[path] ?? null };
+}
 const BY_COLOR = new Map();
 for (const b of data.biomes) {
 	const rgb = parseInt(b.color, 16) & 0xffffff;
 	BY_COLOR.set(rgb, {
 		imageIndex: b.background_image ? IMAGE_INDEX.get(b.background_image) : -1,
 		priority: b.background_edge_priority ?? 0,
-		// The renderer only uses the strips as alpha masks, and the 88 referenced
-		// strips share just 18 distinct masks, so each path is resolved to the one
-		// representative game file shipped under data/weather_gfx/edges/.
+		// Each direction carries both the biome's real strip art (art, shipped by
+		// tools/gen_backgrounds.py) and the alpha-dedup mask the flat fallback
+		// tints (mask): the 88 referenced strips share just 18 distinct masks.
 		edges: {
-			left: data.edgeMasks[b.background_edge_left] ?? null,
-			right: data.edgeMasks[b.background_edge_right] ?? null,
-			top: data.edgeMasks[b.background_edge_top] ?? null,
-			bottom: data.edgeMasks[b.background_edge_bottom] ?? null,
+			left: edgeRec(b.background_edge_left),
+			right: edgeRec(b.background_edge_right),
+			top: edgeRec(b.background_edge_top),
+			bottom: edgeRec(b.background_edge_bottom),
 		},
 	});
 }
@@ -180,14 +184,15 @@ export function buildBackgroundEdges(pixels, w, h, skipCells) {
 			const west = at(cx - 1, cy);
 			if (west && !same(me, west) && !isSkipped(cx - 1, cy)) {
 				const mine = edgeWinner(me, west) === me;
-				const mask = mine ? me.edges.left : west.edges.right;
-				if (mask) {
+				const edge = mine ? me.edges.left : west.edges.right;
+				if (edge) {
 					const keepTop = same(at(cx, cy - 1), me) && same(at(cx - 1, cy - 1), west);
 					const keepBottom = same(at(cx, cy + 1), me) && same(at(cx - 1, cy + 1), west);
 					const sy = keepTop ? 0 : STRIP;
 					const sh = (keepBottom ? STRIP_LEN : STRIP_LEN - STRIP) - sy;
 					rows[cy].push({
-						mask, color: IMAGE_COLORS[(mine ? me : west).imageIndex],
+						art: edge.art, mask: edge.mask,
+						color: IMAGE_COLORS[(mine ? me : west).imageIndex],
 						sx: 0, sy, sw: STRIP, sh,
 						dx: cx * CHUNK - (mine ? STRIP : 0), dy: cy * CHUNK - STRIP + sy,
 						dw: STRIP, dh: sh,
@@ -200,14 +205,15 @@ export function buildBackgroundEdges(pixels, w, h, skipCells) {
 			const north = at(cx, cy - 1);
 			if (north && !same(me, north) && !isSkipped(cx, cy - 1)) {
 				const mine = edgeWinner(me, north) === me;
-				const mask = mine ? me.edges.top : north.edges.bottom;
-				if (mask) {
+				const edge = mine ? me.edges.top : north.edges.bottom;
+				if (edge) {
 					const keepLeft = same(at(cx - 1, cy), me) && same(at(cx - 1, cy - 1), north);
 					const keepRight = same(at(cx + 1, cy), me) && same(at(cx + 1, cy - 1), north);
 					const sx = keepLeft ? 0 : STRIP;
 					const sw = (keepRight ? STRIP_LEN : STRIP_LEN - STRIP) - sx;
 					rows[cy].push({
-						mask, color: IMAGE_COLORS[(mine ? me : north).imageIndex],
+						art: edge.art, mask: edge.mask,
+						color: IMAGE_COLORS[(mine ? me : north).imageIndex],
 						sx, sy: 0, sw, sh: STRIP,
 						dx: cx * CHUNK - STRIP + sx, dy: cy * CHUNK - (mine ? STRIP : 0),
 						dw: sw, dh: STRIP,
@@ -217,4 +223,163 @@ export function buildBackgroundEdges(pixels, w, h, skipCells) {
 		}
 	}
 	return rows;
+}
+
+// ---------------------------------------------------------------------------
+// Full-art background layer (game-accurate)
+//
+// tools/gen_backgrounds.py ships the game's actual background art (~2.4 MB of
+// PNG) plus data/background_data.json. With it loaded, the layer draws what the
+// engine draws (docs/worldgen/background_rendering.md in the RE repo):
+//
+//   1. per 512px chunk, the biome's background_image repeat-tiled in ABSOLUTE
+//      world coordinates (the engine sets GL_REPEAT on a world-rect sprite, so
+//      texel = image[(x mod w, y mod h)] -- same rule as material textures);
+//   2. the hand-drawn 64px transition strips where neighbouring chunks' images
+//      differ, now with their real pixels instead of a flat-tinted mask;
+//   3. pixel-scene backgrounds (background_filename), blitted 1:1 at the scene
+//      position, z = 50 (PixelScene_ProcessQueue @ 00882dd0);
+//   4. the <BackgroundImages> sprites of biome/_pixel_scenes.xml, z = 30.
+//
+// The background SceneGraph draws HIGH z first, so within this layer the order
+// is: backdrop tiles (z ~99) -> strips -> scene backgrounds (50) -> globals
+// (30); the cell grid then composites over all of it with straight src-over
+// alpha (shaders/sprite_cellgrid.frag), which is what the GL terrain layer's
+// premultiplied translucent output reproduces.
+//
+// Everything here degrades gracefully: until the art arrives the flat-color
+// canvas + tinted masks above keep drawing, and any missing bitmap just keeps
+// its fallback.
+
+let artData = null;                    // data/background_data.json
+const ART_BITMAPS = new Map();         // repo-relative path -> ImageBitmap
+let artPromise = null;
+
+export function loadBackgroundArt() {
+	return artPromise ??= (async () => {
+		const { loadPNGBitmap } = await import('./png_sanitizer.js');
+		artData = await fetchSafeJson('../data/background_data.json');
+		const wanted = new Set();
+		// backdrops + real edge strips (per-biome paths, shipped verbatim)
+		for (const p of BACKGROUND_IMAGE_PATHS) wanted.add(p);
+		for (const rec of BY_COLOR.values()) {
+			for (const dir of Object.values(rec.edges)) if (dir?.art) wanted.add(dir.art);
+		}
+		for (const p of Object.values(artData.sceneBackgrounds)) wanted.add(p);
+		for (const g of artData.globalImages) wanted.add(g.file);
+		await Promise.all([...wanted].map(async (p) => {
+			try { ART_BITMAPS.set(p, await loadPNGBitmap('../' + p)); }
+			catch (e) { console.warn('Background art failed to load:', p, e); }
+		}));
+		return artData;
+	})();
+}
+
+export function backgroundArtReady() {
+	return !!artData;
+}
+
+/** The real strip art for one buildBackgroundEdges record, or null. */
+export function edgeStripArt(e) {
+	return e.art ? ART_BITMAPS.get(e.art) ?? null : null;
+}
+
+// ---------------------------------------------------------------------------
+// Backdrop tile runs
+//
+// One entry per horizontal run of consecutive chunks sharing a background
+// image, bucketed by chunk row like the strips, so the per-frame draw walks
+// only visible rows and issues one clipped tiling loop per run.
+
+export function buildBackdropRuns(pixels, w, h, skipCells) {
+	const rows = Array.from({ length: h }, () => []);
+	for (let cy = 0; cy < h; cy++) {
+		let run = null;
+		for (let cx = 0; cx <= w; cx++) {
+			const i = cy * w + cx;
+			let idx = -1;
+			if (cx < w && (!skipCells || skipCells[i] !== 1)) {
+				const rec = BY_COLOR.get(pixels[i] & 0xffffff);
+				if (rec) idx = rec.imageIndex;
+			}
+			if (run && run.imageIndex === idx) { run.len++; continue; }
+			if (run && run.imageIndex >= 0) rows[cy].push(run);
+			run = idx >= 0 ? { imageIndex: idx, cx, cy, len: 1 } : null;
+		}
+		if (run && run.imageIndex >= 0) rows[cy].push(run);
+	}
+	return rows;
+}
+
+/**
+ * Draws the backdrop tile runs for one world copy. Map-local chunk coords; the
+ * caller passes the world-copy pixel shift. Tiles are aligned to the ABSOLUTE
+ * canvas frame (shift included): shifts are multiples of 512 and so is the
+ * map-to-world offset, which makes canvas-frame alignment identical to the
+ * engine's absolute-world alignment for every image size that divides 512 --
+ * and the general pmod phase below handles the ones that don't (96x96).
+ */
+export function drawBackdropRuns(ctx, rows, shiftX, shiftY, viewRect) {
+	if (!artData) return false;
+	const pmod = (v, m) => ((v % m) + m) % m;
+	const firstRow = Math.max(0, Math.floor((viewRect.top - shiftY) / CHUNK));
+	const lastRow = Math.min(rows.length - 1, Math.floor((viewRect.bottom - shiftY) / CHUNK));
+	for (let r = firstRow; r <= lastRow; r++) {
+		for (const run of rows[r]) {
+			const x0 = shiftX + run.cx * CHUNK, y0 = shiftY + run.cy * CHUNK;
+			const x1 = x0 + run.len * CHUNK, y1 = y0 + CHUNK;
+			if (x1 < viewRect.left || x0 > viewRect.right) continue;
+			const img = ART_BITMAPS.get(BACKGROUND_IMAGE_PATHS[run.imageIndex]);
+			if (!img) continue;
+			const iw = img.width, ih = img.height;
+			// Clip the tiling loop to the visible part of the run.
+			const cx0 = Math.max(x0, x0 + Math.floor((viewRect.left - x0) / iw) * iw);
+			const cx1 = Math.min(x1, viewRect.right + iw);
+			const ty0 = y0 - pmod(y0, ih);
+			for (let ty = ty0; ty < y1; ty += ih) {
+				const sy = Math.max(y0, ty), sh = Math.min(y1, ty + ih) - sy;
+				if (sh <= 0) continue;
+				for (let tx = cx0 - pmod(cx0, iw); tx < cx1; tx += iw) {
+					const sx = Math.max(x0, tx), sw = Math.min(x1, tx + iw) - sx;
+					if (sw <= 0) continue;
+					ctx.drawImage(img, sx - tx, sy - ty, sw, sh, sx, sy, sw, sh);
+				}
+			}
+		}
+	}
+	return true;
+}
+
+// ---------------------------------------------------------------------------
+// Scene backgrounds + global <BackgroundImages> sprites
+
+/**
+ * Draws the background sprites of every placed pixel scene, then the global
+ * <BackgroundImages> art (nearer of the two: lower z draws later). `scenes` is
+ * one pixelScenesByPW list; drawX/drawY match the scene layer's own transform.
+ */
+export function drawSceneBackgrounds(ctx, scenes, toDrawX, toDrawY, viewRect) {
+	if (!artData) return;
+	for (const scene of scenes) {
+		const path = artData.sceneBackgrounds[scene.key];
+		if (!path) continue;
+		const img = ART_BITMAPS.get(path);
+		if (!img) continue;
+		const dx = toDrawX(scene.x), dy = toDrawY(scene.y);
+		if (dx + img.width < viewRect.left || dx > viewRect.right ||
+			dy + img.height < viewRect.top || dy > viewRect.bottom) continue;
+		ctx.drawImage(img, dx, dy);
+	}
+}
+
+export function drawGlobalBackgroundImages(ctx, toDrawX, toDrawY, viewRect) {
+	if (!artData) return;
+	for (const g of artData.globalImages) {
+		const img = ART_BITMAPS.get(g.file);
+		if (!img) continue;
+		const dx = toDrawX(g.x), dy = toDrawY(g.y);
+		if (dx + img.width < viewRect.left || dx > viewRect.right ||
+			dy + img.height < viewRect.top || dy > viewRect.bottom) continue;
+		ctx.drawImage(img, dx, dy);
+	}
 }

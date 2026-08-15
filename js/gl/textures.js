@@ -126,7 +126,7 @@ export function createMaterialMetaTexture(gl, atlas, colorTable) {
 export function createPaletteMaterialTexture(gl, table) {
     const tex = makeTexture(gl);
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8UI, PALETTE_SIZE, 1, 0,
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8UI, PALETTE_SIZE, 2, 0,
         gl.RED_INTEGER, gl.UNSIGNED_BYTE, table);
     return tex;
 }

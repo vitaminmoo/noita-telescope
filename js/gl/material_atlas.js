@@ -108,14 +108,27 @@ function entryForWangColor(atlas, raw) {
     return (name && atlas.entryByMaterial.get(name)) || 0;
 }
 
+// Compositing alpha of a material name: its XML color's alpha byte (water
+// 0xA0), 255 when unknown -- the straight src-over alpha the game's cell grid
+// blends with over the background layer.
+const MATERIAL_ALPHA_BY_NAME = new Map();
+for (const m of MATERIAL_DATA) {
+    if (m.color) MATERIAL_ALPHA_BY_NAME.set(m.name, (parseInt(m.color, 16) >>> 24) & 0xff);
+}
+
 /**
- * 256x1 R8UI: palette index -> material entry. Direct color entries resolve
- * through their wang color; air / gray / white stay 0 (no texture).
+ * 256x2 R8UI: palette index -> material entry (row 0) and compositing alpha
+ * (row 1). Direct color entries resolve through their wang color; air / gray /
+ * white stay entry 0 (no texture), alpha 255.
  */
 export function buildPaletteMaterialTable(atlas, palette) {
-    const table = new Uint8Array(PALETTE_SIZE);
+    const table = new Uint8Array(PALETTE_SIZE * 2).fill(0);
+    table.fill(255, PALETTE_SIZE);
     for (let i = FIRST_COLOR_INDEX; i < palette.size; i++) {
-        table[i] = entryForWangColor(atlas, palette.colors[i]);
+        const raw = palette.colors[i] & 0xffffff;
+        table[i] = entryForWangColor(atlas, raw);
+        const name = MATERIAL_COLOR_LOOKUP[raw.toString(16).padStart(6, '0')];
+        if (name) table[PALETTE_SIZE + i] = MATERIAL_ALPHA_BY_NAME.get(name) ?? 255;
     }
     return table;
 }

@@ -18,7 +18,8 @@
 //
 // Flag bits 0 and 1 keep the values indirection.js already assigns them.
 
-import { BIOME_COLOR_TO_NAME, BIOME_COLORS_WITH_TILES, FILL_LAYER_COLORS } from '../generator_config.js';
+import { BIOME_COLOR_TO_NAME, BIOME_COLORS_WITH_TILES, FILL_LAYER_COLORS, FILL_LAYER_MATERIALS } from '../generator_config.js';
+import { MATERIAL_DATA } from '../potion_config.js';
 import { edgeNoiseOverlayExceptions, terrainFillColor, TILE_FOREGROUND_COLORS } from '../image_processing.js';
 import { biomeEdgeNoiseFlag } from '../wobble_flags.js';
 import { EDGE_NOISE } from '../edge_noise.js';
@@ -26,6 +27,20 @@ import { PERM_CLASSIC, PERM_CUSTOM } from '../engine_resolve/engine_data.js';
 import { CHUNK_FLAG_EDGE_NOISE_EXCEPTION, CHUNK_FLAG_HAS_TILES, BIOME_MAP_HEIGHT } from './indirection.js';
 
 export { CHUNK_FLAG_EDGE_NOISE_EXCEPTION, CHUNK_FLAG_HAS_TILES };
+
+// Fill-material compositing alpha by biome-map color: the XML color's alpha
+// byte (water A0...) is the cell's src-over alpha over the background layer,
+// so a lake fill chunk must carry it into u_fgTex.
+const FILL_ALPHA_BY_COLOR = new Map();
+{
+    const alphaByName = new Map();
+    for (const m of MATERIAL_DATA) {
+        if (m.color) alphaByName.set(m.name, (parseInt(m.color, 16) >>> 24) & 0xff);
+    }
+    for (const [color, name] of Object.entries(FILL_LAYER_MATERIALS)) {
+        FILL_ALPHA_BY_COLOR.set(Number(color), alphaByName.get(name) ?? 255);
+    }
+}
 /** `noise_biome_edges == 0`: this chunk's biome never wobbles (utils.js:174). */
 export const CHUNK_FLAG_NOISE_INELIGIBLE = 1 << 2;
 /** TILE_FOREGROUND_COLORS has an entry for this chunk color. */
@@ -86,7 +101,11 @@ export function buildChunkTextures(biomeData, mapWidth) {
         fg[i * 4] = (f >> 16) & 0xff;
         fg[i * 4 + 1] = (f >> 8) & 0xff;
         fg[i * 4 + 2] = f & 0xff;
-        fg[i * 4 + 3] = fgColor !== undefined ? 255 : 0;
+        // The alpha channel doubles as the fill material's compositing alpha;
+        // definedness is CHUNK_FLAG_FG_DEFINED, not this byte.
+        fg[i * 4 + 3] = fgColor === undefined ? 0
+            : (flags & CHUNK_FLAG_FILL) !== 0 ? (FILL_ALPHA_BY_COLOR.get(color) ?? 255)
+            : 255;
     }
     return { width: mapWidth, height, chunk, fg };
 }
