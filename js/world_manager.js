@@ -8,6 +8,11 @@ import { TRANSLATIONS } from './translations.js';
 import { unlockedSpells } from './unlocks.js';
 
 export const worldWorker = new Worker(new URL('./world_worker.js', import.meta.url), { type: 'module' });
+// See overlay_manager.js: a dead worker is silent without this.
+worldWorker.addEventListener('error', (e) =>
+	console.error('world worker failed:', e.message ?? '(no message)', e.filename ?? '', e.lineno ?? ''));
+worldWorker.addEventListener('messageerror', () =>
+	console.error('world worker: message deserialization failed'));
 
 // Keep track of pending generation requests so we don't spam the worker
 const pendingGenerateRequests = new Set(); 

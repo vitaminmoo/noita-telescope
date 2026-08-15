@@ -6,6 +6,13 @@ import { PIXEL_SCENE_DATA, setPixelSceneVariantRebuilder } from './pixel_scene_g
 import { appSettings, updateSettingsFromUI } from './settings.js';
 
 export const overlayWorker = new Worker(new URL('./overlay_worker.js', import.meta.url), { type: 'module' });
+// A worker whose script fails to load/parse (stale cache, syntax error) dies
+// without ever answering, and everything it serves — overlays, pixel scenes,
+// edge decals — silently stops. Make that failure loud.
+overlayWorker.addEventListener('error', (e) =>
+	console.error('overlay worker failed:', e.message ?? '(no message)', e.filename ?? '', e.lineno ?? ''));
+overlayWorker.addEventListener('messageerror', () =>
+	console.error('overlay worker: message deserialization failed'));
 
 // Keep track of pending generation requests so we don't spam the worker
 const pendingOverlayRequests = new Set();
