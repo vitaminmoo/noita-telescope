@@ -39,15 +39,19 @@ import {
 	BACKGROUND_VOID, backgroundLayerColor, buildBackdropRuns, buildBackgroundEdges,
 	drawBackdropRuns, drawGlobalBackgroundImages, drawSceneBackgrounds, drawStaticTileBackdrops,
 	edgeStripArt, loadBackgroundArt, loadBackgroundEdgeMasks, loadStaticTileBackgroundMasks,
-	STATIC_TILE_BACKGROUNDS, tintedEdgeStrip,
+	STATIC_TILE_BACKGROUNDS, tintedEdgeStrip, UNLIMITED_BACKDROP_BIOMES,
 } from './biome_backgrounds.js';
+
+const biomeColorsOf = (names) => new Set([...names]
+	.map(name => GENERATOR_CONFIG[name] && (GENERATOR_CONFIG[name].color & 0xffffff))
+	.filter(c => c !== undefined && c !== null));
 
 // The biome-map colors whose backdrop is masked to a structure silhouette rather
 // than filling their chunk (js/biome_backgrounds.js STATIC_TILE_BACKGROUNDS), so
 // the background layer must leave their chunks to the sky and draw the mask.
-const STATIC_TILE_COLORS = new Set(Object.keys(STATIC_TILE_BACKGROUNDS)
-	.map(name => GENERATOR_CONFIG[name] && (GENERATOR_CONFIG[name].color & 0xffffff))
-	.filter(c => c !== undefined && c !== null));
+const STATIC_TILE_COLORS = biomeColorsOf(Object.keys(STATIC_TILE_BACKGROUNDS));
+// ...and the ones that keep a plain full-chunk backdrop above the surface line.
+const UNLIMITED_BACKDROP_COLORS = biomeColorsOf(UNLIMITED_BACKDROP_BIOMES);
 
 // Width of a background boundary strip in world pixels, matching the engine art.
 const STRIP_WORLD_PX = 64;
@@ -2207,7 +2211,12 @@ export const app = {
 			// at any depth, which matters for the watchtower's row 14: the one
 			// static-tile cell not already above the surface line, and until now the
 			// one that filled its whole chunk with the wandcave backdrop.
-			if (!isSky && (STATIC_TILE_COLORS.has(biomeColor) || i < this.w * surfaceLevel)) {
+			//
+			// The inverse case is a biome that opts out of the horizon treatment with
+			// limit_background_image="0" (UNLIMITED_BACKDROP_BIOMES): its chunk really
+			// is filled edge to edge up there, so it keeps its backdrop.
+			if (!isSky && !UNLIMITED_BACKDROP_COLORS.has(biomeColor)
+				&& (STATIC_TILE_COLORS.has(biomeColor) || i < this.w * surfaceLevel)) {
 				const depthFactor = Math.min(Math.floor(i / this.w) / surfaceLevel, 1);
 				const r = 0x87 + ((0xbb - 0x87) * depthFactor);
 				const g = 0xce + ((0xdd - 0xce) * depthFactor);

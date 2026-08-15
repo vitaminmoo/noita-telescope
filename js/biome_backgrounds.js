@@ -428,6 +428,29 @@ export const STATIC_TILE_BACKGROUNDS = {
 	biome_potion_mimics: { image: 'data/weather_gfx/background_wandcave.png', mask: 'data/backgrounds/biome_impl/static_tile/temples-assets/potion_mimics_bg.png' },
 };
 
+/**
+ * Above-surface biomes whose backdrop really does fill their chunk.
+ *
+ * `limit_background_image` (BiomeChunk+0xa4) is the surface-horizon treatment:
+ * with it set, a chunk that extends below `background_image_height` swaps its
+ * plain tile for the data/weather_gfx/limit_y/<name> strip, so what shows above
+ * the horizon is the parallax sky (docs/worldgen/background_rendering.md).
+ * Every surface biome relies on it -- hills, desert, winter, the mountain, the
+ * pyramid's own outer chunks -- which is why renderRecolorMap paints the whole
+ * above-surface band as sky and keeps it out of the backdrop-run builder.
+ *
+ * `data/biome/pyramid.xml` is the one biome up there that opts OUT, with an
+ * explicit `limit_background_image="0"`: its chunks are the pyramid's enclosed
+ * interior, and the game fills them with background_pyramid.png edge to edge.
+ * Telescope's sky rule was blanket, so the pyramid's insides came out sky-blue.
+ *
+ * A biome earns a place here only by setting the attribute to "0" in its own
+ * XML. The other five pyramid_* biomes do not, and are left on the sky rule --
+ * they are the sloped outer shell, where the horizon strip belongs; whether the
+ * strip should then draw is a separate, unmodelled thing.
+ */
+export const UNLIMITED_BACKDROP_BIOMES = new Set(['pyramid']);
+
 /** The world pixels one mask pixel covers -- constants.js TILE_SIZE. */
 const MASK_TILE = 10;
 /** shaders/sprite_static_tile_bg.frag `step(mask_threshold, mask.r)`. */
