@@ -1,0 +1,88 @@
+{
+	"name": "roadblock_west_neighbour",
+	"guards": "the chunk west of roadblock keeps its own terrain - the air chunk must not bleed a neighbour's fill either way",
+	"seed": 786433191,
+	"ngPlus": 0,
+	"world": {
+		"x": -1280,
+		"y": -1216,
+		"w": 64,
+		"h": 64
+	},
+	"source": {
+		"key": "mapdump/roadblock",
+		"kind": "mapdump-ppm",
+		"path": "scripts/bugfix/roadblock.ppm",
+		"rect": [
+			-1280,
+			-1600,
+			1024,
+			768
+		],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-15",
+		"note": "MAPDUMP via noitad worker cb6aeae2; rect recorded in scripts/bugfix_cmp_all.sh. Covers the roadblock chunk (33,11) = world (-1024,-1536,512,512) plus its neighbours."
+	},
+	"expected": {
+		"file": "roadblock_west_neighbour.bin",
+		"format": "rgb8"
+	},
+	"summary": {
+		"airPct": 0,
+		"topColors": {
+			"#3f341e": 1313,
+			"#463a22": 1261,
+			"#382f1c": 1244,
+			"#302818": 278
+		}
+	},
+	"tier1": {
+		"chunkFlags": [
+			{
+				"cell": [
+					32,
+					11
+				],
+				"biome": "mountain_tree",
+				"biomeColor": "0x14e1d7",
+				"mode": "topo0",
+				"paintsNothing": false,
+				"sceneOnly": false,
+				"fillLayerMaterial": null
+			}
+		],
+		"pixels": {
+			"metric": "fillMask",
+			"mode": "agreement",
+			"threshold": 0,
+			"measured": 0,
+			"measuredAt": "2026-08-15",
+			"measuredCommit": "f80f0b3"
+		},
+		"maxUnresolvedPct": 0.5
+	},
+	"tier2": {
+		"render": {
+			"layers": {}
+		},
+		"checks": [
+			{
+				"metric": "airMask",
+				"mode": "agreement",
+				"threshold": 99.5,
+				"measured": 100,
+				"measuredAt": "2026-08-15",
+				"measuredCommit": "f80f0b3"
+			},
+			{
+				"metric": "rgb",
+				"mode": "agreement",
+				"measured": 0,
+				"measuredAt": "2026-08-15",
+				"measuredCommit": "f80f0b3",
+				"threshold": 0
+			}
+		]
+	}
+}

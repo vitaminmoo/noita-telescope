@@ -1,0 +1,90 @@
+{
+	"name": "cube_chunk_seam",
+	"guards": "the excavationsite / cube-chamber chunk seam: the 42px biome-edge wobble picks the same side the game does",
+	"seed": 786433191,
+	"ngPlus": 0,
+	"world": {
+		"x": -4128,
+		"y": 2060,
+		"w": 64,
+		"h": 64
+	},
+	"source": {
+		"key": "mapdump/cube",
+		"kind": "mapdump-ppm",
+		"path": "scripts/probe_out/cube.ppm",
+		"rect": [
+			-4500,
+			2000,
+			640,
+			512
+		],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-15",
+		"note": "MAPDUMP via noitad worker 262fb478; rect recorded in scripts/probe_cube_cpu.mjs (RECT). Straddles the excavationsite_cube_chamber room (chunk 26,18) and the procedural excavationsite around it."
+	},
+	"expected": {
+		"file": "cube_chunk_seam.bin",
+		"format": "rgb8"
+	},
+	"summary": {
+		"airPct": 2.197,
+		"topColors": {
+			"#251511": 2419,
+			"#37221d": 748,
+			"#40231c": 244,
+			"#623b32": 91,
+			"#050505": 90,
+			"#434343": 37
+		}
+	},
+	"tier1": {
+		"chunkFlags": [
+			{
+				"cell": [
+					26,
+					18
+				],
+				"biome": "excavationsite_cube_chamber",
+				"biomeColor": "0x24888a",
+				"mode": "topo0",
+				"paintsNothing": false,
+				"sceneOnly": false,
+				"fillLayerMaterial": "rock_static_grey"
+			}
+		],
+		"pixels": {
+			"metric": "airMask",
+			"mode": "agreement",
+			"threshold": 99.5,
+			"measured": 100,
+			"measuredAt": "2026-08-15",
+			"measuredCommit": "f80f0b3"
+		},
+		"maxUnresolvedPct": 0.5
+	},
+	"tier2": {
+		"render": {
+			"layers": {}
+		},
+		"checks": [
+			{
+				"metric": "airMask",
+				"mode": "agreement",
+				"threshold": 99.5,
+				"measured": 100,
+				"measuredAt": "2026-08-15",
+				"measuredCommit": "f80f0b3"
+			},
+			{
+				"metric": "rgb",
+				"mode": "agreement",
+				"measured": 87.693,
+				"measuredAt": "2026-08-15",
+				"measuredCommit": "f80f0b3",
+				"threshold": 87.19
+			}
+		]
+	}
+}

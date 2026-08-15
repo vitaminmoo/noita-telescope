@@ -90,11 +90,12 @@ engine model declines to resolve at all may not grow past its baseline.
 ## The fixture set
 
 Run `node tools/regression_capture.mjs list` for the current list with rects and
-guards. As of the initial set, 19 fixtures over 6 MAPDUMP color rects and the
+guards. As of the initial set, 22 fixtures over 6 MAPDUMP color rects and the
 MATDUMP surface material grid, all seed **786433191**, NG+0:
 
-* **roadblock** (`roadblock_chunk_air`, `roadblock_chunk_bottom`) — the
-  roadblock chunk (33,11) generates nothing and must stay air.
+* **roadblock** (`roadblock_chunk_air`, `roadblock_chunk_bottom`,
+  `roadblock_west_neighbour`) — the roadblock chunk (33,11) generates nothing
+  and must stay air, and the mountain_tree chunk beside it keeps its own art.
 * **rock_room** (`rockroom_scene_air`, `rockroom_bug_site`, `rockroom_west_solid`)
   — the room is scene art over air, never a chunk fill; the mouse-over bug site
   (−3595,3238) straddles the solid_wall/rock_room seam, so it also pins the
@@ -102,11 +103,13 @@ MATDUMP surface material grid, all seed **786433191**, NG+0:
 * **temple_wall** (`templewall_basin_fill`, `templewall_basin_top`) — the engine
   paints nothing in the Holy Mountain basin, so telescope's stand-in fill has to
   survive.
-* **watercave** (`watercave_scene`), **lavalake** (`lavalake_spliced`,
-  `lavalake_open_air`) — stamped / spliced scene content over an air chunk.
+* **watercave** (`watercave_scene`, `watercave_solid_core`), **lavalake**
+  (`lavalake_spliced`, `lavalake_open_air`) — stamped / spliced scene content
+  over an air chunk.
 * **excavationsite / cube chamber** (`cube_procedural`, `cube_carve`,
-  `cube_chamber_carve`, `cube_chamber_scene`) — the topology-0 surface + carve
-  resolve, and the room the carve port was validated on.
+  `cube_chamber_carve`, `cube_chamber_scene`, `cube_chunk_seam`) — the
+  topology-0 surface + carve resolve, the room the carve port was validated on,
+  and a chunk seam where the 42px biome-edge wobble decides the answer.
 * **surface materials** (`winter_maze_materials`, `hills_bands_materials`,
   `coal_bands_materials`, `desert_surface_materials`, `temple_pyramid_materials`)
   — MATDUMP material identity: the winter is_rare snow maze, hills bands, the

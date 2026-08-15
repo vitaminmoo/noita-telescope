@@ -1,0 +1,87 @@
+{
+	"name": "watercave_solid_core",
+	"guards": "the solid core of the watercave layout scene stays solid",
+	"seed": 786433191,
+	"ngPlus": 0,
+	"world": {
+		"x": -1792,
+		"y": 700,
+		"w": 64,
+		"h": 64
+	},
+	"source": {
+		"key": "mapdump/watercave",
+		"kind": "mapdump-ppm",
+		"path": "scripts/bugfix/watercave.ppm",
+		"rect": [
+			-2048,
+			512,
+			512,
+			512
+		],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-15",
+		"note": "MAPDUMP via noitad worker cb6aeae2; rect from scripts/bugfix_cmp_all.sh. A watercave chunk - all content is the biome lua's stamped watercave_layout_N scene."
+	},
+	"expected": {
+		"file": "watercave_solid_core.bin",
+		"format": "rgb8"
+	},
+	"summary": {
+		"airPct": 0,
+		"topColors": {
+			"#376259": 2247,
+			"#27282d": 1679,
+			"#3e4555": 170
+		}
+	},
+	"tier1": {
+		"chunkFlags": [
+			{
+				"cell": [
+					31,
+					15
+				],
+				"biome": "watercave",
+				"biomeColor": "0x3046c1",
+				"mode": "topo0",
+				"paintsNothing": true,
+				"sceneOnly": true,
+				"fillLayerMaterial": null
+			}
+		],
+		"pixels": {
+			"metric": "fillMask",
+			"mode": "agreement",
+			"threshold": 0,
+			"measured": 0,
+			"measuredAt": "2026-08-15",
+			"measuredCommit": "f80f0b3"
+		},
+		"maxUnresolvedPct": 0.5
+	},
+	"tier2": {
+		"render": {
+			"layers": {}
+		},
+		"checks": [
+			{
+				"metric": "airMask",
+				"mode": "agreement",
+				"threshold": 99.5,
+				"measured": 100,
+				"measuredAt": "2026-08-15",
+				"measuredCommit": "f80f0b3"
+			},
+			{
+				"metric": "rgb",
+				"mode": "agreement",
+				"measured": 34.229,
+				"measuredAt": "2026-08-15",
+				"measuredCommit": "f80f0b3",
+				"threshold": 33.73
+			}
+		]
+	}
+}
