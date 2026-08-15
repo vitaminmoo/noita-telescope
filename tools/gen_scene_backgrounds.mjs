@@ -73,6 +73,20 @@ function walk(dir, out = []) {
 
 const bgForMaterial = new Map();
 const conflicts = [];
+
+/** Backgrounds the game only reaches with a controller plugged in:
+ *
+ *   if GameGetIsGamepadConnected() then
+ *     LoadPixelScene( "..hall.png", .., "..hall_background_gamepad_updated.png", .. )
+ *   else
+ *     LoadPixelScene( "..hall.png", .., "..hall_background.png", .. )
+ *
+ * (data/scripts/biomes/mountain/mountain_hall.lua:108, and the same shape in
+ * mountain_left_entrance.lua:209). They differ only in which button glyphs the
+ * painted-on control hints show, and the keyboard variant is the one telescope
+ * wants, so a gamepad path never wins a conflict against a non-gamepad one. */
+const isGamepadVariant = (path) => /gamepad/i.test(path);
+
 function record(material, background, where) {
 	if (!material || !background) return;
 	if (!material.startsWith('data/') || !background.startsWith('data/')) return;
@@ -81,7 +95,15 @@ function record(material, background, where) {
 	if (!existsSync(join(GAME, background.slice(5)))) return;
 	const prev = bgForMaterial.get(material);
 	if (prev && prev !== background) {
-		conflicts.push(`${material}: ${prev} vs ${background} (${where}, keeping first)`);
+		// Deterministic regardless of scan order: the non-gamepad variant wins,
+		// and anything else keeps the first reference seen.
+		if (isGamepadVariant(prev) && !isGamepadVariant(background)) {
+			conflicts.push(`${material}: ${prev} vs ${background} (${where}, taking the non-gamepad one)`);
+			bgForMaterial.set(material, background);
+			return;
+		}
+		conflicts.push(`${material}: ${prev} vs ${background} (${where}, keeping ` +
+			`${isGamepadVariant(background) ? 'the non-gamepad one' : 'first'})`);
 		return;
 	}
 	bgForMaterial.set(material, background);
