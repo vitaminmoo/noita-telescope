@@ -645,13 +645,30 @@ export const TEMPLE_SCENES = {
 	]
 };
 
+// A mountain biome cell paints a SET of scenes, not one: its init(x, y, w, h)
+// in data/scripts/biomes/mountain/*.lua issues several LoadPixelScene calls at
+// fixed offsets from the cell origin, most of them landing in NEIGHBOURING
+// cells -- the hall's own cell is only the top-left quarter of the Holy
+// Mountain room. js/static_spawns.js PIXEL_SCENE_BIOMES holds the offsets;
+// every name it can ask for has to be loadable, so they are all listed here.
 export const MOUNTAIN_SCENES = {
 	"extras": [
 		{name: "floating_island"},
 		{name: "top"},
 		{name: "left_entrance"},
+		{name: "left_entrance_below"},
+		{name: "left_entrance_bottom"},
+		{name: "left_stub"},
+		{name: "left_stub_edge"},
 		{name: "hall"},
+		{name: "hall_instructions"},
+		{name: "hall_b"},
+		{name: "hall_br"},
+		{name: "hall_r"},
+		{name: "hall_bottom"},
+		{name: "hall_bottom_2"},
 		{name: "right"},
+		{name: "right_bottom"},
 		{name: "right_stub"}
 	]
 };

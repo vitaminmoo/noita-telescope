@@ -105,12 +105,46 @@ export const PIXEL_SCENE_BIOMES = {
 	0xff93cb4e: {biome: "temple_altar_right", name: "altar_right", offsetY: 256},
 	0xff93cb4d: {biome: "temple_altar_left", name: "altar_left", offsetY: 256},
 	0xff93cb4c: {biome: "temple_altar", name: "altar", offsetY: 256},
+	// The mountain cells each paint a SET of scenes. Their init(x, y, w, h) in
+	// data/scripts/biomes/mountain/*.lua is a straight run of LoadPixelScene
+	// calls at fixed offsets from the cell origin, and most of them land in a
+	// NEIGHBOURING cell -- the hall's own cell is just the top-left quarter of
+	// the Holy Mountain room, and the four other quarters plus the two floor
+	// slabs are painted from it. Offsets below are the lua's literals; every
+	// one is confirmed against data/dumps/pixel_scenes.ndjson.gz (live capture,
+	// seed 786433191), where the hall cell at (512, -512) yields hall and
+	// hall_instructions at (512,-512), hall_b (512,0), hall_r (1024,-512),
+	// hall_br (1024,0), hall_bottom (0,0) and hall_bottom_2 (1064,0).
 	0xffC08082: {biome: "mountain_floating_island", name: "floating_island"},
 	0xffC08080: {biome: "mountain_top", name: "top"},
-	0xffE08080: {biome: "mountain_right_stub", name: "right_stub"},
-	0xff408080: {biome: "mountain_right", name: "right"},
-	0xff204060: {biome: "mountain_hall", name: "hall"},
-	0xff208080: {biome: "mountain_left_entrance", name: "left_entrance"},
+	// mountain_right_stub.lua:9 -- the only mountain scene drawn off-grid.
+	0xffE08080: {biome: "mountain_right_stub", name: "right_stub", offsetX: -38},
+	// mountain_right.lua:9-10
+	0xff408080: {biome: "mountain_right", scenes: [
+		{name: "right_bottom", dx: 512 - 192, dy: 512},
+		{name: "right"},
+	]},
+	// mountain_hall.lua:108-120
+	0xff204060: {biome: "mountain_hall", scenes: [
+		{name: "hall"},
+		{name: "hall_instructions"},
+		{name: "hall_b", dy: 512},
+		{name: "hall_br", dx: 512, dy: 512},
+		{name: "hall_r", dx: 512},
+		{name: "hall_bottom", dx: -512, dy: 512},
+		{name: "hall_bottom_2", dx: 552, dy: 512},
+	]},
+	// mountain_left_entrance.lua:206-213
+	0xff208080: {biome: "mountain_left_entrance", scenes: [
+		{name: "left_entrance_bottom", dy: 512},
+		{name: "left_stub_edge", dy: 512},
+		{name: "left_entrance"},
+	]},
+	// mountain_left_stub.lua:11-12
+	0xff608080: {biome: "mountain_left_stub", scenes: [
+		{name: "left_stub"},
+		{name: "left_entrance_below", dx: 512},
+	]},
 	0xff50eed7: {biome: "boss_victoryroom", name: "boss_victoryroom"},
 	0xff0da899: {biome: "boss_arena_top", name: "boss_arena_top"},
 	0xff3d3e41: {biome: "solid_wall_tower_10", name: "essenceroom"},
@@ -190,18 +224,27 @@ export function addStaticPixelScenes(ws, ng, pwIndex, pwIndexVertical, biomeData
 						const biomeName = biomePixelSceneInfo.biome;
 						const offsetX = biomePixelSceneInfo.offsetX || 0;
 						const offsetY = biomePixelSceneInfo.offsetY || 0;
-						const adjX = x * 512 - mapWidth * 256 + pwIndex * mapWidth * 512 + offsetX;
-						const adjY = y * 512 - 14*512 + pwIndexVertical * 48 * 512 + offsetY;
-						// The game's biome init(x, y, w, h) gets the cell's world
-						// origin, so a room whose scene depends on where the cell
-						// sits picks per cell rather than per biome.
-						const biomePixelSceneName = biomePixelSceneInfo.nameAtCell
-							? biomePixelSceneInfo.nameAtCell(adjX, adjY)
-							: biomePixelSceneInfo.name;
-						const pixelScene = loadPixelScene(biomeData, biomeName, biomePixelSceneName, ws, ng, adjX, adjY, skipCosmeticPixelScenes, false, gameMode);
-						//console.log(`Biome color ${biomeColor.toString(16)} at (${x}, ${y}) corresponds to biome ${biomeName} and pixel scene ${biomePixelSceneName}`);
-						if (pixelScene) {
-							newPixelScenes.push(pixelScene);
+						// The cell's world origin, which is exactly the (x, y) the
+						// game hands the biome's init(x, y, w, h).
+						const cellX = x * 512 - mapWidth * 256 + pwIndex * mapWidth * 512;
+						const cellY = y * 512 - 14*512 + pwIndexVertical * 48 * 512;
+						// A biome's init() may issue several LoadPixelScene calls at
+						// fixed offsets from that origin, so an entry carries either
+						// one scene or a `scenes` list, in the lua's call order.
+						const sceneList = biomePixelSceneInfo.scenes ?? [{
+							// A room whose scene depends on where the cell sits picks
+							// per cell rather than per biome.
+							name: biomePixelSceneInfo.nameAtCell
+								? biomePixelSceneInfo.nameAtCell(cellX + offsetX, cellY + offsetY)
+								: biomePixelSceneInfo.name,
+						}];
+						for (const part of sceneList) {
+							const adjX = cellX + offsetX + (part.dx || 0);
+							const adjY = cellY + offsetY + (part.dy || 0);
+							const pixelScene = loadPixelScene(biomeData, biomeName, part.name, ws, ng, adjX, adjY, skipCosmeticPixelScenes, false, gameMode);
+							if (pixelScene) {
+								newPixelScenes.push(pixelScene);
+							}
 						}
 					}
 				}
