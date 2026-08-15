@@ -1702,6 +1702,12 @@ export const app = {
 		const modes = (appSettings.engineTerrain && this.glTerrain
 			&& this.glTerrain.engineChunkWidth === this.w) ? this.glTerrain.engineChunkModes : null;
 		if (modes && idx < modes.length) {
+			// Bit 11 (gl/engine_resources.js): a BIOME_WANG_TILE biome with an empty
+			// wang_template_file. It gets no covergrid and generates no terrain at
+			// all, so the topology-0 mode it also carries is meaningless -- saying
+			// "engine topo0" here claimed a resolve that answers air by construction
+			// (topo0_resolve.js `if (biome.paintsNothing) return -1`).
+			if (modes[idx] & (1 << 11)) return 'engine: no terrain (scene-only)';
 			const mode = (modes[idx] >> 8) & 3;
 			if (mode !== ENGINE_MODE_FALLBACK) return `engine ${mode === ENGINE_MODE_TOPO2 ? 'topo2' : 'topo0'}`;
 		}

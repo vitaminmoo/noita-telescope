@@ -52,12 +52,12 @@ export const GENERATOR_CONFIG = {
     'meatroom': { color: 0xff796620, fillMaterial: 'meat_static', sceneOnly: true, name: "Meatball Boss Room" },
     'ghost_secret': { color: 0xff1F3B64, fillMaterial: 'templebrickdark_static', sceneOnly: true, hasStuff: false, name: "Forgotten Boss Room" },
     'mestari_secret': { color: 0xff1F3B62, fillMaterial: 'templebrickdark_static', sceneOnly: true, hasStuff: false, name: "Throne Room" },
-    'temple_altar': { color: 0xff93cb4c, name: "Holy Mountain" }, // Apparently the only one with edge noise??
-    'temple_altar_left': { color: 0xff93cb4d, hasStuff: false, name: "Holy Mountain (Left)" },
-    'temple_altar_right': { color: 0xff93cb4e, hasStuff: false, name: "Holy Mountain (Right)" },
-    'temple_altar_right_snowcave': { color: 0xff93cb4f, hasStuff: false, name: "Holy Mountain (Snowy Depths Exit)" }, // note: not used in NG, for some reason
-    'temple_altar_right_snowcastle': { color: 0xff93cb5a, hasStuff: false, name: "Holy Mountain (Hiisi Base Exit)" }, // note: not used in NG+, for some reason
-    'temple_wall_ending': { color: 0xff5a9628, hasStuff: false, name: "Holy Mountain Basin (End)" },
+    'temple_altar': { color: 0xff93cb4c, sceneOnly: true, name: "Holy Mountain" }, // Apparently the only one with edge noise??
+    'temple_altar_left': { color: 0xff93cb4d, sceneOnly: true, hasStuff: false, name: "Holy Mountain (Left)" },
+    'temple_altar_right': { color: 0xff93cb4e, sceneOnly: true, hasStuff: false, name: "Holy Mountain (Right)" },
+    'temple_altar_right_snowcave': { color: 0xff93cb4f, sceneOnly: true, hasStuff: false, name: "Holy Mountain (Snowy Depths Exit)" }, // note: not used in NG, for some reason
+    'temple_altar_right_snowcastle': { color: 0xff93cb5a, sceneOnly: true, hasStuff: false, name: "Holy Mountain (Hiisi Base Exit)" }, // note: not used in NG+, for some reason
+    'temple_wall_ending': { color: 0xff5a9628, sceneOnly: true, hasStuff: false, name: "Holy Mountain Basin (End)" },
     'temple_wall': { color: 0xff6dcb28, fillMaterial: 'templebrick_static', hasStuff: false, name: "Holy Mountain Basin" },
     'solid_wall_temple': { color: 0xffB8A928, fillMaterial: 'templebrick_static', hasStuff: false, name: "Holy Mountain (Solid)" },
     // Empty HM variants excluded since they only apply to daily practice run mod
@@ -104,7 +104,7 @@ export const GENERATOR_CONFIG = {
     'lavalake_racing': { color: 0xff4118d6, fillMaterial: 'rock_hard_border', sceneOnly: true, hasStuff: false, name: "Racetrack" },
     'mountain_left_stub': { color: 0xff608080, hasStuff: false, name: "Mountain (Left Stub)" },
     'mountain_left_entrance': { color: 0xff208080, hasStuff: false, name: "Mountain (Left Entrance)" },
-    'mountain_hall': { color: 0xff204060, hasStuff: false, name: "Mountain (Hall)" },
+    'mountain_hall': { color: 0xff204060, sceneOnly: true, hasStuff: false, name: "Mountain (Hall)" },
     'mountain_right': { color: 0xff408080, hasStuff: false, name: "Mountain (Right)" },
     'mountain_right_stub': { color: 0xffE08080, hasStuff: false, name: "Mountain (Right Stub)" },
     'mountain_top': { color: 0xffC08080, hasStuff: false, name: "Mountain (Top)" },
@@ -119,7 +119,7 @@ export const GENERATOR_CONFIG = {
     'bridge': { color: 0xffad8111, hasStuff: false, name: "Bridge" },
     'empty': { color: 0xff48E311, hasStuff: false, name: "Empty" },
     'snowcave_tunnel': { color: 0xff7be311, fillMaterial: 'rock_hard_border', sceneOnly: true, hasStuff: false, name: "Snowcave Tunnel" },
-    'watercave': { color: 0xff3046c1, fillMaterial: 'rock_static', hasStuff: false, name: "Dark Cave" },
+    'watercave': { color: 0xff3046c1, sceneOnly: true, fillMaterial: 'rock_static', hasStuff: false, name: "Dark Cave" },
     'sky_light_injector': { color: 0xfffe0000, hasStuff: false, name: "Sky Light Injector" },
     'teleroom': { color: 0xff5f8fab, fillMaterial: 'rock_hard_border', hasStuff: false, name: "Teleport Room" },
     'friend_1': { color: 0xff6db55a, fillMaterial: 'rock_hard_border', hasStuff: false, name: "Friend Room (1)" },
@@ -131,7 +131,7 @@ export const GENERATOR_CONFIG = {
     'gun_room': { color: 0xff39a760, fillMaterial: 'templebrickdark_static', sceneOnly: true, hasStuff: false, name: "Gun Room" },
     'null_room': { color: 0xffe17e32, fillMaterial: 'templebrickdark_static', sceneOnly: true, hasStuff: false, name: "Nullification Altar" },
     'rock_room': { color: 0xff326655, fillMaterial: 'templebrickdark_static', sceneOnly: true, hasStuff: false, name: "Rock Room" },
-    'funroom': { color: 0xff0a95a4, hasStuff: false, name: "Fungal Map" },
+    'funroom': { color: 0xff0a95a4, sceneOnly: true, hasStuff: false, name: "Fungal Map" },
     'song_room': { color: 0xff9d99d1, fillMaterial: 'templebrickdark_static', sceneOnly: true, hasStuff: false, name: "Coral Chest" },
     'alchemist_secret': { color: 0xff57dace, fillMaterial: 'templebrickdark_static', sceneOnly: true, hasStuff: false, name: "Dark Chest" },
     'moon_room': { color: 0xff567cb0, fillMaterial: 'templebrickdark_static', sceneOnly: true, hasStuff: false, name: "Moon Room" },
@@ -139,14 +139,14 @@ export const GENERATOR_CONFIG = {
     // explicit material colors; fillMaterial is only the answer for a scene's
     // density-1.0 class, and the game's dump of the cell reads 86.5% rock_hard_border.
     'gourd_room': { color: 0xff2e99d1, fillMaterial: 'rock_hard_border', sceneOnly: true, hasStuff: false, name: "Gourd Room" },
-    'greed_room': { color: 0xff3f55d1, hasStuff: false, name: "Greed Room" }, // Not sure this is used
+    'greed_room': { color: 0xff3f55d1, sceneOnly: true, hasStuff: false, name: "Greed Room" }, // Not sure this is used
     'ocarina': { color: 0xff57cace, fillMaterial: 'templebrickdark_static', sceneOnly: true, hasStuff: false, name: "Ocarina" },
     'essenceroom_air': { color: 0xff157cb8, fillMaterial: 'templebrickdark_static', sceneOnly: true, hasStuff: false, name: "Essence of Air" },
     'essenceroom': { color: 0xff157cb0, fillMaterial: 'templebrickdark_static', sceneOnly: true, hasStuff: false, name: "Essence of Earth" },
     'essenceroom_hell': { color: 0xff157cb5, fillMaterial: 'templebrickdark_static', sceneOnly: true, hasStuff: false, name: "Essence of Water" },
     'essenceroom_alc': { color: 0xff157cb6, fillMaterial: 'templebrickdark_static', sceneOnly: true, hasStuff: false, name: "Essence of Spirits" },
     'mystery_teleport': { color: 0xff157cb7, fillMaterial: 'templebrickdark_static', sceneOnly: true, hasStuff: false, name: "Mystery Teleport" },
-    'roadblock': { color: 0xfff0d517, fillMaterial: 'rock_hard_border', hasStuff: false, name: "Roadblock" },
+    'roadblock': { color: 0xfff0d517, sceneOnly: true, fillMaterial: 'rock_hard_border', hasStuff: false, name: "Roadblock" },
 };
 
 Object.values(GENERATOR_CONFIG).forEach(conf => {
@@ -202,7 +202,27 @@ Object.values(GENERATOR_CONFIG).forEach(conf => {
 
 export const FILL_BIOME_COLORS = new Set(Object.keys(FILL_BIOME_MATERIALS).map(Number));
 
-/** Biomes that paint no terrain at all — everything in the chunk is its pixel scene. */
+/**
+ * Biomes that paint no terrain at all — everything in the chunk is its pixel scene.
+ *
+ * The engine's own rule for this is BIOME_ENGINE.paintsNothing in
+ * js/engine_resolve/engine_data.js: a BIOME_WANG_TILE topology with an empty
+ * wang_template_file, which the GL path reads directly (gl/engine_resources.js,
+ * engChunk bit 11). This hand list is that rule transcribed, so the two agree —
+ * the flags on temple_altar*, temple_wall_ending, mountain_hall, watercave,
+ * funroom, greed_room and roadblock came from it, after the GL side started
+ * correctly painting air in those chunks while the CPU bake and the hover
+ * readout still claimed a chunk fill (watercave and roadblock were the two that
+ * carried a `fillMaterial`, so they were the two that actually painted).
+ *
+ * It is transcribed rather than imported because generator_config.js is pulled
+ * into workers that have no other reason to parse engine_data.js's 278 KB.
+ *
+ * One disagreement is deliberately left standing: `boss_arena` is flagged here
+ * (measured — scripts/reports/room_biome_game_mechanism.md §2.1) but is NOT
+ * paintsNothing in the engine table. Keeping the flag preserves the measured
+ * behaviour; the table entry is the thing to re-derive.
+ */
 export const SCENE_ONLY_COLORS = new Set(Object.values(GENERATOR_CONFIG)
     .filter(conf => conf.sceneOnly).map(conf => conf.color & 0xffffff));
 
