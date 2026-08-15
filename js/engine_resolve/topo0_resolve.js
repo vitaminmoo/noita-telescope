@@ -12,8 +12,10 @@
 //     -> modifier      : FloatGrid2D_SampleBilinearSmooth of BitmapCaves grid @Biome+0x1d4
 //     -> depthRatio    : CellNoise_EvaluateCaveBoundary  @0x0087e8d0
 //                          -> BiomeChunk_EvalSurfaceLine @0x0087eaf0
-//     -> carve         : noise_type switch (chunk+0x220), default = the sin-capped
-//                        blend already ported in carve_noise.js
+//     -> carve         : noise_type switch (chunk+0x220); both shipped cases are
+//                        ported in carve_noise.js -- 0 = IQ2_SIMPLEX1234
+//                        (carveDensity), 3 = SIN_CAPPED_SIMPLEX
+//                        (carveDensityType3, 37 biomes incl. every overworld one)
 //     -> matNoise      : CellNoise_DispatchMaterialNoise @0x0087e7a0
 //                          -> ProceduralNoise_FBM4Octave2D @0x00873cc0 (type 5 simplex)
 //   -> BiomeMaterials_SelectComponentForCell @0x0086d2a0 (band_select.js)
@@ -25,7 +27,7 @@
 // watercave / coalmine_alt).
 import { ComputeMagicValueFromDoubles } from './simplex_noise.js';
 import { getModifierGrid, sampleModifier } from './bitmap_caves.js';
-import { carveDensity } from './carve_noise.js';
+import { carveDensity, carveDensityType3 } from './carve_noise.js';
 import { selectComponentForCell } from './band_select.js';
 
 const F = Math.fround;
@@ -254,9 +256,9 @@ export function evaluateCaveAndMaterial(cfg, phase, wx, wy, opts = {}) {
 	let addValue = 0;
 	if (density > K0.CARVE_GATE) {
 		addValue = cfg.insideAddValue;
-		if (cfg.noiseType !== 0)
-			throw new Error(`topo0: noise_type ${cfg.noiseType} carve branch not ported`);
-		density = carveDensity(wx, wy, density);
+		if (cfg.noiseType === 0) density = carveDensity(wx, wy, density);
+		else if (cfg.noiseType === 3) density = carveDensityType3(wx, wy, density);
+		else throw new Error(`topo0: noise_type ${cfg.noiseType} carve branch not ported`);
 	}
 
 	if (cfg.depthBlend)

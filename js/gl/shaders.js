@@ -694,15 +694,45 @@ float engCarveVN(float x, float y) {
     float hBot = (h1 - h0) * u + h0;
     return (hTop - hBot) * v + hBot;
 }
+// @0x00871630 — the same sin-hash value noise WITHOUT the parity twist: both
+// axes always take the smoothstep weight. Only the noise_type 3 carve calls it.
+float engCarveVNSmooth(float x, float y) {
+    int ix = int(floor(x)), iy = int(floor(y));
+    float fx = x - float(ix), fy = y - float(iy);
+    float u = (3.0 - fx * 2.0) * (fx * fx);
+    float v = (3.0 - fy * 2.0) * (fy * fy);
+    float n = float(iy) * 57.0 + float(ix);
+    float h57 = engSinHash(n + 57.0), h58 = engSinHash(n + 58.0);
+    float h0 = engSinHash(n), h1 = engSinHash(n + 1.0);
+    float hTop = (h58 - h57) * u + h57;
+    float hBot = (h1 - h0) * u + h0;
+    return (hTop - hBot) * v + hBot;
+}
+// The shared blend tail @0x0087e6f0.
+float engCarveBlend(float s, float density) {
+    float cave = s * density;
+    float t = (density - 0.85) / 0.1;
+    return (cave - density) * t + density;
+}
+// noise_type 0 (IQ2_SIMPLEX1234), the switch's default branch @0x0087e3e8.
 float engCarveDensity(float wx, float wy, float density) {
     float vn = engCarveVN(wx * 0.025, wy * 0.025);
     float a = vn * 0.05 + 0.05;
     float sx = a * ((wx * 0.5) * 0.02);
     float sy = ((wy * 0.5) * 0.02) * a;
-    float s = carveSimplex(sx, sy);
-    float cave = s * density;
-    float t = (density - 0.85) / 0.1;
-    return (cave - density) * t + density;
+    return engCarveBlend(carveSimplex(sx, sy), density);
+}
+// noise_type 3 (SIN_CAPPED_SIMPLEX) @0x0087e48b: the simplex coordinate is
+// cos(x/1024) / sin(y/1024) scaled by 1024*0.5*0.06 and the same 0.05..0.1
+// value-noise amplitude, i.e. CAPPED to a bounded box — and the simplex is
+// EdgeNoise_Simplex2D (magicNoise), not the type-0 branch's
+// ProceduralNoise_Simplex2D.
+float engCarveDensity3(float wx, float wy, float density) {
+    float vn = engCarveVNSmooth(wx * 0.02, wy * 0.021);
+    float a = vn * 0.05 + 0.05;
+    float sx = cos(wx * 0.0009765625) * 1024.0 * 0.5 * 0.06 * a;
+    float sy = sin(wy * 0.0009765625) * 1024.0 * 0.5 * 0.06 * a;
+    return engCarveBlend(magicNoise(sx, sy), density);
 }
 
 const int ENG_TOPO0_COL = 48;   // topo0 params live after the 48 band columns
@@ -740,8 +770,9 @@ float engDepthRatio(int slot, int leftSlot, float wx, float wy, float subX) {
     if (botY == topY) return 1.0;
     return (wy - topY) / (botY - topY);
 }
-// CellNoise_EvaluateCaveAndMaterial @0x0087e110 (noise_type 0 carve regime;
-// unsupported variants never reach the shader — see buildEngineResources).
+// CellNoise_EvaluateCaveAndMaterial @0x0087e110 (noise_type 0 and 3 carve
+// regimes — the only two the shipped biomes use; unsupported variants never
+// reach the shader — see buildEngineResources).
 float engEvalCaveMat(int slot, int leftSlot, ivec2 w) {
     vec4 t2p = engTable(ENG_TOPO0_COL + 2, slot);
     vec4 t3p = engTable(ENG_TOPO0_COL + 3, slot);
@@ -789,7 +820,8 @@ float engEvalCaveMat(int slot, int leftSlot, ivec2 w) {
     float addValue = 0.0;
     if (density > 0.85) {
         addValue = t2p.z;
-        density = engCarveDensity(wx, wy, density);
+        density = int(t2p.w) == 3 ? engCarveDensity3(wx, wy, density)
+                                  : engCarveDensity(wx, wy, density);
     }
     return ((t2p.y * matWeight) * mn + (t2p.x * density)) + addValue;
 }

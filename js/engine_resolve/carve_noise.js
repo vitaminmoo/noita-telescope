@@ -19,6 +19,7 @@
 // coordinate is wx*0.01*a - so far from x=0 a small change in `a` swings the
 // coordinate by whole simplex periods (busier swirls away from spawn).
 import { PERM_CLASSIC } from './engine_data.js';
+import { ComputeMagicValueFromDoubles } from './simplex_noise.js';
 
 const F = Math.fround;
 
@@ -102,11 +103,39 @@ export function carveValueNoise2D(x, y) {
 	return F(F(F(hTop - hBot) * v) + hBot);
 }
 
+// ProceduralNoise_ValueNoiseSmooth2D @0x00871630 -- the same sin-hash value
+// noise as carveValueNoise2D but WITHOUT the parity twist: both axes always use
+// the smoothstep weight. Only the noise_type 3 carve calls it.
+export function carveValueNoiseSmooth2D(x, y) {
+	const ix = Math.floor(x), iy = Math.floor(y);
+	const fx = F(x - F(ix)), fy = F(y - F(iy));
+	const u = fade(fx), v = fade(fy);
+	const n = F(F(F(iy) * 57) + F(ix));
+	const hTop = F(F(F(hash(F(n + 58)) - hash(F(n + 57))) * u) + hash(F(n + 57)));
+	const hBot = F(F(F(hash(F(n + 1)) - hash(F(n + 0))) * u) + hash(F(n + 0)));
+	return F(F(F(hTop - hBot) * v) + hBot);
+}
+
 const AMP_LO = F(0.05000000074505806); // @0x010534cc
 const VN_FREQ = F(0.02500000037252903); // @0x01053490
 const CO_FREQ = F(0.019999999552965164); // @0x01053484
 const CARVE_GATE = F(0.8500000238418579); // @0x01053714
 const BLEND_DIV = F(0.10000000149011612); // @0x010534fc
+// noise_type 3 constants: @0x01053800 / @0x01053808 (value-noise frequencies),
+// @0x010536e0 (1/1024), and the 1024 * 0.5 * 0.06 amplitude chain
+// (@0x01053bf8, @0x01053968, @0x01053868).
+const VN3_FREQ_X = 0.02, VN3_FREQ_Y = 0.021;
+const CAP_FREQ = 0.0009765625;
+const CAP_AMP_A = 1024.0, CAP_AMP_B = 0.5, CAP_AMP_C = 0.05999999865889549;
+
+// The shared blend tail @0x0087e6f0: d' = d + (s*d - d) * (d - 0.85)/0.1.
+// `s` arrives as a float for noise_type 0 and as a double for noise_type 3
+// (the engine multiplies by the density in double there and only then rounds).
+function carveBlend(s, density) {
+	const cave = F(s * density);
+	const t = F(F(density - CARVE_GATE) / BLEND_DIV);
+	return F(F(F(cave - density) * t) + density);
+}
 
 // density > CARVE_GATE only; returns the carved density d' that replaces
 // density in the G*density term of the final material value.
@@ -116,8 +145,22 @@ export function carveDensity(wx, wy, density) {
 	const a = F(F(vn * AMP_LO) + AMP_LO);
 	const sx = F(a * F(F(fx * F(0.5)) * CO_FREQ));
 	const sy = F(F(F(fy * F(0.5)) * CO_FREQ) * a);
-	const s = carveSimplex2D(sx, sy);
-	const cave = F(s * density);
-	const t = F(F(density - CARVE_GATE) / BLEND_DIV);
-	return F(F(F(cave - density) * t) + density);
+	return carveBlend(carveSimplex2D(sx, sy), density);
+}
+
+// noise_type 3 (SIN_CAPPED_SIMPLEX) carve branch @0x0087e48b -- the variant the
+// XML's `noise_type="SIN_CAPPED_SIMPLEX"` selects (Biome+0x220 == 3, live-PEEKed).
+// Instead of feeding the simplex a world-scaled coordinate it feeds it
+// cos(x/1024) / sin(y/1024) scaled by the same 0.05..0.1 value-noise amplitude,
+// so the noise coordinate is CAPPED to +-30.72*a -- hence the name. The simplex
+// here is the double-precision EdgeNoise_Simplex2D @0x00872300, not the float
+// ProceduralNoise_Simplex2D the type-0 branch uses.
+// Live-validated against CELLPROBE (seed 786433191, excavationsite_cube_chamber:
+// 5/5 exact on the engine's own `n`).
+export function carveDensityType3(wx, wy, density) {
+	const vn = carveValueNoiseSmooth2D(F(wx * VN3_FREQ_X), F(wy * VN3_FREQ_Y));
+	const a = F(F(vn * AMP_LO) + AMP_LO);
+	const sy = Math.sin(wy * CAP_FREQ) * CAP_AMP_A * CAP_AMP_B * CAP_AMP_C * a;
+	const sx = Math.cos(wx * CAP_FREQ) * CAP_AMP_A * CAP_AMP_B * CAP_AMP_C * a;
+	return carveBlend(ComputeMagicValueFromDoubles(sx, sy), density);
 }

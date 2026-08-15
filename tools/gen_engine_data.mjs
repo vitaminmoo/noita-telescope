@@ -120,22 +120,25 @@ for (const color of colors) {
             } : null,
         });
     }
-    // The extraction's XML-enum guess maps SIN_CAPPED_SIMPLEX to 3, but the
-    // engine parses it to runtime noise_type 0 (chunk+0x220 live-PEEKs 0 on the
-    // hills-family chunks, and their carve regime matches the enum-0 default
-    // branch — live-verified on the real-surface branch via CELLPROBE).
-    const noiseType = t0.noiseType === 3 ? 0 : t0.noiseType;
+    // noise_type is the XML enum verbatim (NoiseType_FromString @0x00486179:
+    // IQ2_SIMPLEX1234=0, IQ_SIMPLEX=1, SIN_CAPPED_EVERYTHING=2,
+    // SIN_CAPPED_SIMPLEX=3) and reaches the carve switch at Biome+0x220
+    // unchanged — live-PEEKed 3 on an excavationsite_cube_chamber chunk (seed
+    // 786433191), same as the lake object in
+    // docs/reference/biome_topology_struct.md. Both shipped values (0 and 3)
+    // have a ported carve branch; see carve_noise.js.
+    const noiseType = t0.noiseType;
     // Grids are cached per biome NAME; unnamed biomes share '_EMPTY_'. Only the
     // grids whose <BitmapCaves> params are ported (bitmap_caves.js CAVES_SETUP)
     // are supported — the other named grids would silently render modifier 1.0.
     const gridKey = t0.modifier.kind === 'grid' ? (t0.name || '_EMPTY_') : null;
     const gridOK = gridKey !== null && CAVES_SETUP[gridKey] !== undefined;
     // topology-0 support: the noise/edge/modifier variants the shader implements.
-    // noiseType 3 (SIN_CAPPED overworld carve) is unreachable when the 'empty'
-    // lake-mask modifier caps density at ~0.5 < the 0.85 carve gate.
+    // The carve switch only runs above density 0.85, which the 'empty' lake-mask
+    // modifier caps at ~0.5 — so an unported noise_type is harmless there.
     const carveReachable = !(t0.modifier.kind === 'empty');
     const topo0OK = t0.topo === 0
-        && (noiseType === 0 || !carveReachable)
+        && (noiseType === 0 || noiseType === 3 || !carveReachable)
         && (t0.edge === 0 || t0.edge === 1 || t0.edge === 3)
         && t0.insideNoiseType === 5
         && !t0.depthBlend
