@@ -59,7 +59,7 @@ uniform sampler2D u_paletteTex;         // 256x1 RGBA8: rgb = color, a = paint m
 uniform highp usampler2D u_matAtlasTex; // RGBA8UI packed materials_gfx textures
 uniform highp usampler2D u_matMetaTex;  // 512 x 2 RGBA16UI: row 0 material rect (x, y, w, h) by
                                         // atlas entry; row 1 (atlasEntry, r, g, b) by MATERIAL ID
-uniform highp usampler2D u_palMatTex;   // 256x1 R8UI: palette index -> material entry
+uniform highp usampler2D u_palMatTex;   // 256x2 R8UI: palette index -> material entry / compositing alpha
 uniform highp usampler2D u_fgMatTex;    // mapW x 48 R8UI: fill chunk -> material entry
 uniform bool u_matDetail;               // off: every material paints its flat color
 
@@ -923,6 +923,9 @@ void main() {
         uint entry = texelFetch(u_palMatTex, ivec2(int(idx), 0), 0).r;
         if (entry > 0u) { materialTexel(int(entry), w, outColor); return; }
     }
-    outColor = vec4(pal.rgb, 1.0);
+    // Direct-color cells composite with their material's XML alpha (row 1),
+    // premultiplied, over the background layer -- water pools in wang caves.
+    float a = float(texelFetch(u_palMatTex, ivec2(int(idx), 1), 0).r) / 255.0;
+    outColor = vec4(pal.rgb * a, a);
 }
 `;
