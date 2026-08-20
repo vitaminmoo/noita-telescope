@@ -2527,7 +2527,7 @@ export const app = {
 
 				if (document.getElementById('custom-art').checked && this.surfaceOverlayScenes && this.surfaceOverlayScenes['orb_room']) {
 					// Technically always NGP the way I have this set up but whatever
-					const sceneName = (pwX === 0 && this.gameMode !== 'nightmare') ? 'orb_room' : 'cursed_orb_room';
+					const sceneName = (pwX === 0 && pwY === 0 && this.gameMode !== 'nightmare') ? 'orb_room' : 'cursed_orb_room';
 					for (let k = 0; k < repeatCount; k++) {
 						const repeatedSceneName = k > 0 ? 'cursed_orb_room' : sceneName;
 						const sceneImage = this.surfaceOverlayScenes[repeatedSceneName] || this.surfaceOverlayScenes[sceneName];
