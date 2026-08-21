@@ -383,6 +383,25 @@ export async function performSearch(allowIterative = true, autoNavigate = true) 
 
     searchContinuing = isBackgroundSearchEnabled() || searchAllPW; // If searching all PW, we consider it a long-running search even if not in background mode
 
+    if (isMatch('vault_puzzle_varpuluuta', filters.queryList[0])) {
+        // Check tiles for possible broom spawns to avoid wasting time searching a seed that can't spawn them
+        let seedValid = false;
+        app.tileLayers.forEach(layer => {
+            if (layer.biomeName != 'vault') return;
+            layer.tileIndices.forEach(tileIndex => {
+                if (tileIndex == 14) {
+                    seedValid = true;
+                    return;
+                }
+            });
+        });
+        if (!seedValid) {
+            alert("Hämis says: This seed does not have any possible broom spawns!");
+            cancelSearch();
+            return;
+        }
+    }
+
     // Send the payload to the worker
     searchWorker.postMessage({
         cmd: 'START_PW_SEARCH',
