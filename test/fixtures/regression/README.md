@@ -158,6 +158,19 @@ MATDUMP surface material grid and the batch-3 per-site MATDUMP rects, all seed
   topology-0 surface height and not only the bands under it), hills bands, the
   coal band, the material fingers at a biome edge, the desert surface skin, the
   east sandstone bands, and the pyramid's structure materials.
+* **parallel worlds** (`edr_bands_pw0_materials` / `edr_bands_pw2_materials`,
+  `edr_texture_pw0_rgb` / `edr_texture_pw2_rgb`, `winter_surface_pw2_air`,
+  `desert_surface_pw2_materials`) — content the engine evaluates FROM the
+  absolute coordinate, dumped two parallel worlds east (x + 2·35840) beside its
+  main-world twin: the solid_wall (EDR) coal/rock_hard band noise, the winter
+  surface line (below the rect at pw2, so it is all air where pw0 has the snow
+  line) and the desert surface line (higher at pw2). Only chunk *indices* fold on
+  the world stride; noise, topo and texture math never do
+  (`ChunkGrid_ResolveChunkAtPosition @0x0087d9a0`). A model that folds the pixel
+  itself paints pw0 here and fails these — that is what commit 56961c9 did and
+  7e791e6 undid. Each `_pw2` fixture has its pw0 twin in the set, so a failure
+  says which frame broke. Ground truth: `groundtruth/pw_wrap/` (MATDUMP +
+  MAPDUMP per rect, world verified live as ng0 70×48 before dumping).
 
 ### Sites still without usable ground truth (TODO)
 
@@ -166,8 +179,6 @@ the runbook below and add a fixture:
 
 * temple decal rect (−512, 11776) — the rect `scripts/ref_resolver/check_material_field.mjs`
   defaults to; no MAPDUMP of it exists.
-* EDR polkadot / texture rect — `scripts/probe_out/edr_*_crop.png` are crops with
-  no recorded world rect or dump provenance.
 * tree scene rect (−1427, 436) — `wood_tree` undressed.
   (`roadblock_west_neighbour` covers the same class at a `mountain_tree` chunk.)
 * essenceroom (9923, 4339) — undressed.
@@ -178,6 +189,14 @@ the runbook below and add a fixture:
 Ground truth that exists but has no fixture yet, because the model scores 0 %
 there and a 0 % threshold guards nothing — real open leads, not oversights:
 
+* the lake ramp (`groundtruth/pw_wrap/lake_pw0_*`, rect (−13570,300,512,512)):
+  the game is a flat water pool there (261754/262144 water) while telescope
+  draws the authored mud-over-sand ramp. The ramp is real but inert in the
+  shipped game — the lake biomes' BitmapCaves modifier grid is empty, so the
+  density multiplies to 0 and the water band wins; see
+  `~/reverse/noita/docs/systems/world_tree_and_spire.md` ("WHY the ramp is
+  inert"). Telescope keeps the ramp on purpose (a mod un-masks it in game), so
+  this dump is a record of the divergence, not a fixture.
 * the surface pond's water body (`matdump/surface_pond` around (2944,192)):
   `water` vs the model's `sand_static`. The lake "settled water" band rule
   (`limit_min_y`) is ported for lakes but this pond is not following it.

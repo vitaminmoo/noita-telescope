@@ -1,0 +1,82 @@
+{
+	"name": "winter_surface_pw2_air",
+	"guards": "the winter surface line two parallel worlds east lies BELOW this rect (all air): the pw0 twin winter_surface_line_materials is 89% air with the snow line inside it, which a stride-folded surface noise would repeat here",
+	"seed": 786433191,
+	"ngPlus": 0,
+	"world": {
+		"x": 69120,
+		"y": -644,
+		"w": 64,
+		"h": 64
+	},
+	"source": {
+		"key": "matdump/winter_pw2",
+		"kind": "matdump-pgm",
+		"path": "/home/vitaminmoo/reverse/noita/groundtruth/pw_wrap/winter_pw2_mat.pgm",
+		"matlist": "/home/vitaminmoo/reverse/noita/groundtruth/pw_wrap/matlist.txt",
+		"rect": [
+			68992,
+			-900,
+			256,
+			512
+		],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-28",
+		"note": "PW-wrap ground truth (groundtruth/pw_wrap/, not committed; capture.py beside it): seed 786433191 ng0 verified live via LUAEVAL (NEW_GAME_PLUS_COUNT=0, BiomeMapGetSize 70x48) before dumping; cellsim/explosions NOPed. the winter surface line around the winter_surface_line_materials rect (-2560,-644) shifted two parallel worlds east (x + 2*35840): the topology-0 surface noise runs on the ABSOLUTE x, so the line sits at a different height than in pw0."
+	},
+	"expected": {
+		"file": "winter_surface_pw2_air.bin",
+		"format": "matpal16",
+		"palette": [
+			"air"
+		]
+	},
+	"summary": {
+		"airPct": 100,
+		"topMaterials": {
+			"air": 4096
+		}
+	},
+	"tier1": {
+		"chunkFlags": [
+			{
+				"cell": [
+					170,
+					12
+				],
+				"biome": "winter",
+				"biomeColor": "0xd6d8e3",
+				"mode": "topo0",
+				"paintsNothing": false,
+				"sceneOnly": false,
+				"fillLayerMaterial": null
+			}
+		],
+		"pixels": {
+			"metric": "materials",
+			"mode": "exact",
+			"threshold": 100,
+			"measured": 100,
+			"measuredAt": "2026-08-28",
+			"measuredCommit": "7e791e6"
+		},
+		"maxUnresolvedPct": 0.5
+	},
+	"tier2": {
+		"render": {
+			"layers": {}
+		},
+		"checks": [
+			{
+				"metric": "airMask",
+				"mode": "exact",
+				"threshold": 100,
+				"measured": 100,
+				"measuredAt": "2026-08-28",
+				"measuredCommit": "7e791e6",
+				"comparedPixels": 4096
+			}
+		]
+	}
+}

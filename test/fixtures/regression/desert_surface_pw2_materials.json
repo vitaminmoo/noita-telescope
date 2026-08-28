@@ -1,0 +1,92 @@
+{
+	"name": "desert_surface_pw2_materials",
+	"guards": "the desert surface line and its sandstone_surface / sand_surface skin two parallel worlds east: the topology-0 surface noise runs on the ABSOLUTE x, so the line sits higher than in the pw0 twin desert_surface_materials",
+	"seed": 786433191,
+	"ngPlus": 0,
+	"world": {
+		"x": 76928,
+		"y": -132,
+		"w": 128,
+		"h": 256
+	},
+	"source": {
+		"key": "matdump/desert_pw2",
+		"kind": "matdump-pgm",
+		"path": "/home/vitaminmoo/reverse/noita/groundtruth/pw_wrap/desert_pw2_mat.pgm",
+		"matlist": "/home/vitaminmoo/reverse/noita/groundtruth/pw_wrap/matlist.txt",
+		"rect": [
+			76864,
+			-260,
+			256,
+			512
+		],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-28",
+		"note": "PW-wrap ground truth (groundtruth/pw_wrap/, not committed; capture.py beside it): seed 786433191 ng0 verified live via LUAEVAL (NEW_GAME_PLUS_COUNT=0, BiomeMapGetSize 70x48) before dumping; cellsim/explosions NOPed. the desert surface line around the desert_surface_materials rect (5248,-4) shifted two parallel worlds east (x + 2*35840): the topology-0 surface noise runs on the ABSOLUTE x, so the line sits at a different height than in pw0."
+	},
+	"expected": {
+		"file": "desert_surface_pw2_materials.bin",
+		"format": "matpal16",
+		"palette": [
+			"air",
+			"steam",
+			"sand_surface",
+			"water",
+			"bone",
+			"sandstone_surface"
+		]
+	},
+	"summary": {
+		"airPct": 65.512,
+		"topMaterials": {
+			"air": 21467,
+			"sandstone_surface": 5943,
+			"sand_surface": 5201,
+			"bone": 120,
+			"water": 35,
+			"steam": 2
+		}
+	},
+	"tier1": {
+		"chunkFlags": [
+			{
+				"cell": [
+					185,
+					13
+				],
+				"biome": "desert",
+				"biomeColor": "0xcc9944",
+				"mode": "topo0",
+				"paintsNothing": false,
+				"sceneOnly": false,
+				"fillLayerMaterial": null
+			}
+		],
+		"pixels": {
+			"metric": "materials",
+			"mode": "agreement",
+			"threshold": 99.02,
+			"measured": 99.521,
+			"measuredAt": "2026-08-28",
+			"measuredCommit": "7e791e6"
+		},
+		"maxUnresolvedPct": 0.5
+	},
+	"tier2": {
+		"render": {
+			"layers": {}
+		},
+		"checks": [
+			{
+				"metric": "airMask",
+				"mode": "agreement",
+				"threshold": 99.39,
+				"measured": 99.887,
+				"measuredAt": "2026-08-28",
+				"measuredCommit": "7e791e6",
+				"comparedPixels": 32768
+			}
+		]
+	}
+}

@@ -1,0 +1,90 @@
+{
+	"name": "edr_texture_pw0_rgb",
+	"guards": "the rendered EDR band texture in the main world: the pw0 twin of edr_texture_pw2_rgb",
+	"seed": 786433191,
+	"ngPlus": 0,
+	"world": {
+		"x": 16576,
+		"y": 1216,
+		"w": 128,
+		"h": 128
+	},
+	"source": {
+		"key": "mapdump/edr_pw0",
+		"kind": "mapdump-ppm",
+		"path": "/home/vitaminmoo/reverse/noita/groundtruth/pw_wrap/edr_pw0_map.ppm",
+		"rect": [
+			16384,
+			1024,
+			512,
+			512
+		],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-28",
+		"note": "PW-wrap ground truth (groundtruth/pw_wrap/, not committed; capture.py beside it): seed 786433191 ng0 verified live via LUAEVAL (NEW_GAME_PLUS_COUNT=0, BiomeMapGetSize 70x48) before dumping; cellsim/explosions NOPed. solid_wall (EDR) chunk (67,16): the coal/rock_hard band noise over rock_hard_border runs on the ABSOLUTE coordinate, so this rect differs from its pw0 twin."
+	},
+	"expected": {
+		"file": "edr_texture_pw0_rgb.bin",
+		"format": "rgb8"
+	},
+	"summary": {
+		"airPct": 0,
+		"topColors": {
+			"#251511": 11218,
+			"#37221d": 3663,
+			"#40231c": 1119,
+			"#623b32": 384
+		}
+	},
+	"tier1": {
+		"chunkFlags": [
+			{
+				"cell": [
+					67,
+					16
+				],
+				"biome": "solid_wall",
+				"biomeColor": "0x3d3d3d",
+				"mode": "topo0",
+				"paintsNothing": false,
+				"sceneOnly": false,
+				"fillLayerMaterial": "rock_hard_border"
+			}
+		],
+		"pixels": {
+			"metric": "airMask",
+			"mode": "agreement",
+			"threshold": 99.5,
+			"measured": 100,
+			"measuredAt": "2026-08-28",
+			"measuredCommit": "7e791e6"
+		},
+		"maxUnresolvedPct": 0.5
+	},
+	"tier2": {
+		"render": {
+			"layers": {}
+		},
+		"checks": [
+			{
+				"metric": "airMask",
+				"mode": "agreement",
+				"comparedPixels": 16384,
+				"measured": 100,
+				"measuredAt": "2026-08-28",
+				"measuredCommit": "7e791e6",
+				"threshold": 99.5
+			},
+			{
+				"metric": "rgb",
+				"mode": "agreement",
+				"threshold": 99.5,
+				"measured": 100,
+				"measuredAt": "2026-08-28",
+				"measuredCommit": "7e791e6",
+				"comparedPixels": 16384
+			}
+		]
+	}
+}

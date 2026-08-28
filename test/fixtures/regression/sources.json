@@ -295,5 +295,179 @@
 		"ngPlus": 0,
 		"captured": "2026-08-15",
 		"note": "Batch-3 capture (groundtruth/batch3/, not committed - 67MB): one MAPDUMP colour rect plus a MATDUMP material-id rect per site, world rect + seed recorded in the site's own .json beside it."
+	},
+	"matdump/edr_pw0": {
+		"kind": "matdump-pgm",
+		"path": "/home/vitaminmoo/reverse/noita/groundtruth/pw_wrap/edr_pw0_mat.pgm",
+		"matlist": "/home/vitaminmoo/reverse/noita/groundtruth/pw_wrap/matlist.txt",
+		"rect": [
+			16384,
+			1024,
+			512,
+			512
+		],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-28",
+		"note": "PW-wrap ground truth (groundtruth/pw_wrap/, not committed; capture.py beside it): seed 786433191 ng0 verified live via LUAEVAL (NEW_GAME_PLUS_COUNT=0, BiomeMapGetSize 70x48) before dumping; cellsim/explosions NOPed. solid_wall (EDR) chunk (67,16): the coal/rock_hard band noise over rock_hard_border runs on the ABSOLUTE coordinate, so this rect differs from its pw0 twin."
+	},
+	"mapdump/edr_pw0": {
+		"kind": "mapdump-ppm",
+		"path": "/home/vitaminmoo/reverse/noita/groundtruth/pw_wrap/edr_pw0_map.ppm",
+		"rect": [
+			16384,
+			1024,
+			512,
+			512
+		],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-28",
+		"note": "PW-wrap ground truth (groundtruth/pw_wrap/, not committed; capture.py beside it): seed 786433191 ng0 verified live via LUAEVAL (NEW_GAME_PLUS_COUNT=0, BiomeMapGetSize 70x48) before dumping; cellsim/explosions NOPed. solid_wall (EDR) chunk (67,16): the coal/rock_hard band noise over rock_hard_border runs on the ABSOLUTE coordinate, so this rect differs from its pw0 twin."
+	},
+	"matdump/edr_pw2": {
+		"kind": "matdump-pgm",
+		"path": "/home/vitaminmoo/reverse/noita/groundtruth/pw_wrap/edr_pw2_mat.pgm",
+		"matlist": "/home/vitaminmoo/reverse/noita/groundtruth/pw_wrap/matlist.txt",
+		"rect": [
+			88064,
+			1024,
+			512,
+			512
+		],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-28",
+		"note": "PW-wrap ground truth (groundtruth/pw_wrap/, not committed; capture.py beside it): seed 786433191 ng0 verified live via LUAEVAL (NEW_GAME_PLUS_COUNT=0, BiomeMapGetSize 70x48) before dumping; cellsim/explosions NOPed. solid_wall (EDR) chunk (67,16) shifted two parallel worlds east (x + 2*35840): the coal/rock_hard band noise over rock_hard_border runs on the ABSOLUTE coordinate, so this rect differs from its pw0 twin."
+	},
+	"mapdump/edr_pw2": {
+		"kind": "mapdump-ppm",
+		"path": "/home/vitaminmoo/reverse/noita/groundtruth/pw_wrap/edr_pw2_map.ppm",
+		"rect": [
+			88064,
+			1024,
+			512,
+			512
+		],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-28",
+		"note": "PW-wrap ground truth (groundtruth/pw_wrap/, not committed; capture.py beside it): seed 786433191 ng0 verified live via LUAEVAL (NEW_GAME_PLUS_COUNT=0, BiomeMapGetSize 70x48) before dumping; cellsim/explosions NOPed. solid_wall (EDR) chunk (67,16) shifted two parallel worlds east (x + 2*35840): the coal/rock_hard band noise over rock_hard_border runs on the ABSOLUTE coordinate, so this rect differs from its pw0 twin."
+	},
+	"matdump/winter_pw0": {
+		"kind": "matdump-pgm",
+		"path": "/home/vitaminmoo/reverse/noita/groundtruth/pw_wrap/winter_pw0_mat.pgm",
+		"matlist": "/home/vitaminmoo/reverse/noita/groundtruth/pw_wrap/matlist.txt",
+		"rect": [
+			-2688,
+			-900,
+			256,
+			512
+		],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-28",
+		"note": "PW-wrap ground truth (groundtruth/pw_wrap/, not committed; capture.py beside it): seed 786433191 ng0 verified live via LUAEVAL (NEW_GAME_PLUS_COUNT=0, BiomeMapGetSize 70x48) before dumping; cellsim/explosions NOPed. the winter surface line around the winter_surface_line_materials rect (-2560,-644)."
+	},
+	"mapdump/winter_pw0": {
+		"kind": "mapdump-ppm",
+		"path": "/home/vitaminmoo/reverse/noita/groundtruth/pw_wrap/winter_pw0_map.ppm",
+		"rect": [
+			-2688,
+			-900,
+			256,
+			512
+		],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-28",
+		"note": "PW-wrap ground truth (groundtruth/pw_wrap/, not committed; capture.py beside it): seed 786433191 ng0 verified live via LUAEVAL (NEW_GAME_PLUS_COUNT=0, BiomeMapGetSize 70x48) before dumping; cellsim/explosions NOPed. the winter surface line around the winter_surface_line_materials rect (-2560,-644)."
+	},
+	"matdump/winter_pw2": {
+		"kind": "matdump-pgm",
+		"path": "/home/vitaminmoo/reverse/noita/groundtruth/pw_wrap/winter_pw2_mat.pgm",
+		"matlist": "/home/vitaminmoo/reverse/noita/groundtruth/pw_wrap/matlist.txt",
+		"rect": [
+			68992,
+			-900,
+			256,
+			512
+		],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-28",
+		"note": "PW-wrap ground truth (groundtruth/pw_wrap/, not committed; capture.py beside it): seed 786433191 ng0 verified live via LUAEVAL (NEW_GAME_PLUS_COUNT=0, BiomeMapGetSize 70x48) before dumping; cellsim/explosions NOPed. the winter surface line around the winter_surface_line_materials rect (-2560,-644) shifted two parallel worlds east (x + 2*35840): the topology-0 surface noise runs on the ABSOLUTE x, so the line sits at a different height than in pw0."
+	},
+	"mapdump/winter_pw2": {
+		"kind": "mapdump-ppm",
+		"path": "/home/vitaminmoo/reverse/noita/groundtruth/pw_wrap/winter_pw2_map.ppm",
+		"rect": [
+			68992,
+			-900,
+			256,
+			512
+		],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-28",
+		"note": "PW-wrap ground truth (groundtruth/pw_wrap/, not committed; capture.py beside it): seed 786433191 ng0 verified live via LUAEVAL (NEW_GAME_PLUS_COUNT=0, BiomeMapGetSize 70x48) before dumping; cellsim/explosions NOPed. the winter surface line around the winter_surface_line_materials rect (-2560,-644) shifted two parallel worlds east (x + 2*35840): the topology-0 surface noise runs on the ABSOLUTE x, so the line sits at a different height than in pw0."
+	},
+	"matdump/desert_pw0": {
+		"kind": "matdump-pgm",
+		"path": "/home/vitaminmoo/reverse/noita/groundtruth/pw_wrap/desert_pw0_mat.pgm",
+		"matlist": "/home/vitaminmoo/reverse/noita/groundtruth/pw_wrap/matlist.txt",
+		"rect": [
+			5184,
+			-260,
+			256,
+			512
+		],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-28",
+		"note": "PW-wrap ground truth (groundtruth/pw_wrap/, not committed; capture.py beside it): seed 786433191 ng0 verified live via LUAEVAL (NEW_GAME_PLUS_COUNT=0, BiomeMapGetSize 70x48) before dumping; cellsim/explosions NOPed. the desert surface line around the desert_surface_materials rect (5248,-4)."
+	},
+	"mapdump/desert_pw0": {
+		"kind": "mapdump-ppm",
+		"path": "/home/vitaminmoo/reverse/noita/groundtruth/pw_wrap/desert_pw0_map.ppm",
+		"rect": [
+			5184,
+			-260,
+			256,
+			512
+		],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-28",
+		"note": "PW-wrap ground truth (groundtruth/pw_wrap/, not committed; capture.py beside it): seed 786433191 ng0 verified live via LUAEVAL (NEW_GAME_PLUS_COUNT=0, BiomeMapGetSize 70x48) before dumping; cellsim/explosions NOPed. the desert surface line around the desert_surface_materials rect (5248,-4)."
+	},
+	"matdump/desert_pw2": {
+		"kind": "matdump-pgm",
+		"path": "/home/vitaminmoo/reverse/noita/groundtruth/pw_wrap/desert_pw2_mat.pgm",
+		"matlist": "/home/vitaminmoo/reverse/noita/groundtruth/pw_wrap/matlist.txt",
+		"rect": [
+			76864,
+			-260,
+			256,
+			512
+		],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-28",
+		"note": "PW-wrap ground truth (groundtruth/pw_wrap/, not committed; capture.py beside it): seed 786433191 ng0 verified live via LUAEVAL (NEW_GAME_PLUS_COUNT=0, BiomeMapGetSize 70x48) before dumping; cellsim/explosions NOPed. the desert surface line around the desert_surface_materials rect (5248,-4) shifted two parallel worlds east (x + 2*35840): the topology-0 surface noise runs on the ABSOLUTE x, so the line sits at a different height than in pw0."
+	},
+	"mapdump/desert_pw2": {
+		"kind": "mapdump-ppm",
+		"path": "/home/vitaminmoo/reverse/noita/groundtruth/pw_wrap/desert_pw2_map.ppm",
+		"rect": [
+			76864,
+			-260,
+			256,
+			512
+		],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-28",
+		"note": "PW-wrap ground truth (groundtruth/pw_wrap/, not committed; capture.py beside it): seed 786433191 ng0 verified live via LUAEVAL (NEW_GAME_PLUS_COUNT=0, BiomeMapGetSize 70x48) before dumping; cellsim/explosions NOPed. the desert surface line around the desert_surface_materials rect (5248,-4) shifted two parallel worlds east (x + 2*35840): the topology-0 surface noise runs on the ABSOLUTE x, so the line sits at a different height than in pw0."
 	}
 }
