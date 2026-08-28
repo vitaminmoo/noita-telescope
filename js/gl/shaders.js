@@ -111,10 +111,15 @@ ${SIGNS_GLSL}
 
 out vec4 outColor;
 
-int pmod(int a, int b) { int m = a % b; return m < 0 ? m + b : m; }
+// GLSL ES leaves % and / UNDEFINED for a negative operand — ANGLE (Chrome)
+// lowers them to C truncation, but Mesa's native GL (Firefox on Linux) compiles
+// them as UNSIGNED ops, so (-1) % 70 came back 45 and the whole west parallel
+// world (negative world x everywhere) sampled garbage chunks. Only non-negative
+// operands ever reach % and / here. b must be positive.
+int pmod(int a, int b) { return a >= 0 ? a % b : b - 1 - ((-1 - a) % b); }
 // Floor division. JS '>>' on a negative int floors; GLSL ES leaves '>>' of a
 // negative value implementation-defined, so every shift is spelled out.
-int fdiv(int a, int b) { int q = a / b; if (a % b != 0 && ((a < 0) != (b < 0))) q -= 1; return q; }
+int fdiv(int a, int b) { return a >= 0 ? a / b : -1 - ((-1 - a) / b); }
 int parity(int x, int y) { return pmod(x, 2) * 2 + pmod(y, 2); }
 
 int noiseAt(int i) { return int(texelFetch(u_noiseTex, ivec2(i, 0), 0).r); }
@@ -668,8 +673,8 @@ float engSinHash(float v) {
 // wrapped toroidally. FloatGrid2D_SampleBilinearSmooth @0x00870e60: smoothstep-
 // faded bilinear over the wrapped corners.
 float modGridCell(int gi, int x, int y) {
-    int px = ((x % 512) + 512) % 512;
-    int py = ((y % 256) + 256) % 256;
+    int px = pmod(x, 512);
+    int py = pmod(y, 256);
     return texelFetch(u_sinHashTex, ivec2(((gi & 1) << 9) + px, 512 + ((gi >> 1) << 8) + py), 0).r;
 }
 float modGridSample(int gi, float sx, float sy) {
