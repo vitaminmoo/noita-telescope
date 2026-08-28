@@ -37,7 +37,7 @@ export const MATERIAL_CONTAINER_TYPES = [
 // This function is pretty messed up even though it's currently in a working state
 export function tileToWorldCoordinates(chunkBaseX, chunkBaseY, tileX, tileY, pw = 0, pwVertical = 0, isNGP = false, gameMode = 'normal') {
     const world_chunk_center_x = (isNGP || gameMode === 'nightmare') ? WORLD_CHUNK_CENTER_X_NGP : WORLD_CHUNK_CENTER_X;
-    const worldSize = (isNGP || gameMode === 'nightmare') ? 64 * 512 - 8 : 70 * 512;
+    const worldSize = getWorldStride(isNGP, gameMode);
 
     let smallChunkSize = Math.floor(CHUNK_SIZE / TILE_SIZE); // 51
     let div5offX = 5 * CHUNK_SIZE * Math.floor((chunkBaseX - world_chunk_center_x)/5);
@@ -151,6 +151,15 @@ export function clamp(value, min, max) {
     return Math.min(Math.max(value, min), max);
 }
 
+// The PW stride: world content (chunk table, wang regions, carve, scenes)
+// repeats on this, which in NG+/nightmare is 8px SHORT of the 64-chunk map
+// pitch. Game-proven on seed 786433191 ng2 vs live MAPDUMPs (NG_PLUS_INIT
+// run): pw1/pw2/pw8/pw64 content = main + k*32760 (94-96% air-mask), far
+// east at x 16.77M = main + 512*32760 (87%); 35840 and 32768 score noise.
+export function getWorldStride(isNGP, gameMode='normal') {
+    return (isNGP || gameMode === 'nightmare') ? 64 * 512 - 8 : 70 * 512;
+}
+
 export function getWorldSize(isNGP, gameMode='normal') {
     if (gameMode === 'nightmare') return 64;
     return isNGP ? 64 : 70;
@@ -194,7 +203,11 @@ export function getBiomeAtWorldCoordinates(biomeData, worldX, worldY, isNGP = fa
     // Convert to positions mod world size
     const worldSize = mapWidth * 512;
     const worldCenter = worldSize / 2;
-    const modX = ((worldX + worldCenter) % worldSize + worldSize) % worldSize;
+    // Fold on the PW stride, not the map pitch: in NG+ they differ by 8px per
+    // world, which at far PWs puts the naive fold whole COLUMNS off (8 cols at
+    // pw512). modX stays within [0, stride) so the column index is 0..63.
+    const strideX = getWorldStride(isNGP, gameMode);
+    const modX = ((worldX + worldCenter) % strideX + strideX) % strideX;
     const modY = ((worldY + 14*512) % 24576 + 24576) % 24576;
 
     // Account for biome edge noise

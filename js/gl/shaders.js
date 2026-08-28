@@ -164,7 +164,7 @@ uint fillMaterialAt(ivec2 p) {
 // so the row here CLAMPS. The CPU bake gets the same answer by swapping in
 // heavenPixels/hellPixels, whose 48 rows are all copies of row 0 / row 47.
 ivec2 unwob(int wx, int wy) {
-    return ivec2(pmod(wx + u_centerPx, u_worldWidth) / CHUNK,
+    return ivec2(pmod(wx + u_centerPx, u_worldSizeX) / CHUNK,
                  clamp(fdiv(wy + u_baseY, CHUNK), 0, u_maxRow));
 }
 
@@ -925,7 +925,16 @@ void main() {
     // (unwob, chunkAt, engInfoAt, rasterChunk all clamp; noise and material
     // texels sample w directly). Game-validated at the map top on seed
     // 786433191: dense the_sky clouds continue upward, snow columns stay air.
-    int pwX = fdiv(w.x + u_centerPx, u_worldWidth);
+    int pwX = fdiv(w.x + u_centerPx, u_worldSizeX);
+    // The game folds ALL content resolution -- chunk table, edge wobble, wang
+    // regions, topo/carve noise -- on the PW stride u_worldSizeX (64*512-8 in
+    // NG+/nightmare, where it differs from the 64-chunk map pitch by 8px per
+    // world: at pw512 the naive 32768 fold picks a biome column 8 cols west
+    // of the game's). Material texels keep the ABSOLUTE pixel: texture phase
+    // runs on across worlds (rgb differs between PW twins while the material
+    // ids repeat, per the ng2 MAPDUMP correlations).
+    ivec2 wAbs = w;
+    w.x -= pwX * u_worldSizeX;
 
     // Engine-faithful resolve: the game's own per-pixel chain for every chunk
     // whose biome the port supports; anything else falls through to the legacy
@@ -962,7 +971,7 @@ void main() {
                 int leftSlot = int(engInfoAt(pcx - 1, pcy) & 0xffu);
                 mat = engTopo0(slot, physSlot, leftSlot, w);
             }
-            if (mat > 0) engMaterialColor(mat, w);
+            if (mat > 0) engMaterialColor(mat, wAbs);
             return;
         }
     }
@@ -984,7 +993,7 @@ void main() {
         if (u_matDetail) {
             uint entry = fillMaterialAt(pos);
             // A transparent texel leaves outColor at vec4(0) — air, as in game.
-            if (entry > 0u) { materialTexel(int(entry), w, outColor); return; }
+            if (entry > 0u) { materialTexel(int(entry), wAbs, outColor); return; }
         }
         outColor = chunkForeground(pos);
         return;
@@ -993,8 +1002,8 @@ void main() {
     if ((cc.a & ${CHUNK_FLAG_HAS_TILES}u) == 0u) return;
 
     // The engine's whole-image mod-wrap, in the parallel world's own frame:
-    // region anchors are PW-0 world coords, so undo the PW stride first.
-    int sx = w.x - pwX * u_worldSizeX;
+    // w.x was already folded into the PW-0 frame at the top of main().
+    int sx = w.x;
 
     // Region ownership follows the buffers' own masking grid (rasterChunk), not
     // the 512-px chunk grid — and it is NOT shifted by the wobble. The CPU bake
@@ -1038,7 +1047,7 @@ void main() {
     }
     if (u_matDetail) {
         uint entry = texelFetch(u_palMatTex, ivec2(int(idx), 0), 0).r;
-        if (entry > 0u) { materialTexel(int(entry), w, outColor); return; }
+        if (entry > 0u) { materialTexel(int(entry), wAbs, outColor); return; }
     }
     // Direct-color cells composite with their material's XML alpha (row 1),
     // premultiplied, over the background layer -- water pools in wang caves.

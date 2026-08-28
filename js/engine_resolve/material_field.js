@@ -61,8 +61,14 @@ export function createMaterialField(layers, biomeData, generatorConfig, mapWidth
         return lattice.chunkCovered[row * mapWidth + (((cx % mapWidth) + mapWidth) % mapWidth)];
     }
 
+    const strideX = mapWidth === 64 ? 64 * 512 - 8 : mapWidth * 512;
+    const centerPx = mapWidth * 256;
+
     /** Material id at a world pixel; 0 = air, MATERIAL_UNRESOLVED = fallback. */
     function materialAt(x, y) {
+        // Canonical PW-0 x: content resolution folds on the PW stride (see
+        // utils.getWorldStride); ng0 is untouched (stride == map pitch).
+        x = ((x + centerPx) % strideX + strideX) % strideX - centerPx;
         resolveCellFull(bmap, x, y, hasEdgeNoise, cell);
         const biome = ENGINE_BY_COLOR.get(cell.color);
         if (!biome || !biome.supported) return MATERIAL_UNRESOLVED;

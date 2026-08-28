@@ -32,7 +32,12 @@ export function cellColorAt(bmap, cx, cy) {
 // Returns { origColor, color, cx, cy } -- `color` is the RESOLVED cell's biome.
 export function resolveCellFull(bmap, wx, wy, hasEdgeNoise, out = {}) {
 	const mapW = bmap.w;
-	const sx = wx + mapW * 256; // grid x_shift = worldW/2 (= 17920 for mapW 70)
+	// Fold on the PW stride: NG+/nightmare content repeats on 64*512-8, not on
+	// the 64-chunk map pitch (game-proven; see utils.getWorldStride). ng0 is
+	// untouched (stride == pitch). Idempotent, so pre-folded callers are fine.
+	const strideX = mapW === 64 ? 64 * 512 - 8 : mapW * 512;
+	const sxRaw = wx + mapW * 256; // grid x_shift = worldW/2 (= 17920 for mapW 70)
+	const sx = ((sxRaw % strideX) + strideX) % strideX;
 	const sy = wy + 7168; //       grid y_shift = 14*512
 	const fx = Math.trunc(sx), fy = Math.trunc(sy);
 	const cx = fx >> 9, cy = fy >> 9;

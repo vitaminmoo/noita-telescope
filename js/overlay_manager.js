@@ -5,7 +5,7 @@ import { EDGE_DECAL_HALO } from './edge_decals.js';
 import { PIXEL_SCENE_DATA, setPixelSceneVariantRebuilder } from './pixel_scene_generation.js';
 import { appSettings, updateSettingsFromUI } from './settings.js';
 import { CHUNK_SIZE } from './constants.js';
-import { getWorldCenter, getWorldSize } from './utils.js';
+import { getWorldCenter, getWorldStride } from './utils.js';
 
 export const overlayWorker = new Worker(new URL('./overlay_worker.js', import.meta.url), { type: 'module' });
 // A worker whose script fails to load/parse (stale cache, syntax error) dies
@@ -212,7 +212,7 @@ export function requestEdgeDecalTile(worldKey, tx, ty) {
 	const left = tx * EDGE_DECAL_TILE - P, right = left + EDGE_DECAL_TILE + 2 * P;
 	const top = ty * EDGE_DECAL_TILE - P, bottom = top + EDGE_DECAL_TILE + 2 * P;
 	const centerPx = getWorldCenter(app.isNGP, app.gameMode) * CHUNK_SIZE;
-	const worldPx = getWorldSize(app.isNGP, app.gameMode) * CHUNK_SIZE;
+	const worldPx = getWorldStride(app.isNGP, app.gameMode); // scenes sit on the PW stride
 	const pwOf = (x) => Math.floor((x + centerPx) / worldPx);
 	const byPW = app.pixelScenesByPW;
 	if (!byPW) return false;
