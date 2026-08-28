@@ -806,8 +806,9 @@ float engEvalCaveMat(int slot, int physSlot, int leftSlot, ivec2 w) {
     int mk = int(t5p.x);
     float m = 1.0;
     bool blendMod = false;
+    float modOff = 0.0;  // BiomeNode+0x94 sample offset of the blended node
     if (mk == 1) { m = t5p.y; if (m < 1.0) blendMod = true; }
-    else if (mk == 2) { m = 0.0; blendMod = true; }
+    else if (mk == 2) { m = 0.0; blendMod = true; modOff = t5p.y; }  // lakes: 0x0 bitmap-noise node, seed-derived offset
     else if (mk == 3) {
         int gi = int(t5p.z);
         if (gi >= 0) {  // -1: <BitmapCaves> params not ported, keep m = 1.0
@@ -820,8 +821,8 @@ float engEvalCaveMat(int slot, int physSlot, int leftSlot, ivec2 w) {
         }
     }
     if (blendMod) {
-        float gx = (wx * 0.49162514) * 0.1;
-        float gy = (wy * 0.49162514) * 0.1;
+        float gx = (wx * 0.49162514 + modOff) * 0.1;
+        float gy = (modOff * 6.86035959282328e-7 + wy * 0.49162514) * 0.1;
         float sN = magicNoise(gx, gy);
         m = m + (sN * (1.0 - m)) * 0.495;
     }

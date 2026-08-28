@@ -232,7 +232,7 @@ export class GLTerrainRenderer {
             cov: engine && createCoverageLatticeTexture(gl, engine.lattice),
             latMat: engine && createMaterialLatticeTexture(gl, engine.lattice),
             engChunk: engine && createEngineChunkTexture(gl, engine),
-            engTable: engine && createFloatTableTexture(gl, buildEngineTable()),
+            engTable: engine && createFloatTableTexture(gl, buildEngineTable(opts.seed ?? 0)),
             // sin-hash rows + the seed's BitmapCaves modifier grids (one texture)
             sinHash: engine && createR32FTexture(gl, buildSinHashAndGrids(opts.seed ?? 0)),
         };

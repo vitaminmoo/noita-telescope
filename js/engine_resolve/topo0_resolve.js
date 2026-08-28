@@ -26,7 +26,7 @@
 // BiomeChunk param block at +0x218..+0x2a8 for solid_wall / temple_wall /
 // watercave / coalmine_alt).
 import { ComputeMagicValueFromDoubles, SimplexNoise1234 } from './simplex_noise.js';
-import { getModifierGrid, sampleModifier } from './bitmap_caves.js';
+import { getModifierGrid, sampleModifier, bitmapNoiseNodeOffset } from './bitmap_caves.js';
 import { carveDensity, carveDensityType3 } from './carve_noise.js';
 import { selectComponentForCell } from './band_select.js';
 
@@ -214,8 +214,18 @@ export function materialNoise(cfg, wx, wy, worldSeed = 0) {
 //                             procedural biome without a <BitmapCaves> block
 //                             gets modifier == 1.0 exactly (live-PEEKed).
 //   { kind: 'empty' }         an allocated-but-never-generated bundle (w=h=0):
-//                             the sampler returns 0 and only the simplex blend
-//                             survives -> the "lake mask" (<=0 means AIR).
+//                             FloatGrid2D_SampleWrapped @0x0092a310 answers 0
+//                             for count==0, so only the simplex blend survives
+//                             -> the "lake mask" (<=0 means AIR). The four lakes
+//                             get here through bitmap_noise_file="topology_lake.png":
+//                             Biome_InitializeFromConfig @0x0086b9f0 hands a
+//                             procedural biome with no <BitmapCaves> but a
+//                             noise file to BiomeNode_GetOrCreateBitmapNoiseGrid
+//                             @0x00867c90, a stub that never reads the PNG (it
+//                             only wires the material/spawn callbacks), so the
+//                             node's grid keeps its 0x0 ctor size. That is why
+//                             lake.xml's authored -0.37 lakebed ramp never
+//                             appears in the shipped game: depthRatio x 0.
 //   { kind: 'none' }          Biome+0x1d4 == NULL: the whole step is skipped.
 //   { kind: 'grid', gridKey } a real 512x256 <BitmapCaves> grid, replayed by
 //                             bitmap_caves.js (per biome NAME per world seed).
@@ -241,7 +251,11 @@ export function densityModifier(cfg, wx, wy, gridOffsetX = 0, worldSeed = 0) {
 	} else {
 		throw new Error(`topo0: modifier kind ${mod.kind} not ported`);
 	}
-	const off = mod.offsetX !== undefined ? mod.offsetX : gridOffsetX;
+	// 'empty' is a bitmap-noise BiomeNode whose +0x94 sample offset the ctor
+	// seeded from r6 (bitmapNoiseNodeOffset); the 1x1 const bundle's is 5.0 but
+	// it never blends (m == 1.0 exactly).
+	const off = mod.offsetX !== undefined ? mod.offsetX
+		: (mod.kind === 'empty' ? bitmapNoiseNodeOffset(worldSeed) : gridOffsetX);
 	const gx = F((wx * K0.MOD_FREQ + off) * K0.MOD_SCALE);
 	const gy = F((off * K0.MOD_YOFF + wy * K0.MOD_FREQ) * K0.MOD_SCALE);
 	const s = F(ComputeMagicValueFromDoubles(gx, gy));

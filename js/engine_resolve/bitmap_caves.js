@@ -30,6 +30,8 @@
 //   float32 placement lerps, phase E (do_beginning_paths) replay, and three
 //   non-canonical .rdata float literals (0x3CF5C280 mountain decay 0.0299...,
 //   0x3ECCCCCE envelope divisor 0.4000..., 0x3EA3D70B wobble 0.3200...).
+// - PYRAMID: BYTE-EXACT vs the seed-786433191 live grid once pyramid_right's
+//   six <CaveStructure> draw batches are replayed (see the entry's note).
 // - WINTER/_EMPTY_: byte-exact except phase F (do_beginning_down), which mixes
 //   the global MSVC LCG g_damageRng into its draws and is NOT statically
 //   replayable (winter residual: 2343 cells, all real phase-F carves, zero
@@ -102,33 +104,33 @@ export const CAVES_SETUP = {
 		mountainCount: [0, 3], mountainSize: [1, 5],
 		blobCount: [5, 15], blobStrength: [1.0, 3], blobRadius: [1, 10],
 	},
-	// Read off pyramid_right.xml / pyramid_left.xml (identical blocks), NOT off
-	// pyramid.xml, whose own <BitmapCaves> is a different and much emptier one
-	// (size_x 516, cave_count 1-2). pyramid.xml, pyramid_right.xml and
-	// pyramid_hallway.xml all declare <Topology name="$biome_pyramid">, so one
-	// grid serves the three; sizeX 512 is what matches the game, which is what
-	// settles whose block wins.
+	// $biome_pyramid is declared by pyramid_right.xml, pyramid_hallway.xml and
+	// pyramid.xml. The name-keyed cache entry is created by the first PROCEDURAL
+	// biome loaded under the name (pyramid.xml is BIOME_WANG_TILE and takes the
+	// wang arm of Biome_InitializeFromConfig, never touching the cache), and
+	// _biomes_all.xml lists pyramid_right (line 103) before pyramid_hallway
+	// (106): pyramid_right.xml's block and its six <CaveStructure> entries are
+	// the ones that count. hallway's list (same six plus a leading
+	// mountain_rock) is one draw-batch off and leaves 2,268 cells wrong.
 	//
-	// NOT VALIDATED against a live grid, and the pyramid's foot shows it: chunk
-	// 57,14 (x 11264-11776, y 0-512) paints ~9.2k px of sand over game air, all
-	// of it along the terrain boundary between x 11296 and 11550. East of 11552
-	// telescope's first-solid row matches the game's exactly, column for column.
-	// That boundary is this grid -- not a scene, not a fill.
-	//
-	// pyramid_right.xml also carries six <CaveStructure> entries (pit, deep_pit,
-	// brush_03..06) that are not replayed here. They stamp nothing but consume
-	// draws between phases C and E exactly as hills/winter's do, so phase E's
-	// carves cannot land in the right place without them. Adding them verbatim
-	// moves the error rather than removing it (over-solid 9,189 -> 4,970 px,
-	// under-solid 11 -> 4,967, net worse), so closing this wants a live grid
-	// dump for the key to check against -- the way $biome_desert was taken to
-	// byte-exact -- rather than more guessing from the XML.
+	// BYTE-EXACT vs the live grid (reverse/noita/groundtruth/bitmap_caves/
+	// pyramid_seed786433191_modifier.f32, PEEKed out of the running game
+	// 2026-08-28): 0 of 131072 cells differ. Without the structures the two
+	// phase-E beginning paths land off by a draw batch (2,290 cells).
 	'$biome_pyramid': {
 		sizeX: 512, sizeY: 256, doBeginningPaths: true,
 		caveCount: [10, 30], surfaceCaves: [1, 3], caveStrength: [0.2, 1],
 		caveChilds: [0, 2], surfaceCaveChilds: [0, 4],
 		mountainCount: [0, 0], mountainSize: [1, 5],
 		blobCount: [5, 15], blobStrength: [1.0, 3], blobRadius: [1, 10],
+		structures: [
+			{ templated: false, countMin: 2, countMax: 5, aabbMinY: -8, aabbMaxY: 2, aabbMinX: 5, aabbMaxX: 507, strengthMin: 0.0, strengthMax: 0.65 }, // pit.png
+			{ templated: false, countMin: 5, countMax: 8, aabbMinY: -8, aabbMaxY: 2, aabbMinX: 5, aabbMaxX: 507, strengthMin: 0.0, strengthMax: 0.40 }, // deep_pit.png
+			{ templated: false, countMin: 0, countMax: 3, aabbMinY: 0, aabbMaxY: 15, aabbMinX: 5, aabbMaxX: 507, strengthMin: 1.15, strengthMax: 1.85 }, // brush_03.png
+			{ templated: false, countMin: 0, countMax: 4, aabbMinY: 0, aabbMaxY: 15, aabbMinX: 5, aabbMaxX: 507, strengthMin: 0.5, strengthMax: 2.85 }, // brush_04.png
+			{ templated: false, countMin: 0, countMax: 3, aabbMinY: 0, aabbMaxY: 25, aabbMinX: 5, aabbMaxX: 507, strengthMin: 0.15, strengthMax: 2.15 }, // brush_05.png
+			{ templated: false, countMin: 0, countMax: 4, aabbMinY: 0, aabbMaxY: 35, aabbMinX: 5, aabbMaxX: 507, strengthMin: 0.55, strengthMax: 1.85 }, // brush_06.png
+		],
 	},
 };
 
@@ -455,6 +457,30 @@ export function gridSeedFromWorldSeed(worldSeed) {
 	const r = [];
 	for (let i = 0; i < 6; i++) { s = minstdStep(s); r.push(s); }
 	return mapToU32(r[4]); // r5
+}
+
+// BiomeNode+0x94 of a *bitmap-noise* node (the four lakes: bitmap_noise_file
+// set, no <BitmapCaves>). BiomeNode_ConstructInstance @0x0086ffb0 seeds it as
+//   u = MINSTD(MINSTD(seedAndStep(nodeSeed)));  +0x94 = u*2^-31*200000 - 100000
+// (float32 chain) and nothing overwrites it, because
+// BiomeNode_GetOrCreateBitmapNoiseGrid @0x00867c90 never generates the grid
+// (the procedural path resets +0x94 to width*5.0 = 2560). The node seed is
+// r6 of the Biome_InitializeFromConfig chain (r5 seeds the procedural grids).
+// CellNoise_EvaluateCaveAndMaterial then samples the 0x0 grid (-> 0.0) and
+// blends the edge simplex at (wx*0.49162514 + off)*0.1, (off*6.86e-7 +
+// wy*0.49162514)*0.1: this offset is where the lakes' sparse mud specks sit.
+// Live: seed 786433191 -> -84616.4140625 (lake and lake_statue share the node).
+const _bnCache = new Map();
+export function bitmapNoiseNodeOffset(worldSeed) {
+	let v = _bnCache.get(worldSeed);
+	if (v !== undefined) return v;
+	let s = minstdSeedAndStep(worldSeed >>> 0);
+	for (let i = 0; i < 6; i++) s = minstdStep(s);
+	let t = minstdSeedAndStep(mapToU32(s)); // ctor: uint -> double, halve if >= 2^31-1, step
+	t = minstdStep(t);
+	v = F(F(F(F(t) * F(4.656613e-10)) * F(200000)) - F(100000));
+	_bnCache.set(worldSeed, v);
+	return v;
 }
 
 // Test hook: generate a grid from an explicit already-scrambled MINSTD state.

@@ -23,7 +23,7 @@
 import {
     BIOME_ENGINE, MATERIAL_FLAT_ALPHA_BY_ID, MATERIAL_FLAT_RGB_BY_ID, MATERIAL_NAMES_BY_ID, WANG_PARAMS_BY_ID,
 } from '../engine_resolve/engine_data.js';
-import { CAVES_SETUP, getModifierGrid } from '../engine_resolve/bitmap_caves.js';
+import { CAVES_SETUP, getModifierGrid, bitmapNoiseNodeOffset } from '../engine_resolve/bitmap_caves.js';
 import { buildEngineLattice } from '../engine_resolve/lattice_builder.js';
 import { FILL_LAYER_COLORS } from '../generator_config.js';
 import { BIOME_MAP_HEIGHT } from './indirection.js';
@@ -110,7 +110,7 @@ const BIG = 1e30;
 //   row  nBiomes:       cols 0..511 wang params by material id (scale, thr, type)
 export const ENG_TOPO0_COL = 48;
 
-export function buildEngineTable() {
+export function buildEngineTable(worldSeed = 0) {
     const W = 512, H = BIOME_ENGINE.length + 1;
     const t = new Float32Array(W * H * 4);
     const KIND = { none: 0, const: 1, empty: 2, grid: 3 };
@@ -151,7 +151,10 @@ export function buildEngineTable() {
         // mInsideNoiseType: which ProceduralNoise_Dispatch variant the material
         // noise runs (5 = the absent-attribute default, 8 = "SimplexNoise1234").
         t[o + 19] = c.insideNoiseType ?? 5;
-        t[o + 20] = KIND[c.modKind] ?? 3; t[o + 21] = c.modValue;
+        // kind 2 (empty: the lakes' 0x0 bitmap-noise node) carries the node's
+        // seed-derived +0x94 simplex-blend offset in t5p.y instead of a value
+        t[o + 20] = KIND[c.modKind] ?? 3;
+        t[o + 21] = c.modKind === 'empty' ? bitmapNoiseNodeOffset(worldSeed) : c.modValue;
         // kind 3 (grid): which replayed BitmapCaves grid to sample, as a slot in
         // the buildSinHashAndGrids stack; -1 = params not ported, modifier 1.0
         t[o + 22] = c.gridKey ? MOD_GRID_KEYS.indexOf(c.gridKey) : -1;
