@@ -863,9 +863,14 @@ void engProbe(int px, int py, uvec3 oc, inout uvec3 nc, inout ivec2 npos, inout 
     uvec3 c = chunkAt(ivec2(px, py)).rgb;
     if (any(notEqual(c, oc))) { nc = c; npos = ivec2(px, py); hit = true; }
 }
-ivec2 engResolveCell(ivec2 w) {
-    int sx = w.x + u_centerPx, sy = w.y + u_baseY;
-    int cx = fdiv(sx, CHUNK), cy = fdiv(sy, CHUNK);
+// wAbs: the absolute pixel (sub-position, noise); wFold: the same pixel folded
+// on the PW stride (chunk-table index). The wobble's cell offset is computed on
+// the absolute shifted coordinate, as the engine does, and applied to the
+// folded index.
+ivec2 engResolveCell(ivec2 wAbs, ivec2 wFold) {
+    int sx = wAbs.x + u_centerPx, sy = wAbs.y + u_baseY;
+    int cxAbs = fdiv(sx, CHUNK), cy = fdiv(sy, CHUNK);
+    int cx = fdiv(wFold.x + u_centerPx, CHUNK);
     if ((engInfoAt(cx, cy) & 1024u) == 0u) return ivec2(cx, cy);
     int subX = pmod(sx, CHUNK), subY = pmod(sy, CHUNK);
     if (subX >= 42 && subY >= 42 && subX <= 470 && subY <= 470) return ivec2(cx, cy);
@@ -885,7 +890,7 @@ ivec2 engResolveCell(ivec2 w) {
     float s = magicNoise(float(sx) * 0.05, float(sy) * 0.05);
     float offCol = sin(float(sy) * 0.005) * 30.0 + s * 11.0;
     float offRow = cos(float(sx) * 0.005) * 30.0 + s * 11.0;
-    int wCx = fdiv(int(offCol + float(sx)), CHUNK);
+    int wCx = cx + (fdiv(int(offCol + float(sx)), CHUNK) - cxAbs);
     int wCy = fdiv(int(offRow + float(sy)), CHUNK);
     if ((engInfoAt(wCx, wCy) & 1024u) == 0u) return ivec2(cx, cy);
     return ivec2(wCx, wCy);
@@ -926,21 +931,26 @@ void main() {
     // texels sample w directly). Game-validated at the map top on seed
     // 786433191: dense the_sky clouds continue upward, snow columns stay air.
     int pwX = fdiv(w.x + u_centerPx, u_worldSizeX);
-    // The game folds ALL content resolution -- chunk table, edge wobble, wang
-    // regions, topo/carve noise -- on the PW stride u_worldSizeX (64*512-8 in
-    // NG+/nightmare, where it differs from the 64-chunk map pitch by 8px per
+    // Two frames. INDEX lookups -- chunk table, edge-wobble cell, wang region
+    // anchors -- fold on the PW stride u_worldSizeX (64*512-8 in NG+/
+    // nightmare, where it differs from the 64-chunk map pitch by 8px per
     // world: at pw512 the naive 32768 fold picks a biome column 8 cols west
-    // of the game's). Material texels keep the ABSOLUTE pixel: texture phase
-    // runs on across worlds (rgb differs between PW twins while the material
-    // ids repeat, per the ng2 MAPDUMP correlations).
-    ivec2 wAbs = w;
-    w.x -= pwX * u_worldSizeX;
+    // of the game's). Everything evaluated FROM a coordinate -- wobble noise,
+    // topo0 surface line / carve / inside noise, band-select noise and polka,
+    // topo2 warp, material texels -- takes the ABSOLUTE pixel w:
+    // ChunkGrid_ResolveChunkAtPosition @0x0087d9a0 folds only the chunk index
+    // ((shifted_x >> 9) % width) and feeds the raw shifted_x to sub_x and the
+    // simplex/sin/cos; the topo chain never folds at all (the lake's linear
+    // surface ramp keeps rising through the east parallel worlds and the
+    // solid_wall coal/rock bands never repeat). Folding w itself here
+    // (56961c9) wrapped all of that on the world stride.
+    ivec2 wFold = ivec2(w.x - pwX * u_worldSizeX, w.y);
 
     // Engine-faithful resolve: the game's own per-pixel chain for every chunk
     // whose biome the port supports; anything else falls through to the legacy
     // pipeline below (per chunk, so the two coexist seam-by-seam).
     if (u_engineTerrain) {
-        ivec2 cell = engResolveCell(w);
+        ivec2 cell = engResolveCell(w, wFold);
         uint info = engInfoAt(cell.x, cell.y);
         uint mode = (info >> 8) & 3u;
         // The resolved cell's biome generates no terrain at all: a BIOME_WANG_TILE
@@ -965,20 +975,20 @@ void main() {
                 // The surface line near the top of the world comes from the
                 // PHYSICAL biome-map cell, not the wobble-resolved one — see
                 // engDepthRatio.
-                int pcx = fdiv(w.x + u_centerPx, CHUNK);
+                int pcx = fdiv(wFold.x + u_centerPx, CHUNK);
                 int pcy = fdiv(w.y + u_baseY, CHUNK);
                 int physSlot = int(engInfoAt(pcx, pcy) & 0xffu);
                 int leftSlot = int(engInfoAt(pcx - 1, pcy) & 0xffu);
                 mat = engTopo0(slot, physSlot, leftSlot, w);
             }
-            if (mat > 0) engMaterialColor(mat, wAbs);
+            if (mat > 0) engMaterialColor(mat, w);
             return;
         }
     }
 
     ivec2 pos;
     bool ignored;
-    overlayBiome(w.x, w.y, pos, ignored);
+    overlayBiome(wFold.x, w.y, pos, ignored);
 
     uvec4 cc = chunkAt(pos);
     // Constant-material fill biome: every cell the engine paints there is the
@@ -993,7 +1003,7 @@ void main() {
         if (u_matDetail) {
             uint entry = fillMaterialAt(pos);
             // A transparent texel leaves outColor at vec4(0) — air, as in game.
-            if (entry > 0u) { materialTexel(int(entry), wAbs, outColor); return; }
+            if (entry > 0u) { materialTexel(int(entry), w, outColor); return; }
         }
         outColor = chunkForeground(pos);
         return;
@@ -1002,8 +1012,8 @@ void main() {
     if ((cc.a & ${CHUNK_FLAG_HAS_TILES}u) == 0u) return;
 
     // The engine's whole-image mod-wrap, in the parallel world's own frame:
-    // w.x was already folded into the PW-0 frame at the top of main().
-    int sx = w.x;
+    // Region anchors are PW-0 world coords: the stride-folded x.
+    int sx = wFold.x;
 
     // Region ownership follows the buffers' own masking grid (rasterChunk), not
     // the 512-px chunk grid — and it is NOT shifted by the wobble. The CPU bake
@@ -1047,7 +1057,7 @@ void main() {
     }
     if (u_matDetail) {
         uint entry = texelFetch(u_palMatTex, ivec2(int(idx), 0), 0).r;
-        if (entry > 0u) { materialTexel(int(entry), wAbs, outColor); return; }
+        if (entry > 0u) { materialTexel(int(entry), w, outColor); return; }
     }
     // Direct-color cells composite with their material's XML alpha (row 1),
     // premultiplied, over the background layer -- water pools in wang caves.

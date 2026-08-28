@@ -69,9 +69,14 @@ export function createMaterialField(layers, biomeData, generatorConfig, mapWidth
 
     /** Material id at a world pixel; 0 = air, MATERIAL_UNRESOLVED = fallback. */
     function materialAt(x, y) {
-        // Canonical PW-0 x: content resolution folds on the PW stride (see
-        // utils.getWorldStride); ng0 is untouched (stride == map pitch).
-        x = ((x + centerPx) % strideX + strideX) % strideX - centerPx;
+        // Only INDEX lookups (chunk table, region anchors) fold on the PW
+        // stride (utils.getWorldStride; ng0: stride == map pitch). The noise
+        // and topo chains take the ABSOLUTE x, as in the engine: the lake's
+        // linear surface ramp keeps rising through the east parallel worlds,
+        // the solid_wall coal/rock bands never repeat, and the topo2 lattice
+        // wraps itself (CoverGrid, GW = stride/10). Same split as gl/shaders.js
+        // main().
+        const xFold = ((x + centerPx) % strideX + strideX) % strideX - centerPx;
         resolveCellFull(bmap, x, y, hasEdgeNoise, cell);
         const biome = ENGINE_BY_COLOR.get(cell.color);
         if (!biome || !biome.supported) return MATERIAL_UNRESOLVED;
@@ -88,7 +93,7 @@ export function createMaterialField(layers, biomeData, generatorConfig, mapWidth
         // from: CellNoise_EvaluateCaveBoundary @0x0087e8d0 re-derives the cell from
         // the raw coordinates and ignores the BiomeChunk it was handed.
         const sx = x + mapWidth * 256;
-        const pcx = ((((sx >> 9) % mapWidth) + mapWidth) % mapWidth);
+        const pcx = (xFold + mapWidth * 256) >> 9;
         const pcy = Math.min(BIOME_MAP_HEIGHT - 1, Math.max(0, (y + 7168) >> 9));
         const physBiome = ENGINE_BY_COLOR.get(bmap.colorAt(pcx, pcy));
         const leftColor = bmap.colorAt((((pcx - 1) % mapWidth) + mapWidth) % mapWidth, pcy);
