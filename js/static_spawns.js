@@ -556,7 +556,7 @@ export function addStaticPixelScenes(ws, ng, pwIndex, pwIndexVertical, biomeData
 
 function getNightmareStartingWands(ws, pwIndex) {
 	const prng = new NollaPrng(0);
-	prng.SetRandomSeed(ws, 703 + pwIndex * 70 * 512, -94); // Chunk 1, -1, pos 191, 418; PW stride is 70*512 in every mode
+	prng.SetRandomSeed(ws, 703 + pwIndex * 64 * 512, -94); // Chunk 1, -1, pos 191, 418
 	const wands = [];
 	const opts = ["wand_level_02", "wand_level_02_better", "wand_level_03", "wand_unshuffle_01", "wand_unshuffle_02", "wand_unshuffle_03"];
 	for (let i = 0; i < 3; i++) {

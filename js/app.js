@@ -1938,25 +1938,6 @@ export const app = {
 			this.h = (this.isNGP || this.gameMode === 'nightmare' ? BIOME_CONFIG.H_NGP : BIOME_CONFIG.H_NG0); // This is redundant
 
 			this.biomeData = generateBiomeData(seedVal, ngVal, this.gameMode, base, this.w, this.h);
-			if (this.w < getWorldSize(this.isNGP, this.gameMode)) {
-				// The engine's BiomeGrid is 70 chunks wide in every mode: the
-				// 64-wide NG+/nightmare map sits in cols 0..63 and cols 64..69
-				// are the solid EDR seam between parallel worlds (game-proven,
-				// see utils.getWorldSize). Pad the generated map out to the
-				// grid so every mapWidth consumer sees the engine's layout.
-				const W = getWorldSize(this.isNGP, this.gameMode);
-				const pad = (src) => {
-					const out = new Uint32Array(W * this.h);
-					for (let y = 0; y < this.h; y++)
-						for (let x = 0; x < W; x++)
-							out[y * W + x] = x < this.w ? src[y * this.w + x] : 0xFF3D3D3D;
-					return out;
-				};
-				this.biomeData.pixels = pad(this.biomeData.pixels);
-				this.biomeData.heavenPixels = pad(this.biomeData.heavenPixels);
-				this.biomeData.hellPixels = pad(this.biomeData.hellPixels);
-				this.w = W;
-			}
 			this.renderOffscreen();
 			this.renderRecolorMap();
 
@@ -2745,7 +2726,7 @@ export const app = {
 				for (let worldKey of this.worldsInView) {
 					const { pwX, pwY, shiftX, shiftY } = worldOffsets[worldKey];
 					if (pwY !== 0) continue;
-					const pwOffset = 0; // PW stride == map pitch in every mode
+					const pwOffset = (this.isNGP || this.gameMode === 'nightmare') ? -pwX * 8 : 0;
 					drawStaticTileBackdrops(this.ctx, this.tileLayers,
 						shiftX + pwOffset + VISUAL_TILE_OFFSET_X,
 						shiftY + VISUAL_TILE_OFFSET_Y, viewRect);
@@ -3311,7 +3292,10 @@ export const app = {
 				}
 
 				// Hack PW offsets
-				let pwOffset = 0; // PW stride == map pitch in every mode
+				let pwOffset = 0;
+				if (this.isNGP || this.gameMode === 'nightmare') {
+					pwOffset = -pwX * 8;
+				}
 				let pwOffsetVertical = -pwY * 6;
 
 				// Draw original tile data
@@ -3580,7 +3564,10 @@ export const app = {
 			for (let worldKey of this.worldsInView) {
 				const { pwX, pwY, shiftX, shiftY } = worldOffsets[worldKey];
 				// Hack PW offsets
-				let pwOffset = 0; // PW stride == map pitch in every mode
+				let pwOffset = 0;
+				if (this.isNGP || this.gameMode === 'nightmare') {
+					pwOffset = -pwX * 8;
+				}
 				let pwOffsetVertical = -pwY * 6;
 
 				for (const layer of this.tileLayers) {

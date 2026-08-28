@@ -3,7 +3,7 @@ import { BIOME_COLOR_TO_NAME, BIOME_COLORS_WITH_TERRAIN, FILL_BIOME_MATERIALS, F
 import { loadPNG } from "./png_sanitizer.js";
 import { MATERIAL_COLOR_CONVERSION, MATERIAL_WANG_COLORS } from "./potion_config.js";
 import { appSettings } from "./settings.js";
-import { bandBiomeMap, getBiomeAtWorldCoordinates, getWorldCenter, getWorldSize, tileToWorldCoordinates } from "./utils.js";
+import { bandBiomeMap, getBiomeAtWorldCoordinates, getWorldSize, tileToWorldCoordinates } from "./utils.js";
 
 // Used for setting background color...
 
@@ -195,8 +195,7 @@ export function getUnwobbledTileOverlayBiome(biomeData, worldX, worldY, isNGP, g
 
     const mapWidth = getWorldSize(isNGP, gameMode);
     const worldWidth = mapWidth * CHUNK_SIZE;
-    // x = 0 is at col 32 on the 70-wide NG+ grid, not at worldWidth/2.
-    const mapX = ((worldX + getWorldCenter(isNGP, gameMode) * CHUNK_SIZE) % worldWidth + worldWidth) % worldWidth;
+    const mapX = ((worldX + worldWidth / 2) % worldWidth + worldWidth) % worldWidth;
     const mapY = ((worldY + 14 * CHUNK_SIZE) % (48 * CHUNK_SIZE) + 48 * CHUNK_SIZE) % (48 * CHUNK_SIZE);
     const x = Math.floor(mapX / CHUNK_SIZE);
     const y = Math.floor(mapY / CHUNK_SIZE);
@@ -350,7 +349,7 @@ export function createFillOverlay(layer, biomeData, biomeMap, pwIndex, pwIndexVe
     for (let outX = 0; outX < outWidth; outX++) {
         const worldX = originCoords.x + (outX - padTiles) * TILE_SIZE;
         worldXs[outX] = worldX;
-        cellXs[outX] = Math.floor((((worldX + getWorldCenter(isNGP, gameMode) * CHUNK_SIZE) % worldWidth) + worldWidth) % worldWidth / CHUNK_SIZE);
+        cellXs[outX] = Math.floor((((worldX + worldWidth / 2) % worldWidth) + worldWidth) % worldWidth / CHUNK_SIZE);
         const subX = ((worldX % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
         bandX[outX] = (subX < BIOME_EDGE_NOISE_EXTENT || subX > CHUNK_SIZE - BIOME_EDGE_NOISE_EXTENT) ? 1 : 0;
     }

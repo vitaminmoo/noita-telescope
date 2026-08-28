@@ -43,8 +43,8 @@ function getPWIndex(messageIndex) {
 }
 
 function convertChunkCoords(x, y, pwIndex, isNGP) {
-	const worldSize = 70; // PW stride is 70 chunks in every mode
-	const xOffset = 512 * (isNGP ? 32 : 35); // x=0 is at col 32 on the NG+ grid
+	const worldSize = isNGP ? 64 : 70;
+	const xOffset = 512*worldSize/2;
 	const yOffset = 512 * 14;
 	const finalX = pwIndex * 512 * worldSize + x * 512 - xOffset + 48;
 	const finalY = y * 512 - yOffset + 64;

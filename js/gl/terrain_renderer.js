@@ -180,10 +180,7 @@ export class GLTerrainRenderer {
             this.sourceBiomeData = biomeData;
             this.mapWidth = getWorldSize(isNGP, gameMode);
             this.centerPx = CHUNK_SIZE * getWorldCenter(isNGP, gameMode);
-            // PW stride == biome-map pitch in every mode (the grid is 70 wide
-            // even in NG+; see utils.getWorldSize), so the shader's region
-            // unwrap and the chunk fold share one period.
-            this.worldSizeX = this.mapWidth * CHUNK_SIZE;
+            this.worldSizeX = (isNGP || gameMode === 'nightmare') ? 64 * CHUNK_SIZE - 8 : 70 * CHUNK_SIZE;
         }
         this.updateLUT(opts.lut);
         return true;
