@@ -4,6 +4,8 @@ import { EDGE_DECAL_TILE, putEdgeDecalTile } from './edge_decal_layer.js';
 import { EDGE_DECAL_HALO } from './edge_decals.js';
 import { PIXEL_SCENE_DATA, setPixelSceneVariantRebuilder } from './pixel_scene_generation.js';
 import { appSettings, updateSettingsFromUI } from './settings.js';
+import { CHUNK_SIZE } from './constants.js';
+import { getWorldCenter, getWorldSize } from './utils.js';
 
 export const overlayWorker = new Worker(new URL('./overlay_worker.js', import.meta.url), { type: 'module' });
 // A worker whose script fails to load/parse (stale cache, syntax error) dies
@@ -189,19 +191,37 @@ export function requestEdgeDecalTile(worldKey, tx, ty) {
 	// The pixel scenes overlapping the tile's padded rect, in paint order: the
 	// engine dresses a scene's cells with its own decal pass at paint time, so
 	// the worker needs to know what landed here. Tiles are world-space and
-	// PW-independent, and so are scene positions (scene.x/y are absolute), so
-	// the main-world list answers every PW.
+	// scene positions are absolute (scanSpawnFunctions / addStaticPixelScenes
+	// already add the parallel-world stride) — but each list only HOLDS its own
+	// world's scenes, so the main-world list answers nothing west of x=-17920
+	// or east of 17920: handed to every PW, it stamped every parallel world as
+	// if it had no scenes at all (terrain stamps left under scene cells, scene
+	// borders undressed). Read the list of every world the tile touches instead.
 	//
-	// No list yet (world still generating) -> decline, so the layer retries on a
-	// later draw instead of caching a tile with the scene stamps missing.
+	// Which world a tile belongs to follows the chunk grid (mapWidth chunks per
+	// world), the same wrap the terrain uses. In NG+ scenes sit on the 8px-short
+	// stride (64*512-8), so a scene from world k can drift into world k+1's
+	// chunk frame near a seam; every loaded world's list is scanned for
+	// overlaps, so such a scene is still found as long as its world is loaded.
+	//
+	// No list yet for a world the tile needs (still generating) -> decline, so
+	// the layer retries on a later draw instead of caching a tile with the
+	// scene stamps missing.
 	const scenes = [];
-	const list = app.pixelScenesByPW?.['0,0'] ?? app.pixelScenesByPW?.[`${app.pw},0`];
-	if (!list) return false;
-	{
-		const P = EDGE_DECAL_HALO;
-		const left = tx * EDGE_DECAL_TILE - P, right = left + EDGE_DECAL_TILE + 2 * P;
-		const top = ty * EDGE_DECAL_TILE - P, bottom = top + EDGE_DECAL_TILE + 2 * P;
-		for (const scene of list) {
+	const P = EDGE_DECAL_HALO;
+	const left = tx * EDGE_DECAL_TILE - P, right = left + EDGE_DECAL_TILE + 2 * P;
+	const top = ty * EDGE_DECAL_TILE - P, bottom = top + EDGE_DECAL_TILE + 2 * P;
+	const centerPx = getWorldCenter(app.isNGP, app.gameMode) * CHUNK_SIZE;
+	const worldPx = getWorldSize(app.isNGP, app.gameMode) * CHUNK_SIZE;
+	const pwOf = (x) => Math.floor((x + centerPx) / worldPx);
+	const byPW = app.pixelScenesByPW;
+	if (!byPW) return false;
+	for (let k = pwOf(left); k <= pwOf(right - 1); k++) {
+		if (!byPW[`${k},0`]) return false;
+	}
+	for (const key in byPW) {
+		if (!key.endsWith(',0')) continue;   // vertical worlds keep the CPU overlays
+		for (const scene of byPW[key]) {
 			const data = PIXEL_SCENE_DATA[scene.key];
 			if (!data) continue;
 			if (scene.x + data.width <= left || scene.x >= right ||
