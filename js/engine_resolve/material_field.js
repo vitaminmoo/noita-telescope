@@ -19,7 +19,7 @@
 import { BIOME_ENGINE, WANG_PARAMS_BY_ID } from './engine_data.js';
 import { buildEngineLattice } from './lattice_builder.js';
 import { resolveCellFull } from './chunk_wobble.js';
-import { CoverGrid, DEFAULT_PARAMS, resolvePixel } from './topo2_resolve.js';
+import { CoverGrid, DEFAULT_PARAMS, resolvePixel , setTopo2WorldOffX } from './topo2_resolve.js';
 import { resolveTopo0Pixel, surfaceNoisePhase, topo0Config } from './topo0_resolve.js';
 import { selectComponentForCell } from './band_select.js';
 
@@ -63,6 +63,9 @@ export function createMaterialField(layers, biomeData, generatorConfig, mapWidth
 
     const strideX = mapWidth === 64 ? 64 * 512 - 8 : mapWidth * 512;
     const centerPx = mapWidth * 256;
+    // The topo2 sampler's world offset is the grid's x shift (mapWidth*256),
+    // not ng0's 17920 -- see K.worldOffX in topo2_resolve.js.
+    setTopo2WorldOffX(centerPx);
 
     /** Material id at a world pixel; 0 = air, MATERIAL_UNRESOLVED = fallback. */
     function materialAt(x, y) {

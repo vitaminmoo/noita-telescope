@@ -24,6 +24,13 @@ function dblFromHex(hi, lo) { _dv.setUint32(0, hi); _dv.setUint32(4, lo); return
 function fltFromHex(u) { _dv.setUint32(0, u); return _dv.getFloat32(0); }
 
 export const K = {
+	// worldOffX is the engine global @0x01206fb0 = the biome grid's x shift,
+	// mapWidth*256: 17920 on the 70-chunk ng0 grid, 16384 on the 64-chunk
+	// NG+/nightmare grid. Hardcoding 17920 shifted every NG+ topo2 sample --
+	// and with it the decal tiles and CPU provenance -- 1536px west of the
+	// GL terrain (which centers on u_centerPx correctly): user-measured
+	// offset -3361 vs -1826 at seed 786433191 ng2. createMaterialField sets
+	// it per map via setTopo2WorldOffX before resolving.
 	worldOffX: 17920.0,            // 0x01206fb0
 	worldOffY: 7168.0,             // 0x012051b0
 	half_d: 0.5,                   // 0x01053968 (double)
@@ -47,6 +54,8 @@ export const K = {
 	dens_k1: fltFromHex(0x40ab3333),               // 0x01053c20 = 5.35f
 	dens_k2: fltFromHex(0x3f733333),               // 0x0105373c = 0.95f
 };
+
+export function setTopo2WorldOffX(px) { K.worldOffX = px; }
 
 // ---------------------------------------------------------------------------
 // Grid2D wrapped sampling (FloatGrid2D_SampleWrapped @0x0092a310, and the u16
