@@ -180,8 +180,8 @@ export function generateStars(ws, ng) {
 
 export function renderStars(ctx, ws, ng, pw, pwv, view) {
 	//const t0 = performance.now();
-	const worldSize = 512*(ng > 0 ? 64 : 70);
-	const xoff = worldSize/2 - worldSize*pw;
+	const worldSize = 512 * 70; // PW stride is 70 chunks in every mode
+	const xoff = 512 * (ng > 0 ? 32 : 35) - worldSize*pw;
 	const yoff = 7168 - 24576*pwv;
 	// Render more stars based on height
 	if (starPositions.length === 0) {

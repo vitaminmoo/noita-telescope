@@ -37,7 +37,10 @@ export const MATERIAL_CONTAINER_TYPES = [
 // This function is pretty messed up even though it's currently in a working state
 export function tileToWorldCoordinates(chunkBaseX, chunkBaseY, tileX, tileY, pw = 0, pwVertical = 0, isNGP = false, gameMode = 'normal') {
     const world_chunk_center_x = (isNGP || gameMode === 'nightmare') ? WORLD_CHUNK_CENTER_X_NGP : WORLD_CHUNK_CENTER_X;
-    const worldSize = (isNGP || gameMode === 'nightmare') ? 64 * 512 - 8 : 70 * 512;
+    // PW stride is 70*512 in every mode (engine BiomeGrid width; see
+    // getWorldSize). The old 64*512-8 modeled a "-8 NG+ drift" that the game's
+    // terrain and scenes do not have.
+    const worldSize = 70 * 512;
 
     let smallChunkSize = Math.floor(CHUNK_SIZE / TILE_SIZE); // 51
     let div5offX = 5 * CHUNK_SIZE * Math.floor((chunkBaseX - world_chunk_center_x)/5);
@@ -152,8 +155,14 @@ export function clamp(value, min, max) {
 }
 
 export function getWorldSize(isNGP, gameMode='normal') {
-    if (gameMode === 'nightmare') return 64;
-    return isNGP ? 64 : 70;
+    // The engine's BiomeGrid is 70 chunks wide in EVERY mode -- the 64-wide
+    // NG+/nightmare map occupies cols 0..63 and cols 64..69 are the solid EDR
+    // seam between parallel worlds, so the PW period is always 70*512 = 35840.
+    // Game-proven on seed 786433191 ng2 by MAPDUMP cross-correlation: pw1/pw-1
+    // peak exactly at +/-35840, pw2 at 71680, pw512 at 468*35840; scenes
+    // included (crypt/stairs_right room-for-room identical at +35840).
+    // BIOMEGRID_GetChunkAt @0x0087d870 wraps chunk X by grid->nWidth.
+    return 70;
 }
 
 export function getWorldCenter(isNGP, gameMode='normal') {
@@ -162,8 +171,10 @@ export function getWorldCenter(isNGP, gameMode='normal') {
 }
 
 export function getPWLimit(isNGP, gameMode='normal') {
-    if (gameMode === 'nightmare') return 512;
-    return isNGP ? 512 : 468;
+    // Same coordinate budget in every mode now that the PW period is always
+    // 35840 (the old 512 assumed a 32760 NG+ stride).
+    return 468;
+    // eslint-disable-next-line no-unreachable
 }
 
 // Scratch buffers for the wobble probes. Not reentrant, but this function never
@@ -193,7 +204,10 @@ export function getBiomeAtWorldCoordinates(biomeData, worldX, worldY, isNGP = fa
     const mapWidth = getWorldSize(isNGP, gameMode);
     // Convert to positions mod world size
     const worldSize = mapWidth * 512;
-    const worldCenter = worldSize / 2;
+    // x = 0 sits at col 32 on the NG+/nightmare grid (col 35 on ng0), NOT at
+    // worldSize/2: the 6 EDR seam cols 64..69 all lie east of the map, so the
+    // canonical range is asymmetric ([-16384, 19456) in NG+).
+    const worldCenter = getWorldCenter(isNGP, gameMode) * 512;
     const modX = ((worldX + worldCenter) % worldSize + worldSize) % worldSize;
     const modY = ((worldY + 14*512) % 24576 + 24576) % 24576;
 
