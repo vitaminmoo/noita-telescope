@@ -1608,6 +1608,9 @@ export const app = {
 	// built -- no scene, atlas or overlay rebuilds.
 	pixelInfoLines(absX, absY, canvasX, canvasY) {
 		const lines = [`${absX}, ${absY}`];
+		// The world identity, so a copied block is unambiguous on its own.
+		lines.push(`Seed: ${this.seed}${this.ngPlusCount > 0 ? ` NG+${this.ngPlusCount}` : ''}`
+			+ (this.gameMode === 'nightmare' ? ' (nightmare)' : ''));
 
 		// Get biome
 		const biomeResult = getBiomeAtWorldCoordinates(this.biomeData, absX, absY, this.isNGP, this.gameMode, appSettings.enableEdgeNoise);
