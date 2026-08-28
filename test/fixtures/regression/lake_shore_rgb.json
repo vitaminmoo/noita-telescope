@@ -1,0 +1,96 @@
+{
+	"name": "lake_shore_rgb",
+	"guards": "Statue island's east edge (baked scene) meeting the lake pool: the pool surface line is the lake surface noise, the water below it is the zeroed modifier",
+	"seed": 786433191,
+	"ngPlus": 0,
+	"world": {
+		"x": -13568,
+		"y": 0,
+		"w": 512,
+		"h": 512
+	},
+	"source": {
+		"key": "mapdump/lake_shore",
+		"kind": "mapdump-ppm",
+		"path": "/home/vitaminmoo/reverse/noita/groundtruth/bitmap_caves/lake_shore_map.ppm",
+		"rect": [
+			-13824,
+			0,
+			1024,
+			512
+		],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-28",
+		"note": "Statue island (lake_statue chunk 8,14 = baked scene) + the pool surface line east of it. Captured by groundtruth/bitmap_caves/capture.py (worker eee45aad; world verified ng=0 70x48 via LUAEVAL; cellsim off)."
+	},
+	"expected": {
+		"file": "lake_shore_rgb.bin",
+		"format": "rgb8",
+		"air": "lake_shore_rgb.air",
+		"airFrom": "matdump/lake_shore"
+	},
+	"summary": {
+		"airPct": 42.919,
+		"airFrom": "matdump/lake_shore",
+		"topColors": {
+			"#376259": 135609,
+			"#464128": 11526,
+			"#4b3c2d": 2048,
+			"#4a3b2c": 2048,
+			"#493a2b": 2048,
+			"#48392a": 2048
+		}
+	},
+	"tier1": {
+		"chunkFlags": [
+			{
+				"cell": [
+					8,
+					14
+				],
+				"biome": "lake_statue",
+				"biomeColor": "0x11a3fc",
+				"mode": "topo0",
+				"paintsNothing": false,
+				"sceneOnly": false,
+				"fillLayerMaterial": null
+			}
+		],
+		"pixels": {
+			"metric": "none",
+			"mode": "agreement",
+			"threshold": null,
+			"measured": null,
+			"measuredAt": null,
+			"measuredCommit": null
+		},
+		"maxUnresolvedPct": 0.5
+	},
+	"tier2": {
+		"render": {
+			"layers": {}
+		},
+		"checks": [
+			{
+				"metric": "airMask",
+				"mode": "agreement",
+				"comparedPixels": 262144,
+				"measured": 99.153,
+				"measuredAt": "2026-08-28",
+				"measuredCommit": "8eb9729",
+				"threshold": 98.65
+			},
+			{
+				"metric": "rgb",
+				"mode": "agreement",
+				"threshold": 7.75,
+				"measured": 8.251,
+				"measuredAt": "2026-08-28",
+				"measuredCommit": "8eb9729",
+				"comparedPixels": 149635
+			}
+		]
+	},
+	"note": "rgb is low by construction: after the island's scene art and the game's air are excluded, what is left to compare is mostly the pool, and telescope alpha-blends water over the biome background while the MAPDUMP paints it opaque (README, 'What the rgb metric compares'). The air mask is the check that matters here."
+}

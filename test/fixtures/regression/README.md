@@ -44,6 +44,14 @@ Two committed files per fixture:
   * `matpal16` — `w*h` uint16 LE indices into `expected.palette`, the game's
     MATDUMP **material names**. Names, not ids, so neither side's id numbering
     can silently reshuffle the fixture.
+* `<name>.air` (rgb8 fixtures cut from a `mapdump/X` source that has a
+  `matdump/X` twin covering the rect) — `w*h` bytes, 1 = the MATDUMP says air.
+  A MAPDUMP paints an empty cell with the *background* — `#050505`, the sky
+  blue, but also a brown depth fade below world y 0 and the sky gradient down
+  through it — which `isDumpAir` cannot tell from terrain; the twin's material
+  ids can. Both tiers' `airMask` and the rgb metric's air exclusion read this
+  file when it exists (`expected.air` / `expected.airFrom`), and fall back to the
+  colour heuristic when it does not.
 
 `sources.json` registers the dumps the fixtures were cut from, with the world
 rect and capture date of each. The dumps themselves are **not** in the repo
@@ -83,6 +91,13 @@ because the ground truth cannot answer for them:
   materials_gfx and carries no scene art at all, so an art-covered pixel is the
   two images answering different questions. No renderer fix can close that, and
   an `rgb` metric over such a rect can never reach 100 %.
+
+Liquids are a third class the metric cannot score but does *not* exclude:
+telescope alpha-blends them over the biome background (water is `#376259` at
+alpha 0xA0) while the MAPDUMP paints the material colour opaque, so every
+liquid pixel misses byte-exactly. A water-only rect reads 0 % (`lake_pool_pw0_rgb`
+checks its air mask only), and `lake_shore_rgb`'s 20 % is the pool, not the
+island.
 
 The art mask is the same bit-packed `artMask` the scene loader builds,
 intersected with the scene's opaque pixels (art over a scene's own air paints
@@ -189,14 +204,15 @@ the runbook below and add a fixture:
 Ground truth that exists but has no fixture yet, because the model scores 0 %
 there and a 0 % threshold guards nothing — real open leads, not oversights:
 
-* the lake ramp (`groundtruth/pw_wrap/lake_pw0_*`, rect (−13570,300,512,512)):
-  the game is a flat water pool there (261754/262144 water) while telescope
-  draws the authored mud-over-sand ramp. The ramp is real but inert in the
-  shipped game — the lake biomes' BitmapCaves modifier grid is empty, so the
-  density multiplies to 0 and the water band wins; see
+* (closed 2026-08-28) the lake ramp: telescope used to draw lake.xml's
+  authored mud-over-sand ramp where the game has a flat pool. The lakes'
+  BitmapCaves modifier is a 0×0 bitmap-noise node (`bitmap_noise_file` goes to
+  a stub loader that never reads the PNG), so the engine's density multiplies
+  to 0 and the water band wins; the generator now models that (`modifier:
+  empty` + the node's seed-derived simplex offset) and `lake_pool_pw0/pw2_
+  materials` pin the pool exactly. See
   `~/reverse/noita/docs/systems/world_tree_and_spire.md` ("WHY the ramp is
-  inert"). Telescope keeps the ramp on purpose (a mod un-masks it in game), so
-  this dump is a record of the divergence, not a fixture.
+  inert") and `js/engine_resolve/bitmap_caves.js` (`bitmapNoiseNodeOffset`).
 * the surface pond's water body (`matdump/surface_pond` around (2944,192)):
   `water` vs the model's `sand_static`. The lake "settled water" band rule
   (`limit_min_y`) is ported for lakes but this pond is not following it.

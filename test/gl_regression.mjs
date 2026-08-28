@@ -152,6 +152,11 @@ try {
 			}
 			const m = await import('/js/app.js');
 			const u = await import('/js/utils.js');
+			// Scene texturing is a one-time async load that the first draw only
+			// *starts*; until it lands scenes paint flat colours. Await it so a
+			// fixture renders the same whether it runs alone or late in the suite
+			// (pyramid_right_rgb measured 89.6 % solo vs 82.4 % in the full run).
+			await (await import('/js/pixel_scene_generation.js')).initPixelSceneTextures();
 			m.app.canvas.width = ${w}; m.app.canvas.height = ${h};
 			m.app.cam.x = ${x + w / 2} + 512 * u.getWorldCenter(m.app.isNGP, m.app.gameMode);
 			m.app.cam.y = ${y + h / 2} + 512 * 14;
@@ -160,6 +165,18 @@ try {
 			return true;
 		})()`);
 		await sleep(2500);
+		// Edge decal tiles (the surface decal band) load asynchronously and each
+		// draw only requests a few; keep drawing until none are in flight so the
+		// render does not depend on how many landed during the sleep.
+		for (let i = 0; i < 40; i++) {
+			const pending = await d.evalIn(`(async () => {
+				const m = await import('/js/app.js');
+				m.app.drawNow();
+				await new Promise(r => setTimeout(r, 250));
+				return m.app.edgeDecalsPending();
+			})()`);
+			if (!pending) break;
+		}
 		const dataUrl = await d.evalIn(`(async () => {
 			const m = await import('/js/app.js');
 			m.app.drawNow();

@@ -76,10 +76,35 @@ function cutRect(srcKey, rect) {
 				colors.set(hex, (colors.get(hex) || 0) + 1);
 			}
 		}
+		// A MAPDUMP paints an empty cell with the background: #050505 or the sky
+		// blue above ground, but a brown depth fade below it and the sky gradient
+		// down through y 0, which isDumpAir cannot tell from terrain. When the
+		// same rect was MATDUMPed too (a `matdump/<name>` twin of this source),
+		// take the exact air mask from the material ids instead.
+		let airMask = null, airFrom = null;
+		const twinKey = srcKey.replace(/^mapdump\//, 'matdump/');
+		const twin = twinKey !== srcKey ? SOURCES[twinKey] : null;
+		if (twin && twin.kind === 'matdump-pgm' && twin.seed === src.seed && (twin.ngPlus ?? 0) === (src.ngPlus ?? 0)) {
+			const [tx, ty, tw, th] = twin.rect;
+			if (x >= tx && y >= ty && x + w <= tx + tw && y + h <= ty + th) {
+				const mat = readPGM16(abs(twin.path));
+				if (mat.w !== tw || mat.h !== th) throw new Error(`${twin.path}: ${mat.w}x${mat.h} != registered ${tw}x${th}`);
+				airMask = Buffer.alloc(w * h);
+				air = 0;
+				for (let py = 0; py < h; py++) {
+					for (let px = 0; px < w; px++) {
+						const id = mat.data[(y - ty + py) * tw + (x - tx + px)];
+						if (id === 0) { airMask[py * w + px] = 1; air++; }
+					}
+				}
+				airFrom = twinKey;
+			}
+		}
 		return {
-			format: 'rgb8', bytes: out, palette: null,
+			format: 'rgb8', bytes: out, palette: null, airMask, airFrom,
 			summary: {
 				airPct: +(100 * air / (w * h)).toFixed(3),
+				...(airFrom ? { airFrom } : {}),
 				topColors: Object.fromEntries([...colors].sort((a, b) => b[1] - a[1]).slice(0, 6)),
 			},
 		};
@@ -131,8 +156,9 @@ function cutRect(srcKey, rect) {
 	throw new Error(`unknown source kind ${src.kind}`);
 }
 
-function writeFixture(meta, bytes) {
+function writeFixture(meta, bytes, airMask = null) {
 	writeFileSync(`${FIXTURE_DIR}${meta.expected.file}`, bytes);
+	if (airMask) writeFileSync(`${FIXTURE_DIR}${meta.expected.air}`, airMask);
 	writeFileSync(`${FIXTURE_DIR}${meta.name}.json`, JSON.stringify(meta, null, '\t') + '\n');
 }
 
@@ -158,7 +184,12 @@ async function add() {
 		ngPlus: src.ngPlus ?? 0,
 		world,
 		source: { key: srcKey, ...src },
-		expected: { file: `${name}.bin`, format: cut.format, ...(cut.palette ? { palette: cut.palette } : {}) },
+		expected: {
+			file: `${name}.bin`, format: cut.format,
+			...(cut.palette ? { palette: cut.palette } : {}),
+			// rgb8 + a MATDUMP twin: the exact air mask, w*h bytes (1 = air)
+			...(cut.airMask ? { air: `${name}.air`, airFrom: cut.airFrom } : {}),
+		},
 		summary: cut.summary,
 		tier1: {
 			chunkFlags: chunkCells.map(cell => ({ cell })),
@@ -181,10 +212,10 @@ async function add() {
 	};
 	// Fill in the observed chunk classification so the fixture pins it.
 	const t1 = await evaluateTier1({ ...meta, ...(cut.format === 'rgb8'
-		? { rgb: new Uint8Array(cut.bytes) }
+		? { rgb: new Uint8Array(cut.bytes), ...(cut.airMask ? { air: new Uint8Array(cut.airMask) } : {}) }
 		: { pal: new Uint16Array(cut.bytes.buffer, cut.bytes.byteOffset, world.w * world.h) }) });
 	meta.tier1.chunkFlags = t1.flags.map(({ got }) => got);
-	writeFixture(meta, cut.bytes);
+	writeFixture(meta, cut.bytes, cut.airMask);
 	console.log(`added ${name}: ${world.w}x${world.h} at (${world.x},${world.y}) from ${srcKey}, ` +
 		`${cut.format}, air ${cut.summary.airPct}%`);
 	console.log('  chunk:', JSON.stringify(meta.tier1.chunkFlags[0]));
@@ -197,8 +228,9 @@ function recut(names) {
 		const cut = cutRect(meta.source.key, [x, y, w, h]);
 		meta.expected.format = cut.format;
 		if (cut.palette) meta.expected.palette = cut.palette;
+		if (cut.airMask) { meta.expected.air = `${name}.air`; meta.expected.airFrom = cut.airFrom; }
 		meta.summary = cut.summary;
-		writeFixture(meta, cut.bytes);
+		writeFixture(meta, cut.bytes, cut.airMask);
 		console.log(`recut ${name} from ${meta.source.key}`);
 	}
 }

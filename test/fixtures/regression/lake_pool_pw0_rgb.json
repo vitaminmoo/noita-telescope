@@ -1,0 +1,91 @@
+{
+	"name": "lake_pool_pw0_rgb",
+	"guards": "GL lake pool render: kind-2 (empty) modifier path in the shader with the seed-derived BiomeNode+0x94 blend offset",
+	"seed": 786433191,
+	"ngPlus": 0,
+	"world": {
+		"x": -13500,
+		"y": 320,
+		"w": 384,
+		"h": 384
+	},
+	"source": {
+		"key": "mapdump/lake_pw0",
+		"kind": "mapdump-ppm",
+		"path": "/home/vitaminmoo/reverse/noita/groundtruth/bitmap_caves/lake_pw0_map.ppm",
+		"rect": [
+			-13570,
+			300,
+			512,
+			512
+		],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-28",
+		"note": "Lake pool 2 chunks east of the statue island; the authored -0.37 lakebed ramp is zeroed by the empty BitmapCaves modifier (docs/systems/world_tree_and_spire.md). Captured by groundtruth/bitmap_caves/capture.py (worker eee45aad; world verified ng=0 70x48 via LUAEVAL; cellsim off)."
+	},
+	"expected": {
+		"file": "lake_pool_pw0_rgb.bin",
+		"format": "rgb8",
+		"air": "lake_pool_pw0_rgb.air",
+		"airFrom": "matdump/lake_pw0"
+	},
+	"summary": {
+		"airPct": 0.001,
+		"airFrom": "matdump/lake_pw0",
+		"topColors": {
+			"#376259": 147456
+		}
+	},
+	"tier1": {
+		"chunkFlags": [
+			{
+				"cell": [
+					8,
+					14
+				],
+				"biome": "lake_statue",
+				"biomeColor": "0x11a3fc",
+				"mode": "topo0",
+				"paintsNothing": false,
+				"sceneOnly": false,
+				"fillLayerMaterial": null
+			}
+		],
+		"pixels": {
+			"metric": "airMask",
+			"mode": "agreement",
+			"threshold": 99.5,
+			"measured": 99.999,
+			"measuredAt": "2026-08-28",
+			"measuredCommit": "8eb9729"
+		},
+		"maxUnresolvedPct": 0.5
+	},
+	"tier2": {
+		"render": {
+			"layers": {}
+		},
+		"checks": [
+			{
+				"metric": "airMask",
+				"mode": "agreement",
+				"comparedPixels": 147456,
+				"measured": 99.999,
+				"measuredAt": "2026-08-28",
+				"measuredCommit": "8eb9729",
+				"threshold": 99.5
+			},
+			{
+				"metric": "rgb",
+				"mode": "skip",
+				"measured": null,
+				"measuredAt": "2026-08-28",
+				"measuredCommit": null,
+				"threshold": null,
+				"comparedPixels": 0,
+				"note": "water-only rect: telescope alpha-blends liquids over the biome background, the MAPDUMP paints them opaque, so byte-exact rgb is 0 % regardless of the terrain (README, 'What the rgb metric compares')."
+			}
+		]
+	}
+}

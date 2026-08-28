@@ -1,0 +1,94 @@
+{
+	"name": "lavalake_rgb",
+	"guards": "Lava lake interior chunk (40,16): a scene-only biome (empty wang template), control that the modifier work leaves biome-lua scenes alone",
+	"seed": 786433191,
+	"ngPlus": 0,
+	"world": {
+		"x": 2560,
+		"y": 1024,
+		"w": 512,
+		"h": 512
+	},
+	"source": {
+		"key": "mapdump/lavalake",
+		"kind": "mapdump-ppm",
+		"path": "/home/vitaminmoo/reverse/noita/groundtruth/bitmap_caves/lavalake_map.ppm",
+		"rect": [
+			2048,
+			512,
+			2048,
+			1536
+		],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-28",
+		"note": "Lava lake basin, chunks 39-42 x 15-17: BIOME_WANG_TILE with an empty template, everything here is the biome lua scene (control for the modifier work: unaffected). Captured by groundtruth/bitmap_caves/capture.py (worker eee45aad; world verified ng=0 70x48 via LUAEVAL; cellsim off)."
+	},
+	"expected": {
+		"file": "lavalake_rgb.bin",
+		"format": "rgb8",
+		"air": "lavalake_rgb.air",
+		"airFrom": "matdump/lavalake"
+	},
+	"summary": {
+		"airPct": 0,
+		"airFrom": "matdump/lavalake",
+		"topColors": {
+			"#ff6000": 242351,
+			"#251511": 10613,
+			"#37221d": 7373,
+			"#40231c": 1084,
+			"#623b32": 723
+		}
+	},
+	"tier1": {
+		"chunkFlags": [
+			{
+				"cell": [
+					40,
+					16
+				],
+				"biome": "lavalake",
+				"biomeColor": "0x3d5a3d",
+				"mode": "topo0",
+				"paintsNothing": true,
+				"sceneOnly": true,
+				"fillLayerMaterial": null
+			}
+		],
+		"pixels": {
+			"metric": "none",
+			"mode": "agreement",
+			"threshold": null,
+			"measured": null,
+			"measuredAt": null,
+			"measuredCommit": null
+		},
+		"maxUnresolvedPct": 0.5
+	},
+	"tier2": {
+		"render": {
+			"layers": {}
+		},
+		"checks": [
+			{
+				"metric": "airMask",
+				"mode": "agreement",
+				"comparedPixels": 262144,
+				"measured": 100,
+				"measuredAt": "2026-08-28",
+				"measuredCommit": "8eb9729",
+				"threshold": 99.5
+			},
+			{
+				"metric": "rgb",
+				"mode": "agreement",
+				"threshold": 99.1,
+				"measured": 99.598,
+				"measuredAt": "2026-08-28",
+				"measuredCommit": "8eb9729",
+				"comparedPixels": 262144
+			}
+		]
+	}
+}

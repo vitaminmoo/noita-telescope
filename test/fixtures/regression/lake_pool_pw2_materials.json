@@ -1,0 +1,82 @@
+{
+	"name": "lake_pool_pw2_materials",
+	"guards": "Lake pool two parallel worlds east is still flat water: the lake mask is a per-biome node, not per-world, and the ramp (rising eastward in absolute coords) stays zeroed",
+	"seed": 786433191,
+	"ngPlus": 0,
+	"world": {
+		"x": 58180,
+		"y": 320,
+		"w": 384,
+		"h": 384
+	},
+	"source": {
+		"key": "matdump/lake_pw2",
+		"kind": "matdump-pgm",
+		"path": "/home/vitaminmoo/reverse/noita/groundtruth/bitmap_caves/lake_pw2_mat.pgm",
+		"rect": [
+			58110,
+			300,
+			512,
+			512
+		],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-28",
+		"note": "Same pool two parallel worlds east: the ramp (had it been live) keeps rising eastward, the mask makes it water either way. Captured by groundtruth/bitmap_caves/capture.py (worker eee45aad; world verified ng=0 70x48 via LUAEVAL; cellsim off).",
+		"matlist": "/home/vitaminmoo/reverse/noita/groundtruth/bitmap_caves/matlist.txt"
+	},
+	"expected": {
+		"file": "lake_pool_pw2_materials.bin",
+		"format": "matpal16",
+		"palette": [
+			"water"
+		]
+	},
+	"summary": {
+		"airPct": 0,
+		"topMaterials": {
+			"water": 147456
+		}
+	},
+	"tier1": {
+		"chunkFlags": [
+			{
+				"cell": [
+					148,
+					14
+				],
+				"biome": "lake_statue",
+				"biomeColor": "0x11a3fc",
+				"mode": "topo0",
+				"paintsNothing": false,
+				"sceneOnly": false,
+				"fillLayerMaterial": null
+			}
+		],
+		"pixels": {
+			"metric": "materials",
+			"mode": "exact",
+			"threshold": 100,
+			"measured": 100,
+			"measuredAt": "2026-08-28",
+			"measuredCommit": "8eb9729"
+		},
+		"maxUnresolvedPct": 0.5
+	},
+	"tier2": {
+		"render": {
+			"layers": {}
+		},
+		"checks": [
+			{
+				"metric": "airMask",
+				"mode": "exact",
+				"threshold": 100,
+				"measured": 100,
+				"measuredAt": "2026-08-28",
+				"measuredCommit": "8eb9729",
+				"comparedPixels": 147456
+			}
+		]
+	}
+}

@@ -1,0 +1,96 @@
+{
+	"name": "pyramid_right_rgb",
+	"guards": "Pyramid foot chunk (57,14): the terrain boundary here is the byte-exact $biome_pyramid modifier grid (pyramid_right.xml's six CaveStructure draw batches replayed) under the pyramid scene",
+	"seed": 786433191,
+	"ngPlus": 0,
+	"world": {
+		"x": 11264,
+		"y": 0,
+		"w": 512,
+		"h": 512
+	},
+	"source": {
+		"key": "mapdump/pyramid_right",
+		"kind": "mapdump-ppm",
+		"path": "/home/vitaminmoo/reverse/noita/groundtruth/bitmap_caves/pyramid_right_map.ppm",
+		"rect": [
+			10240,
+			-1024,
+			1536,
+			1536
+		],
+		"seed": 786433191,
+		"ngPlus": 0,
+		"captured": "2026-08-28",
+		"note": "pyramid_right chunks 55-57 x 12-14: the $biome_pyramid modifier grid (byte-exact replay) under the pyramid scene. Captured by groundtruth/bitmap_caves/capture.py (worker eee45aad; world verified ng=0 70x48 via LUAEVAL; cellsim off)."
+	},
+	"expected": {
+		"file": "pyramid_right_rgb.bin",
+		"format": "rgb8",
+		"air": "pyramid_right_rgb.air",
+		"airFrom": "matdump/pyramid_right"
+	},
+	"summary": {
+		"airPct": 10.942,
+		"airFrom": "matdump/pyramid_right",
+		"topColors": {
+			"#716941": 33588,
+			"#464128": 29174,
+			"#514a31": 28387,
+			"#5b5047": 22643,
+			"#473e37": 17558,
+			"#403a29": 15468
+		}
+	},
+	"tier1": {
+		"chunkFlags": [
+			{
+				"cell": [
+					57,
+					14
+				],
+				"biome": "pyramid_right",
+				"biomeColor": "0x968f96",
+				"mode": "topo0",
+				"paintsNothing": false,
+				"sceneOnly": false,
+				"fillLayerMaterial": null
+			}
+		],
+		"pixels": {
+			"metric": "none",
+			"mode": "agreement",
+			"threshold": null,
+			"measured": null,
+			"measuredAt": null,
+			"measuredCommit": null
+		},
+		"maxUnresolvedPct": 0.5
+	},
+	"tier2": {
+		"render": {
+			"layers": {}
+		},
+		"checks": [
+			{
+				"metric": "airMask",
+				"mode": "agreement",
+				"comparedPixels": 262144,
+				"measured": 96.159,
+				"measuredAt": "2026-08-28",
+				"measuredCommit": "8eb9729",
+				"threshold": 95.66
+			},
+			{
+				"metric": "rgb",
+				"mode": "agreement",
+				"threshold": 92.35,
+				"measured": 92.851,
+				"measuredAt": "2026-08-28",
+				"measuredCommit": "8eb9729",
+				"comparedPixels": 233460
+			}
+		]
+	},
+	"note": "The ~4 % air-mask residual is physics, not the grid: in the game sand has slumped into the lower row of carve holes and piled into spikes on the dune surface (the dump was taken with cellsim off but after generation settled). The terrain boundary itself, which is the modifier grid, matches column for column."
+}

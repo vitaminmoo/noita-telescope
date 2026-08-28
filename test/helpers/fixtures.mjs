@@ -33,7 +33,14 @@ export function loadFixture(name) {
 	const { w, h } = meta.world;
 	if (meta.expected.format === 'rgb8') {
 		if (raw.length !== w * h * 3) throw new Error(`${name}: expected ${w * h * 3} bytes, got ${raw.length}`);
-		return { ...meta, rgb: new Uint8Array(raw.buffer, raw.byteOffset, raw.length) };
+		const f = { ...meta, rgb: new Uint8Array(raw.buffer, raw.byteOffset, raw.length) };
+		if (meta.expected.air) {
+			// exact air mask cut from the rect's MATDUMP twin (1 = air)
+			const a = readFileSync(`${FIXTURE_DIR}${meta.expected.air}`);
+			if (a.length !== w * h) throw new Error(`${name}: air mask expected ${w * h} bytes, got ${a.length}`);
+			f.air = new Uint8Array(a.buffer, a.byteOffset, a.length);
+		}
+		return f;
 	}
 	if (meta.expected.format === 'matpal16') {
 		if (raw.length !== w * h * 2) throw new Error(`${name}: expected ${w * h * 2} bytes, got ${raw.length}`);
@@ -59,7 +66,9 @@ export function expectedMaterials(f) {
 export function expectedAirMask(f) {
 	const { w, h } = f.world;
 	const out = new Uint8Array(w * h);
-	if (f.rgb) {
+	if (f.air) {
+		out.set(f.air);
+	} else if (f.rgb) {
 		for (let i = 0; i < w * h; i++) out[i] = isDumpAir(f.rgb, i * 3) ? 1 : 0;
 	} else {
 		const pal = f.expected.palette;
