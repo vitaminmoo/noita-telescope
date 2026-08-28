@@ -16,11 +16,12 @@
 // nothing but that offset — the shader undoes the PW stride before sampling a
 // region, so the content repeats exactly as the CPU bakes it.
 //
-// Vertical PWs are NOT rendered here: heaven and hell replace the whole biome
-// map with a row-0 / row-47 broadcast, which under the chunk-indirection design
-// would tile one region across the entire band instead of drawing each layer
-// where the CPU draws it. `rendersWorld()` reports which worlds the GL pass
-// covers so app.js can keep drawing the others from the CPU overlays.
+// Vertical PWs render in the same pass: heaven and hell are the row-0 / row-47
+// biomes generated at the pixel's raw world y, and the shader's row lookups all
+// clamp to [0, 47] (the engine's own chunk-row lookup does the same), so the
+// band content falls out of the ordinary resolve. The CPU overlay path used to
+// own the bands via rendersWorld(), but it cannot draw the engine-resolved
+// terrain (clouds, hell fill) at all -- the bands looked empty (speckles only).
 
 import { CHUNK_SIZE, WORLD_CHUNK_CENTER_Y } from '../constants.js';
 import { getWorldCenter, getWorldSize } from '../utils.js';
@@ -102,9 +103,11 @@ export class GLTerrainRenderer {
         return !!(this.gl && !this.contextLost && !this.failed && this.textures && this.resources);
     }
 
-    /** Worlds this renderer covers; the rest stay on the CPU overlay draw. */
+    /** Worlds this renderer covers; the rest stay on the CPU overlay draw.
+     *  Vertical bands included: the shader clamps every chunk-row lookup, so
+     *  heaven/hell render in the same pass (see the header comment). */
     rendersWorld(pwY) {
-        return pwY === 0;
+        return true;
     }
 
     initContext() {

@@ -158,10 +158,14 @@ uint fillMaterialAt(ivec2 p) {
     return texelFetch(u_fgMatTex, ivec2(pmod(p.x, u_mapWidth), clamp(p.y, 0, u_maxRow)), 0).r;
 }
 
-// getUnwobbledTileOverlayBiome's cell math (image_processing.js:111-116).
+// getUnwobbledTileOverlayBiome's cell math (image_processing.js:111-116), with
+// the vertical bands folded in: above the map the engine repeats row 0 (heaven)
+// and below it row 47 (hell) -- the chunk-row lookup clamps, it never wraps --
+// so the row here CLAMPS. The CPU bake gets the same answer by swapping in
+// heavenPixels/hellPixels, whose 48 rows are all copies of row 0 / row 47.
 ivec2 unwob(int wx, int wy) {
     return ivec2(pmod(wx + u_centerPx, u_worldWidth) / CHUNK,
-                 pmod(wy + u_baseY, (u_maxRow + 1) * CHUNK) / CHUNK);
+                 clamp(fdiv(wy + u_baseY, CHUNK), 0, u_maxRow));
 }
 
 // ComputeMagicValueFromDoubles (simplex-style gradient noise), float32.
@@ -914,8 +918,13 @@ void main() {
 
     outColor = vec4(0.0);
 
-    // Vertical parallel worlds keep the CPU overlays (see terrain_renderer.js).
-    if (fdiv(w.y + u_baseY, (u_maxRow + 1) * CHUNK) != 0) return;
+    // No vertical-band early-out: heaven (above row 0) and hell (below row 47)
+    // are the row-0 / row-47 biomes generated at the pixel's RAW world y -- the
+    // engine clamps only the chunk-row lookup and keeps feeding true coordinates
+    // to the noise/topo/texture math, which is what every row lookup below does
+    // (unwob, chunkAt, engInfoAt, rasterChunk all clamp; noise and material
+    // texels sample w directly). Game-validated at the map top on seed
+    // 786433191: dense the_sky clouds continue upward, snow columns stay air.
     int pwX = fdiv(w.x + u_centerPx, u_worldWidth);
 
     // Engine-faithful resolve: the game's own per-pixel chain for every chunk
