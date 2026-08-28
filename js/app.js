@@ -2261,8 +2261,16 @@ export const app = {
 				heavenData.data[i*4+2] = id.data[src+2];
 				heavenData.data[i*4+3] = id.data[src+3];
 			}
-			// else: nothing is generated in this column, so the band is empty sky
-			// and the pixel stays fully transparent.
+			else {
+				// Nothing is generated in this column, so the band is empty sky.
+				// Paint the sky gradient's top value rather than leaving the pixel
+				// transparent: nothing else draws behind the heaven band, so a
+				// transparent column showed the black page (the snow columns west
+				// of the_sky at the map top, cols <= 26 on the ng0 map). The game
+				// clears to this same sky blue up there. The edge strips and
+				// backdrop runs still skip the column via heavenSkip below.
+				writeBackgroundPixel(heavenData, i, 0x87ceeb);
+			}
 			this.recolorOffscreenHeavenBuffer[i*3+0] = this.recolorOffscreenBuffer[(i*3+0)%(this.w*3)];
 			this.recolorOffscreenHeavenBuffer[i*3+1] = this.recolorOffscreenBuffer[(i*3+1)%(this.w*3)];
 			this.recolorOffscreenHeavenBuffer[i*3+2] = this.recolorOffscreenBuffer[(i*3+2)%(this.w*3)];
