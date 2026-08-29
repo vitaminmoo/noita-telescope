@@ -23,6 +23,7 @@ import { appSettings, updateSettings, updateSettingsFromUI, updateSpellFlags, up
 import { syncWorldWorkerData, getOrGenerateWorld, syncSettingsToWorldWorker } from './world_manager.js';
 import { syncOverlayWorkerData, getOrGenerateOverlay, syncSettingsToOverlayWorker, recolorPixelScenes, invalidatePendingOverlays, requestEdgeDecalTiles } from './overlay_manager.js';
 import { drawEdgeDecals, edgeDecalAt, invalidateEdgeDecals, pendingEdgeDecalTiles } from './edge_decal_layer.js';
+import { runRenderBenchmark } from './render_benchmark.js';
 import { getMaterialAtlas, initMaterialAtlas, materialAlpha, materialAtlasEntry, materialTexelInfo } from './gl/material_atlas.js';
 import { ENGINE_MODE_FALLBACK, ENGINE_MODE_TOPO2 } from './gl/engine_resources.js';
 import { MATERIAL_BY_NAME } from './potion_config.js';
@@ -733,6 +734,18 @@ export const app = {
 		document.getElementById('debug-biome-boundary-contour').onchange = () => {this.saveSettings(); this.draw();};
 		document.getElementById('debug-layer-timings').onchange = () => {this.saveSettings(); this.draw();};
 		document.getElementById('debug-render-everything').onchange = () => {this.saveSettings(); this.draw();};
+		document.getElementById('debug-run-benchmark').onclick = async () => {
+			const status = document.getElementById('debug-benchmark-status');
+			const result = document.getElementById('debug-benchmark-result');
+			status.textContent = 'running…';
+			try {
+				const res = await runRenderBenchmark(this, { log: (text) => { result.textContent = text; result.style.display = 'block'; } });
+				status.textContent = res ? 'done (tables also in the console; app.lastBenchmark)' : 'not ready';
+			} catch (err) {
+				status.textContent = `failed: ${err.message}`;
+				console.error(err);
+			}
+		};
 		// The GL renderer paints the fill biomes and the CPU bake does not, so the
 		// unpainted-chunk mask depends on which one is selected.
 		document.getElementById('debug-terrain-renderer').onchange = () => {this.saveSettings(); this.draw();};
