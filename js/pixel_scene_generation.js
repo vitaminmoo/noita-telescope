@@ -159,7 +159,12 @@ function requestSceneBitmaps(pixelScene, cacheKey, textured) {
 	if (!data) return;
 	let inflight = 0;
 	for (const t of pendingSceneBitmaps.values()) if (t === textured) inflight++;
-	if (inflight >= (textured ? MAX_INFLIGHT_TEXTURED : MAX_INFLIGHT_FLAT)) return;
+	// Render Everything asks for a textured build of every visible instance at
+	// any zoom (~1150 at the overview); at the normal cap that trickles in over
+	// a minute, so let the worker run flat out there. Its whole point is a
+	// zoom-independent frame, not a responsive one.
+	const texturedCap = appSettings.renderEverything ? 32 : MAX_INFLIGHT_TEXTURED;
+	if (inflight >= (textured ? texturedCap : MAX_INFLIGHT_FLAT)) return;
 	pendingSceneBitmaps.set(cacheKey, textured);
 	sceneBitmapRequester({
 		cmd: 'BUILD_SCENE_BITMAPS',
@@ -241,7 +246,13 @@ export function clearPixelSceneBitmapCache() {
 }
 
 function evictPixelSceneBitmaps(keep) {
-	const budget = (appSettings.pixelSceneBitmapBudgetMB || 256) * 1024 * 1024;
+	// Under Render Everything the full-res textured instances of a whole
+	// overview view (~270 MB, more at 4K) do not fit the default budget, and
+	// evicting them only re-requests them next frame: the cache would thrash
+	// and never converge. Give the debug mode room instead.
+	const budgetMB = appSettings.renderEverything
+		? Math.max(appSettings.pixelSceneBitmapBudgetMB || 256, 2048) : (appSettings.pixelSceneBitmapBudgetMB || 256);
+	const budget = budgetMB * 1024 * 1024;
 	if (pixelSceneCacheBytes <= budget) return;
 	const entries = [...PIXEL_SCENE_BITMAP_CACHE.values()].sort((a, b) => a.used - b.used);
 	for (const entry of entries) {

@@ -74,16 +74,18 @@
 				"mode": "agreement",
 				"threshold": 99.13,
 				"measured": 99.634,
-				"measuredAt": "2026-08-15",
-				"measuredCommit": "35edc64"
+				"measuredAt": "2026-08-29",
+				"measuredCommit": "150b783",
+				"comparedPixels": 4096
 			},
 			{
 				"metric": "rgb",
 				"mode": "agreement",
-				"measured": 51.288,
-				"measuredAt": "2026-08-15",
-				"measuredCommit": "35edc64",
-				"threshold": 50.79
+				"measured": 50.696,
+				"measuredAt": "2026-08-29",
+				"measuredCommit": "150b783",
+				"threshold": 50.2,
+				"comparedPixels": 2872
 			}
 		]
 	}

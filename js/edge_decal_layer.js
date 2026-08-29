@@ -21,6 +21,10 @@ export const EDGE_DECAL_TILE = 256;
 /** Below this zoom a decal is smaller than a screen pixel, and the number of
  *  tiles in view stops being reasonable. */
 export const EDGE_DECAL_MIN_ZOOM = 1;
+/** From this zoom up the view's tiles are generated ahead of being drawn. */
+export const EDGE_DECAL_LOOKAHEAD_ZOOM = 0.7;
+/** In-flight cap while only looking ahead (the view holds ~2x the tiles). */
+const LOOKAHEAD_INFLIGHT = 24;
 /** Tiles in flight at once. The material resolve is one GPU batch per draw
  *  and the stamp runs in the overlay worker, which is FIFO and cannot cancel:
  *  the cap is what keeps a pan from queueing tiles it has already left behind.
@@ -111,7 +115,12 @@ export function edgeDecalAt(worldX, worldY) {
  * @returns {boolean} true when anything was drawn or requested
  */
 export function drawEdgeDecals(ctx, app, viewRect, request) {
-    if (app.cam.z < EDGE_DECAL_MIN_ZOOM || app.pwVertical !== 0) return false;
+    if (app.pwVertical !== 0) return false;
+    // Below the drawing zoom but close to it, the view's tiles are asked for
+    // without being drawn, so zooming in across EDGE_DECAL_MIN_ZOOM finds them
+    // (mostly) ready instead of filling in over the following frames.
+    const drawing = app.cam.z >= EDGE_DECAL_MIN_ZOOM;
+    if (!drawing && app.cam.z < EDGE_DECAL_LOOKAHEAD_ZOOM) return false;
     const key = edgeDecalWorldKey(app);
     if (key !== worldKey) {
         invalidateEdgeDecals();
@@ -132,12 +141,13 @@ export function drawEdgeDecals(ctx, app, viewRect, request) {
     const cy = ((viewRect.top + viewRect.bottom) / 2 - offY) / EDGE_DECAL_TILE - 0.5;
 
     const missing = [];
-    for (let ty = ty0 - PREFETCH_RING; ty <= ty1 + PREFETCH_RING; ty++) {
-        for (let tx = tx0 - PREFETCH_RING; tx <= tx1 + PREFETCH_RING; tx++) {
+    const ring = drawing ? PREFETCH_RING : 0;
+    for (let ty = ty0 - ring; ty <= ty1 + ring; ty++) {
+        for (let tx = tx0 - ring; tx <= tx1 + ring; tx++) {
             const tileKey = `${tx},${ty}`;
             const bitmap = tiles.get(tileKey);
             if (bitmap) {
-                if (tx >= tx0 && tx <= tx1 && ty >= ty0 && ty <= ty1) {
+                if (drawing && tx >= tx0 && tx <= tx1 && ty >= ty0 && ty <= ty1) {
                     ctx.drawImage(bitmap,
                         tx * EDGE_DECAL_TILE + offX, ty * EDGE_DECAL_TILE + offY,
                         EDGE_DECAL_TILE, EDGE_DECAL_TILE);
@@ -148,7 +158,7 @@ export function drawEdgeDecals(ctx, app, viewRect, request) {
             missing.push({ tx, ty, d: (tx - cx) * (tx - cx) + (ty - cy) * (ty - cy) });
         }
     }
-    const room = MAX_INFLIGHT - pending.size;
+    const room = (drawing ? MAX_INFLIGHT : LOOKAHEAD_INFLIGHT) - pending.size;
     if (missing.length && room > 0) {
         missing.sort((a, b) => a.d - b.d);
         // Tiles the request declines (scene placement not ready for their

@@ -256,6 +256,47 @@ export function stampEdgeDecals(mat, width, height, originX, originY, worldSeed,
     const shiftY = opts.chunkShiftY || 0;
     const mask = new Uint8Array(9);
 
+    // The cells that can stamp at all, found once in a tight pass: solid, of a
+    // material with edge entries, and not interior -- the outer gate: a cell
+    // with 8 or 9 same-material cells in its 3x3 (itself included, so 7 or 8
+    // matching neighbours) never stamps, whatever the entry says. Most of a
+    // tile is air or interior, and the two passes below used to pay the seam
+    // arithmetic, the entries lookup and the full 3x3 mask for every solid
+    // cell before finding that out.
+    const cand = new Uint8Array(width * height);
+    for (let y = 1; y < height - 1; y++) {
+        const row = y * width;
+        for (let x = 1; x < width - 1; x++) {
+            const i = row + x;
+            const id = mat[i];
+            if (id <= 0 || !ENTRIES_BY_ID[id]) continue;
+            let same = 0;
+            if (mat[i - 1] === id) same++;
+            if (mat[i + 1] === id) same++;
+            if (mat[i - width] === id) same++;
+            if (mat[i + width] === id) same++;
+            if (mat[i - width - 1] === id) same++;
+            if (mat[i - width + 1] === id) same++;
+            if (mat[i + width - 1] === id) same++;
+            if (mat[i + width + 1] === id) same++;
+            if (same >= 7) continue;
+            cand[i] = 1;
+        }
+    }
+    // Chunk-local coordinates and seam-band membership, per column and row.
+    const localXs = new Int32Array(width), localYs = new Int32Array(height);
+    const seamXs = new Uint8Array(width), seamYs = new Uint8Array(height);
+    for (let x = 0; x < width; x++) {
+        const lx = pmod(originX + x + shiftX, CHUNK);
+        localXs[x] = lx;
+        seamXs[x] = (lx < SEAM || lx >= CHUNK - SEAM) ? 1 : 0;
+    }
+    for (let y = 0; y < height; y++) {
+        const ly = pmod(originY + y + shiftY, CHUNK);
+        localYs[y] = ly;
+        seamYs[y] = (ly < SEAM || ly >= CHUNK - SEAM) ? 1 : 0;
+    }
+
     // The generation pass skips the chunk's outer 8px and clips every stamp to
     // its own chunk; the seam pass dresses that band later, once the neighbour
     // chunks exist, and can therefore stamp across the boundary. Only the seam
@@ -263,22 +304,22 @@ export function stampEdgeDecals(mat, width, height, originX, originY, worldSeed,
     const seamGate = makeSeamGate(opts.biomeData, opts.mapWidth);
     for (let pass = 0; pass < 2; pass++) {
         for (let y = 1; y < height - 1; y++) {
-            const localY = pmod(originY + y + shiftY, CHUNK);
-            const seamY = localY < SEAM || localY >= CHUNK - SEAM;
+            const localY = localYs[y];
+            const seamY = seamYs[y];
+            const row = y * width;
             for (let x = 1; x < width - 1; x++) {
-                const localX = pmod(originX + x + shiftX, CHUNK);
-                const seam = seamY || localX < SEAM || localX >= CHUNK - SEAM;
+                const i = row + x;
+                if (cand[i] === 0) continue;
+                const localX = localXs[x];
+                const seam = (seamY | seamXs[x]) === 1;
                 if (seam !== (pass === 1)) continue;
                 // The gate belongs to the chunk the cell lives in, whichever
                 // side of the border the stamp then reaches.
                 if (pass === 1 && seamGate &&
                     seamGate(originX + x - localX, originY + y - localY)) continue;
 
-                const i = y * width + x;
                 const id = mat[i];
-                if (id <= 0) continue;
                 const entries = ENTRIES_BY_ID[id];
-                if (!entries) continue;
 
                 // The 3x3 masks and their counts, centre included.
                 const typeId = TYPE_BY_ID[id];
@@ -293,9 +334,6 @@ export function stampEdgeDecals(mat, width, height, originX, originY, worldSeed,
                         else mask[k] = 0;
                     }
                 }
-                // The outer gate: a cell with 8 or 9 same-material cells around it
-                // is interior and never stamps, whatever the entry says.
-                if (matCount >= 8) continue;
 
                 const wx = originX + x, wy = originY + y;
                 for (let e = 0; e < entries.length; e++) {
@@ -622,26 +660,35 @@ function bitMask(mask, bit) {
  */
 function blitEdgeSprite(out, painted, mat, width, height, cx, cy, id, overwrite,
     image, flip, transpose, chunkLocal, worldX, worldY) {
-    const [ax, ay, iw, ih, , , flags] = EDGE_IMAGES[image];
+    const img = EDGE_IMAGES[image];
+    const ax = img[0], ay = img[1], iw = img[2], ih = img[3], flags = img[6];
+    const atlas = _atlas;
+    // The rect a texel may land in: the padded tile, intersected with the
+    // stamp's own chunk on the generation pass (chunkLocal = the cell's
+    // chunk-local coordinates, so the chunk spans [c - local, c - local + CHUNK)).
+    let minX = 0, minY = 0, maxX = width - 1, maxY = height - 1;
+    if (chunkLocal) {
+        minX = Math.max(minX, cx - chunkLocal[0]);
+        maxX = Math.min(maxX, cx - chunkLocal[0] + CHUNK - 1);
+        minY = Math.max(minY, cy - chunkLocal[1]);
+        maxY = Math.min(maxY, cy - chunkLocal[1] + CHUNK - 1);
+    }
+    const flipX = (flip & 1) !== 0, flipY = (flip & 2) !== 0;
     const paint = (dx, dy, sx, sy) => {
-        if (chunkLocal) {
-            const lx = chunkLocal[0] + dx - cx, ly = chunkLocal[1] + dy - cy;
-            if (lx < 0 || ly < 0 || lx >= CHUNK || ly >= CHUNK) return;
-        }
-        if (dx < 0 || dy < 0 || dx >= width || dy >= height) return;
+        if (dx < minX || dy < minY || dx > maxX || dy > maxY) return;
         const di = dy * width + dx;
         if (mat[di] !== id) return;
         if (!overwrite && painted[di]) return;
-        const fx = (flip & 1) ? iw - 1 - sx : sx;
-        const fy = (flip & 2) ? ih - 1 - sy : sy;
+        const fx = flipX ? iw - 1 - sx : sx;
+        const fy = flipY ? ih - 1 - sy : sy;
         const so = ((ay + fy) * EDGE_ATLAS_WIDTH + ax + fx) * 4;
         // The engine skips only an all-zero texel word, alpha included.
-        const a = _atlas[so + 3];
-        if (!a && !_atlas[so] && !_atlas[so + 1] && !_atlas[so + 2]) return;
+        const a = atlas[so + 3];
+        if (!a && !atlas[so] && !atlas[so + 1] && !atlas[so + 2]) return;
         const o = di * 4;
-        out[o] = _atlas[so];
-        out[o + 1] = _atlas[so + 1];
-        out[o + 2] = _atlas[so + 2];
+        out[o] = atlas[so];
+        out[o + 1] = atlas[so + 1];
+        out[o + 2] = atlas[so + 2];
         out[o + 3] = a;
         painted[di] = 1;
     };

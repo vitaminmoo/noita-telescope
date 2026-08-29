@@ -112,6 +112,172 @@ function writeBackgroundPixel(imageData, i, color) {
 	imageData.data[i*4+3] = isVoid ? 0 : 255;
 }
 
+// Traces one PoI's marker outline, centred on (px, py) with world-unit radius
+// tempRadius, on a context that is already under the camera transform (or a
+// sprite context scaled like it). Shared by the direct draw and the sprite
+// cache below.
+function tracePoiShape(ctx, p, px, py, tempRadius, accessibility, simpleSymbols) {
+	if (accessibility) {
+		// Shapes for accessibility mode
+		switch (p.type) {
+			case 'wand':
+				// Tall rectangle
+				ctx.rect(px - tempRadius / 2, py - tempRadius, tempRadius, tempRadius * 2);
+				break;
+			case 'item':
+				if (p.item) {
+					if (p.item.includes('heart') || p.item === 'full_heal') {
+						if (simpleSymbols) {
+							ctx.moveTo(px - tempRadius, py - tempRadius);
+							ctx.lineTo(px + tempRadius, py - tempRadius);
+							ctx.lineTo(px, py + tempRadius);
+							ctx.closePath();
+						} else {
+							ctx.moveTo(px, py - tempRadius / 3);
+							ctx.bezierCurveTo(px - tempRadius, py - tempRadius, px - tempRadius, py + tempRadius / 3, px, py + tempRadius);
+							ctx.bezierCurveTo(px + tempRadius, py + tempRadius / 3, px + tempRadius, py - tempRadius, px, py - tempRadius / 3);
+							ctx.closePath();
+						}
+					}
+					else if (MATERIAL_CONTAINER_TYPES.includes(p.item)) {
+						if (simpleSymbols) {
+							ctx.moveTo(px, py - tempRadius);
+							ctx.lineTo(px + tempRadius, py + tempRadius);
+							ctx.lineTo(px - tempRadius, py + tempRadius);
+							ctx.closePath();
+						} else {
+							ctx.moveTo(px - tempRadius * 0.28, py - tempRadius);
+							ctx.lineTo(px + tempRadius * 0.28, py - tempRadius);
+							ctx.lineTo(px + tempRadius * 0.28, py - tempRadius * 0.42);
+							ctx.bezierCurveTo(px + tempRadius * 0.28, py - tempRadius * 0.16, px + tempRadius * 0.86, py - tempRadius * 0.08, px + tempRadius * 0.88, py + tempRadius * 0.48);
+							ctx.bezierCurveTo(px + tempRadius * 0.9, py + tempRadius * 0.83, px + tempRadius * 0.48, py + tempRadius, px, py + tempRadius);
+							ctx.bezierCurveTo(px - tempRadius * 0.48, py + tempRadius, px - tempRadius * 0.9, py + tempRadius * 0.83, px - tempRadius * 0.88, py + tempRadius * 0.48);
+							ctx.bezierCurveTo(px - tempRadius * 0.86, py - tempRadius * 0.08, px - tempRadius * 0.28, py - tempRadius * 0.16, px - tempRadius * 0.28, py - tempRadius * 0.42);
+							ctx.closePath();
+						}
+					}
+					else if (p.item === 'portal' || p.item === 'meditation_cube' || p.item === 'buried_eye_teleporter' || p.item === 'trailer_altar') {
+						// Pentagon
+						ctx.moveTo(px, py - tempRadius);
+						for (let i = 1; i < 5; i++) {
+							const angle = (Math.PI / 2) + (i * (2 * Math.PI / 5));
+							ctx.lineTo(px - tempRadius * Math.cos(angle), py - tempRadius * Math.sin(angle));
+						}
+						ctx.closePath();
+						break;
+					}
+					else if (p.item === 'refresh_mimic' || p.item === 'heart_mimic' || p.item === 'mimic' || p.item === 'chest_leggy' || p.item === 'mimic_potion') {
+						// X shape
+						const thickness = tempRadius / 2;
+						ctx.moveTo(px - tempRadius, py - thickness);
+						ctx.lineTo(px - thickness, py - tempRadius);
+						ctx.lineTo(px, py - thickness);
+						ctx.lineTo(px + thickness, py - tempRadius);
+						ctx.lineTo(px + tempRadius, py - thickness);
+						ctx.lineTo(px + thickness, py);
+						ctx.lineTo(px + tempRadius, py + thickness);
+						ctx.lineTo(px + thickness, py + tempRadius);
+						ctx.lineTo(px, py + thickness);
+						ctx.lineTo(px - thickness, py + tempRadius);
+						ctx.lineTo(px - tempRadius, py + thickness);
+						ctx.lineTo(px - thickness, py);
+						ctx.closePath();
+					}
+					else {
+						// Square (slightly scaled down because the other stuff looks smaller by area)
+						ctx.rect(px - 3*tempRadius/4, py - 3*tempRadius/4, tempRadius * 1.5, tempRadius * 1.5);
+					}
+				}
+				break;
+			case 'utility_box':
+			case 'puzzle':
+			case 'vault_puzzle':
+				// Diamond
+				ctx.moveTo(px, py - tempRadius);
+				ctx.lineTo(px - tempRadius, py);
+				ctx.lineTo(px, py + tempRadius);
+				ctx.lineTo(px + tempRadius, py);
+				ctx.closePath();
+				break;
+			case 'chest':
+			case 'pacifist_chest':
+			case 'great_chest':
+				// Wide rectangle
+				ctx.rect(px - tempRadius, py - tempRadius/2, tempRadius * 2, tempRadius);
+				break;
+			case 'shop':
+			case 'holy_mountain_shop':
+				// Hexagon
+				ctx.moveTo(px, py + tempRadius);
+				for (let i = 1; i < 6; i++) {
+					const angle = (Math.PI / 2) + (i * (2 * Math.PI / 6));
+					ctx.lineTo(px + tempRadius * Math.cos(angle), py + tempRadius * Math.sin(angle));
+				}
+				ctx.closePath();
+				break;
+			case 'eye_room':
+				// Eye shape (horizontal)
+				ctx.moveTo(px - tempRadius, py);
+				ctx.quadraticCurveTo(px, py - tempRadius, px + tempRadius, py);
+				ctx.quadraticCurveTo(px, py + tempRadius, px - tempRadius, py);
+				ctx.closePath();
+				break;
+			case 'enemies':
+				// Circle
+				ctx.arc(px, py, tempRadius*0.7, 0, Math.PI * 2);
+				break;
+			default:
+				ctx.arc(px, py, tempRadius, 0, Math.PI * 2); // Default to circle
+		}
+	}
+	else {
+		// Colored circles
+		ctx.arc(px, py, tempRadius, 0, Math.PI * 2);
+	}
+}
+
+// PoI marker sprites. At the overview zoom every PoI in the world is on screen
+// -- thousands of anti-aliased path fills and strokes a frame, which the GPU
+// canvas rasterizes one by one (it was the difference between 0 and ~30 long
+// frames per 120 while dragging). A marker a few screen pixels across is
+// rendered once per (shape, colour, screen radius) into a screen-resolution
+// sprite and blitted from then on; drawImage of the same bitmap batches.
+// Large markers (zoomed in, few in view) keep the direct path draw.
+const POI_SPRITE_MAX_SCREEN_RADIUS = 24;
+const POI_SPRITE_CACHE_MAX = 512;
+const poiSpriteCache = new Map();
+
+function poiSprite(p, poiColor, tempRadius, zoom, accessibility, simpleSymbols) {
+	const highlight = p.highlight === true;
+	// Half-pixel steps keep the set bounded while zooming continuously.
+	const screenR = Math.round(tempRadius * zoom * 2) / 2;
+	const shape = accessibility ? `${p.type}|${p.item || ''}|${simpleSymbols ? 1 : 0}` : 'o';
+	const key = `${shape}|${poiColor}|${highlight ? 1 : 0}|${screenR}`;
+	let sprite = poiSpriteCache.get(key);
+	if (sprite) return sprite;
+	const lineScale = highlight ? 0.4 : 0.08;
+	const size = Math.ceil(2 * screenR * (1 + lineScale / 2)) + 4;
+	const scale = screenR / tempRadius;
+	const canvas = new OffscreenCanvas(size, size);
+	const ctx = canvas.getContext('2d');
+	ctx.translate(size / 2, size / 2);
+	ctx.scale(scale, scale);
+	ctx.strokeStyle = '#000000AA';
+	ctx.beginPath();
+	tracePoiShape(ctx, p, 0, 0, tempRadius, accessibility, simpleSymbols);
+	ctx.fillStyle = poiColor;
+	ctx.fill();
+	ctx.lineWidth = tempRadius * lineScale;
+	ctx.stroke();
+	if (poiSpriteCache.size >= POI_SPRITE_CACHE_MAX) {
+		for (const old of poiSpriteCache.values()) old.bitmap.close?.();
+		poiSpriteCache.clear();
+	}
+	sprite = { bitmap: canvas.transferToImageBitmap(), size, scale };
+	poiSpriteCache.set(key, sprite);
+	return sprite;
+}
+
 function getPoiRadius(poi, zoom) {
 	let radius = POI_RADIUS;
 	if (poi.type === 'enemies' || poi.type === 'props') {
@@ -2864,9 +3030,30 @@ export const app = {
 		}
 	},
 
-	drawUnpaintedCheckerboard(worldOffsets) {
+	drawUnpaintedCheckerboard(worldOffsets, viewRect) {
 		if (!appSettings.checkerboardUnpainted) return;
 		if (!this.unpaintedMask || this.unpaintedChunkCount === 0) return;
+		// Three full-screen passes (mask, pattern, blit) for what is usually --
+		// with the engine terrain painting nearly every chunk -- no uncovered
+		// chunk in view at all. Walk the visible chunks of each world first.
+		if (viewRect && this.unpaintedCovered) {
+			let any = false;
+			for (let worldKey of this.worldsInView) {
+				const { pwY, shiftX, shiftY } = worldOffsets[worldKey];
+				if (pwY !== 0) continue;
+				const cx0 = Math.max(0, Math.floor((viewRect.left - shiftX) / 512));
+				const cx1 = Math.min(this.w - 1, Math.floor((viewRect.right - shiftX) / 512));
+				const cy0 = Math.max(0, Math.floor((viewRect.top - shiftY) / 512));
+				const cy1 = Math.min(this.h - 1, Math.floor((viewRect.bottom - shiftY) / 512));
+				for (let cy = cy0; cy <= cy1 && !any; cy++) {
+					for (let cx = cx0; cx <= cx1; cx++) {
+						if (!this.unpaintedCovered[cy * this.w + cx]) { any = true; break; }
+					}
+				}
+				if (any) break;
+			}
+			if (!any) return;
+		}
 		const width = this.canvas.width, height = this.canvas.height;
 		if (!this.checkerScratch) this.checkerScratch = document.createElement('canvas');
 		const scratch = this.checkerScratch;
@@ -3332,7 +3519,7 @@ export const app = {
 
 		// Checkerboard over chunks nothing paints, drawn after the alpha mask so the
 		// mask cannot repaint an uncovered chunk with a solid biome color again.
-		this.drawUnpaintedCheckerboard(worldOffsets);
+		this.drawUnpaintedCheckerboard(worldOffsets, viewRect);
 		if (prof) markLayer(prof, 'unpainted');
 
 		// Layer 4
@@ -3510,11 +3697,12 @@ export const app = {
 				// keep their tile below.
 				const sceneArtOn = artOn && this.detailZoom() < SCENE_ART_MAX_ZOOM;
 				if (this.pixelScenesByPW && this.pixelScenesByPW[`${pwX},${pwY}`]) {
+					// Note positions of these *do not* use the tile offset
+					const sceneOffX = getWorldCenter(this.isNGP, this.gameMode)*512 - pwX*getWorldSize(this.isNGP, this.gameMode)*512 + shiftX;
+					const sceneOffY = 14*512 - pwY*24576 + shiftY;
 					for (let scene of this.pixelScenesByPW[`${pwX},${pwY}`]) {
-						//if (!scene || !scene.imgElement) continue;
-						// Note positions of these *do not* use the tile offset
-						const drawX = scene.x + getWorldCenter(this.isNGP, this.gameMode)*512 - pwX*getWorldSize(this.isNGP, this.gameMode)*512 + shiftX;
-						const drawY = scene.y + 14*512 - pwY*24576 + shiftY;
+						const drawX = scene.x + sceneOffX;
+						const drawY = scene.y + sceneOffY;
 
 						// Cull offscreen scenes before getPixelSceneCanvas(). With cosmetic
 						// pixel scenes enabled this loop is roughly an order of magnitude
@@ -3822,6 +4010,10 @@ export const app = {
 		// and the layer switch every other pass here already has (settings.js
 		// RENDER_LAYERS), which is what a scripted capture turns off.
 		if (L.pois && !document.getElementById('debug-hide-pois').checked) {
+			const poiAccessibility = document.getElementById('accessibility-mode').checked;
+			const poiSimpleSymbols = document.getElementById('debug-simple-poi-symbols').checked;
+			const poiFlags = (poiAccessibility ? 1 : 0) | (poiSimpleSymbols ? 2 : 0) | (document.getElementById('debug-small-pois').checked ? 4 : 0);
+			const poiZoomBucket = Math.round(this.cam.z * 1e5);
 			for (let worldKey of this.worldsInView) {
 				// Skip rendering PoIs when too zoomed out (helps with lag)
 				// Not really necessary with the speedups
@@ -3896,128 +4088,29 @@ export const app = {
 							this.ctx.strokeStyle = '#000000AA';
 						}
 
-						this.ctx.beginPath();
-						
 						if (document.getElementById('debug-small-pois').checked) {
 							tempRadius = 5;
 						}
-						if (document.getElementById('accessibility-mode').checked) {
-							// Shapes for accessibility mode
-							switch (p.type) {
-								case 'wand':
-									// Tall rectangle
-									this.ctx.rect(px - tempRadius / 2, py - tempRadius, tempRadius, tempRadius * 2);
-									break;
-								case 'item':
-									if (p.item) {
-										if (p.item.includes('heart') || p.item === 'full_heal') {
-											if (document.getElementById('debug-simple-poi-symbols').checked) {
-												this.ctx.moveTo(px - tempRadius, py - tempRadius);
-												this.ctx.lineTo(px + tempRadius, py - tempRadius);
-												this.ctx.lineTo(px, py + tempRadius);
-												this.ctx.closePath();
-											} else {
-												this.ctx.moveTo(px, py - tempRadius / 3);
-												this.ctx.bezierCurveTo(px - tempRadius, py - tempRadius, px - tempRadius, py + tempRadius / 3, px, py + tempRadius);
-												this.ctx.bezierCurveTo(px + tempRadius, py + tempRadius / 3, px + tempRadius, py - tempRadius, px, py - tempRadius / 3);
-												this.ctx.closePath();
-											}
-										}
-										else if (MATERIAL_CONTAINER_TYPES.includes(p.item)) {
-											if (document.getElementById('debug-simple-poi-symbols').checked) {
-												this.ctx.moveTo(px, py - tempRadius);
-												this.ctx.lineTo(px + tempRadius, py + tempRadius);
-												this.ctx.lineTo(px - tempRadius, py + tempRadius);
-												this.ctx.closePath();
-											} else {
-												this.ctx.moveTo(px - tempRadius * 0.28, py - tempRadius);
-												this.ctx.lineTo(px + tempRadius * 0.28, py - tempRadius);
-												this.ctx.lineTo(px + tempRadius * 0.28, py - tempRadius * 0.42);
-												this.ctx.bezierCurveTo(px + tempRadius * 0.28, py - tempRadius * 0.16, px + tempRadius * 0.86, py - tempRadius * 0.08, px + tempRadius * 0.88, py + tempRadius * 0.48);
-												this.ctx.bezierCurveTo(px + tempRadius * 0.9, py + tempRadius * 0.83, px + tempRadius * 0.48, py + tempRadius, px, py + tempRadius);
-												this.ctx.bezierCurveTo(px - tempRadius * 0.48, py + tempRadius, px - tempRadius * 0.9, py + tempRadius * 0.83, px - tempRadius * 0.88, py + tempRadius * 0.48);
-												this.ctx.bezierCurveTo(px - tempRadius * 0.86, py - tempRadius * 0.08, px - tempRadius * 0.28, py - tempRadius * 0.16, px - tempRadius * 0.28, py - tempRadius * 0.42);
-												this.ctx.closePath();
-											}
-										}
-										else if (p.item === 'portal' || p.item === 'meditation_cube' || p.item === 'buried_eye_teleporter' || p.item === 'trailer_altar') {
-											// Pentagon
-											this.ctx.moveTo(px, py - tempRadius);
-											for (let i = 1; i < 5; i++) {
-												const angle = (Math.PI / 2) + (i * (2 * Math.PI / 5));
-												this.ctx.lineTo(px - tempRadius * Math.cos(angle), py - tempRadius * Math.sin(angle));
-											}
-											this.ctx.closePath();
-											break;
-										}
-										else if (p.item === 'refresh_mimic' || p.item === 'heart_mimic' || p.item === 'mimic' || p.item === 'chest_leggy' || p.item === 'mimic_potion') {
-											// X shape
-											const thickness = tempRadius / 2;
-											this.ctx.moveTo(px - tempRadius, py - thickness);
-											this.ctx.lineTo(px - thickness, py - tempRadius);
-											this.ctx.lineTo(px, py - thickness);
-											this.ctx.lineTo(px + thickness, py - tempRadius);
-											this.ctx.lineTo(px + tempRadius, py - thickness);
-											this.ctx.lineTo(px + thickness, py);
-											this.ctx.lineTo(px + tempRadius, py + thickness);
-											this.ctx.lineTo(px + thickness, py + tempRadius);
-											this.ctx.lineTo(px, py + thickness);
-											this.ctx.lineTo(px - thickness, py + tempRadius);
-											this.ctx.lineTo(px - tempRadius, py + thickness);
-											this.ctx.lineTo(px - thickness, py);
-											this.ctx.closePath();
-										}
-										else {
-											// Square (slightly scaled down because the other stuff looks smaller by area)
-											this.ctx.rect(px - 3*tempRadius/4, py - 3*tempRadius/4, tempRadius * 1.5, tempRadius * 1.5);
-										}
-									}
-									break;
-								case 'utility_box':
-								case 'puzzle':
-								case 'vault_puzzle':
-									// Diamond
-									this.ctx.moveTo(px, py - tempRadius);
-									this.ctx.lineTo(px - tempRadius, py);
-									this.ctx.lineTo(px, py + tempRadius);
-									this.ctx.lineTo(px + tempRadius, py);
-									this.ctx.closePath();
-									break;
-								case 'chest':
-								case 'pacifist_chest':
-								case 'great_chest':
-									// Wide rectangle
-									this.ctx.rect(px - tempRadius, py - tempRadius/2, tempRadius * 2, tempRadius);
-									break;
-								case 'shop':
-								case 'holy_mountain_shop':
-									// Hexagon
-									this.ctx.moveTo(px, py + tempRadius);
-									for (let i = 1; i < 6; i++) {
-										const angle = (Math.PI / 2) + (i * (2 * Math.PI / 6));
-										this.ctx.lineTo(px + tempRadius * Math.cos(angle), py + tempRadius * Math.sin(angle));
-									}
-									this.ctx.closePath();
-									break;
-								case 'eye_room':
-									// Eye shape (horizontal)
-									this.ctx.moveTo(px - tempRadius, py);
-									this.ctx.quadraticCurveTo(px, py - tempRadius, px + tempRadius, py);
-									this.ctx.quadraticCurveTo(px, py + tempRadius, px - tempRadius, py);
-									this.ctx.closePath();
-									break;
-								case 'enemies':
-									// Circle
-									this.ctx.arc(px, py, tempRadius*0.7, 0, Math.PI * 2);
-									break;
-								default:
-									this.ctx.arc(px, py, tempRadius, 0, Math.PI * 2); // Default to circle
+						if (tempRadius * this.cam.z <= POI_SPRITE_MAX_SCREEN_RADIUS) {
+							// The sprite is remembered on the PoI itself: rebuilding the
+							// cache key per marker per frame cost more than the old path
+							// draw at the overview zoom.
+							let sprite = p._sprite;
+							if (!sprite || p._spriteZoom !== poiZoomBucket || p._spriteFlags !== poiFlags
+								|| p._spriteHl !== (p.highlight === true) || p._spriteColor !== poiColor) {
+								sprite = poiSprite(p, poiColor, tempRadius, this.cam.z, poiAccessibility, poiSimpleSymbols);
+								p._sprite = sprite;
+								p._spriteZoom = poiZoomBucket;
+								p._spriteFlags = poiFlags;
+								p._spriteHl = p.highlight === true;
+								p._spriteColor = poiColor;
 							}
+							const half = sprite.size / (2 * sprite.scale), full = sprite.size / sprite.scale;
+							this.ctx.drawImage(sprite.bitmap, px - half, py - half, full, full);
+							continue;
 						}
-						else {
-							// Colored circles
-							this.ctx.arc(px, py, tempRadius, 0, Math.PI * 2);
-						}
+						this.ctx.beginPath();
+						tracePoiShape(this.ctx, p, px, py, tempRadius, poiAccessibility, poiSimpleSymbols);
 						this.ctx.fillStyle = poiColor;
 						this.ctx.fill();
 						this.ctx.lineWidth = tempRadius * (p.highlight === true ? 0.4 : 0.08);
