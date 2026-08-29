@@ -383,8 +383,9 @@ export class GLTerrainRenderer {
      * resolves from a timer once the fence signals.
      *
      * @param {Array<{x0:number,y0:number,w:number,h:number}>} rects  world rects, absolute coords
-     * @returns {Promise<Int16Array[]|null>} one row-major id grid per rect
-     *          (0 = air, -1 = unresolved), or null when the pass is unavailable
+     * @returns {Promise<Uint8Array[]|null>} one raw RGBA readback per rect (rows
+     *          bottom-up; edge_decal_layer.js decodeMaterialIdTile turns it into
+     *          ids), or null when the pass is unavailable
      */
     resolveMaterialTiles(rects) {
         if (!this.engineReady || !rects.length) return Promise.resolve(null);
@@ -438,45 +439,49 @@ export class GLTerrainRenderer {
         gl.uniform1i(u.u_materialIdOut, 0);
         gl.uniform2i(u.u_vpOrigin, 0, 0);
 
-        // Async readback: pack into a buffer, fence, poll.
+        // Async readback: each tile packed contiguously into one buffer (a
+        // readPixels per viewport, at its own offset), fence, poll. The bytes
+        // come back RAW -- decoding 48 tiles' ids on this thread was a 20 ms
+        // frame while panning at 1:1; the worker that stamps decodes instead.
+        const tileBytes = tw * th * 4;
         const pbo = gl.createBuffer();
         gl.bindBuffer(gl.PIXEL_PACK_BUFFER, pbo);
-        gl.bufferData(gl.PIXEL_PACK_BUFFER, fbW * fbH * 4, gl.STREAM_READ);
-        gl.readPixels(0, 0, fbW, fbH, gl.RGBA, gl.UNSIGNED_BYTE, 0);
+        gl.bufferData(gl.PIXEL_PACK_BUFFER, tileBytes * rects.length, gl.STREAM_READ);
+        for (let i = 0; i < rects.length; i++) {
+            gl.readPixels((i % cols) * tw, Math.floor(i / cols) * th, tw, th, gl.RGBA, gl.UNSIGNED_BYTE, i * tileBytes);
+        }
         gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
         const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
         gl.flush();
 
         return new Promise((resolve) => {
+            const out = [];
+            // Copying out of the buffer is a memcpy per tile; a few per timer
+            // tick keeps a big batch from landing in one frame.
+            const copyStep = () => {
+                gl.bindBuffer(gl.PIXEL_PACK_BUFFER, pbo);
+                for (let n = 0; n < 8 && out.length < rects.length; n++) {
+                    const bytes = new Uint8Array(tileBytes);
+                    gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, out.length * tileBytes, bytes);
+                    out.push(bytes);
+                }
+                gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+                if (out.length < rects.length) { setTimeout(copyStep, 0); return; }
+                gl.deleteBuffer(pbo);
+                resolve(out);
+            };
             const poll = () => {
                 if (this.contextLost || !this.gl) { resolve(null); return; }
                 const st = gl.clientWaitSync(sync, 0, 0);
                 if (st === gl.TIMEOUT_EXPIRED) { setTimeout(poll, 3); return; }
                 gl.deleteSync(sync);
                 if (st === gl.WAIT_FAILED) { gl.deleteBuffer(pbo); resolve(null); return; }
-                const bytes = new Uint8Array(fbW * fbH * 4);
-                gl.bindBuffer(gl.PIXEL_PACK_BUFFER, pbo);
-                gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, bytes);
-                gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
-                gl.deleteBuffer(pbo);
-                // readPixels rows run bottom-up; the shader put world row 0 at
-                // the top of each viewport, so flip within the tile.
-                const grids = rects.map((r, i) => {
-                    const vx = (i % cols) * tw, vy = Math.floor(i / cols) * th;
-                    const ids = new Int16Array(tw * th);
-                    for (let y = 0; y < th; y++) {
-                        let src = ((vy + th - 1 - y) * fbW + vx) * 4;
-                        const dst = y * tw;
-                        for (let x = 0; x < tw; x++, src += 4) {
-                            ids[dst + x] = (bytes[src] | (bytes[src + 1] << 8)) - 1;
-                        }
-                    }
-                    return ids;
-                });
-                resolve(grids);
+                copyStep();
             };
             setTimeout(poll, 2);
         });
     }
+
+
 }

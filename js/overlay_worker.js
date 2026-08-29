@@ -7,7 +7,7 @@ import * as bandSelect from './engine_resolve/band_select.js';
 import { createTileOverlaysCheap, createTileOverlays, createTileOverlaysExpanded } from './image_processing.js';
 import { appSettings, updateSettings } from './settings.js';
 import { CHUNK_SIZE } from './constants.js';
-import { EDGE_DECAL_TILE } from './edge_decal_layer.js';
+import { decodeMaterialIdTile, EDGE_DECAL_TILE } from './edge_decal_layer.js';
 import { EDGE_DECAL_HALO, initEdgeDecalAtlas, stampEdgeDecals } from './edge_decals.js';
 import { createMaterialField, resolveMaterialRect } from './engine_resolve/material_field.js';
 import { GENERATOR_CONFIG } from './generator_config.js';
@@ -161,8 +161,8 @@ async function generateEdgeDecalTileWorker(msg) {
 		// fallback when the renderer cannot answer.
 		const tResolve0 = performance.now();
 		let mat;
-		if (msg.mat && msg.mat.length === size * size) {
-			mat = msg.mat;
+		if (msg.matRGBA && msg.matRGBA.length === size * size * 4) {
+			mat = decodeMaterialIdTile(msg.matRGBA, size, size);
 		} else {
 			if (!decalField) {
 				const mapWidth = getWorldSize(ngPlusCount > 0, gameMode);

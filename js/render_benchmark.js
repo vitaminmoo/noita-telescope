@@ -77,7 +77,7 @@ export async function runRenderBenchmark(app, opts = {}) {
 	let phase = null;
 
 	const beginPhase = (name) => {
-		phase = { name, t0: performance.now(), frames: [], draws: [], layers: {}, settleMs: 0, pendingAtEnd: 0 };
+		phase = { name, t0: performance.now(), frames: [], draws: [], inputs: [], layers: {}, settleMs: 0, pendingAtEnd: 0 };
 		phases.push(phase);
 		performance.mark(`telescope:bench ${name} start`);
 	};
@@ -86,7 +86,11 @@ export async function runRenderBenchmark(app, opts = {}) {
 	let lastT = 0;
 	const step = async (apply) => {
 		lastDraw = null;
+		// The synthetic event runs its handlers synchronously (drag maths,
+		// hover tooltip, worker requests), so this is the input path's own cost.
+		const i0 = performance.now();
 		apply();
+		phase.inputs.push(performance.now() - i0);
 		const t = await frame();
 		if (lastT) phase.frames.push(t - lastT);
 		lastT = t;
@@ -179,6 +183,7 @@ export async function runRenderBenchmark(app, opts = {}) {
 			'frame p50': r2(pct(p.frames, 0.5)), 'frame p95': r2(pct(p.frames, 0.95)), 'frame max': r2(Math.max(0, ...p.frames)),
 			'>20ms': long,
 			'draw p50': r2(pct(p.draws, 0.5)), 'draw p95': r2(pct(p.draws, 0.95)), 'draw max': r2(Math.max(0, ...p.draws)),
+			'input p95': r2(pct(p.inputs, 0.95)), 'input max': r2(Math.max(0, ...p.inputs)),
 			'settle ms': Math.round(p.settleMs), 'pending': p.pendingAtEnd,
 		};
 	}
@@ -199,7 +204,7 @@ export async function runRenderBenchmark(app, opts = {}) {
 	const zoomRange = `${r2(canvas.width / (1.5 * worldPx))} .. 1`;
 	const info = `[Render benchmark] ${canvas.width}x${canvas.height}, seed ${app.seed}` +
 		`${app.ngPlusCount ? ` NG+${app.ngPlusCount}` : ''}, zoom ${zoomRange}, ${Math.round(performance.now() - runT0)} ms total. ` +
-		'ms; "frame" = rAF to rAF (what you see), "draw" = drawNow wall time, "settle" = async work after the phase.';
+		'ms; "frame" = rAF to rAF (what you see), "draw" = drawNow wall time, "input" = the event handlers (drag, hover tooltip), "settle" = async work after the phase.';
 	console.log(info);
 	console.table(rows);
 	console.table(layerRows);

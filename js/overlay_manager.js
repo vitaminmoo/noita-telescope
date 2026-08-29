@@ -213,9 +213,9 @@ export function requestEdgeDecalTiles(worldKey, tiles) {
 		cmd: 'GENERATE_EDGE_DECAL_TILE', worldKey,
 		seed: app.seed, ngPlusCount: app.ngPlusCount, gameMode: app.gameMode,
 	};
-	const post = (job, mat) => {
-		const msg = { ...base, tx: job.tx, ty: job.ty, scenes: job.scenes, mat: mat || null };
-		overlayWorker.postMessage(msg, mat ? [mat.buffer] : []);
+	const post = (job, rgba) => {
+		const msg = { ...base, tx: job.tx, ty: job.ty, scenes: job.scenes, matRGBA: rgba || null, size };
+		overlayWorker.postMessage(msg, rgba ? [rgba.buffer] : []);
 	};
 	const terrain = app.glTerrain;
 	if (!terrain || !terrain.engineReady) {

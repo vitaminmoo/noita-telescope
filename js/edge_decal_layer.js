@@ -30,11 +30,31 @@ const LOOKAHEAD_INFLIGHT = 24;
  *  the cap is what keeps a pan from queueing tiles it has already left behind.
  *  Misses past it are asked again on the next draw, centre of the view first. */
 const MAX_INFLIGHT = 48;
+/** Tiles handed to the GPU material-id pass per draw (see drawEdgeDecals). */
+const MAX_REQUEST_PER_DRAW = 12;
 /** Tiles requested beyond the view on every side, so a pan never exposes a
  *  missing tile at the edge. */
 const PREFETCH_RING = 1;
 /** Roughly a 4K screen's worth at zoom 1 plus its ring, times a couple of pans. */
 const MAX_CACHED_TILES = 768;
+
+/**
+ * Decodes one tile of the GL material-id pass (gl/terrain_renderer.js
+ * resolveMaterialTiles: raw RGBA, rows bottom-up, id+1 in R/G) into row-major
+ * ids, 0 = air, -1 = unresolved. Pure; the overlay worker runs it so the
+ * draw thread never pays for the decode.
+ */
+export function decodeMaterialIdTile(bytes, w, h) {
+    const ids = new Int16Array(w * h);
+    for (let y = 0; y < h; y++) {
+        let src = (h - 1 - y) * w * 4;
+        const dst = y * w;
+        for (let x = 0; x < w; x++, src += 4) {
+            ids[dst + x] = (bytes[src] | (bytes[src + 1] << 8)) - 1;
+        }
+    }
+    return ids;
+}
 
 const tiles = new Map();       // "tx,ty" -> ImageBitmap
 const pending = new Set();
@@ -158,7 +178,10 @@ export function drawEdgeDecals(ctx, app, viewRect, request) {
             missing.push({ tx, ty, d: (tx - cx) * (tx - cx) + (ty - cy) * (ty - cy) });
         }
     }
-    const room = (drawing ? MAX_INFLIGHT : LOOKAHEAD_INFLIGHT) - pending.size;
+    // A request is one GPU batch (a 320x320 engine resolve per tile) issued
+    // this frame; a whole screen's worth at once is several screens of shader
+    // work on top of the frame's own, so it goes out in per-draw slices.
+    const room = Math.min(MAX_REQUEST_PER_DRAW, (drawing ? MAX_INFLIGHT : LOOKAHEAD_INFLIGHT) - pending.size);
     if (missing.length && room > 0) {
         missing.sort((a, b) => a.d - b.d);
         // Tiles the request declines (scene placement not ready for their

@@ -16,7 +16,7 @@ import { COALMINE_ALT_SCENES } from './pixel_scene_config.js';
 import { debugBiomeEdgeNoise } from './edge_noise.js';
 import { drawBiomeBoundaryContour } from './biome_boundary.js';
 import { GLTerrainRenderer } from './gl/terrain_renderer.js';
-import { getPixelSceneAirMask, getPixelSceneCanvas, pendingPixelSceneBitmaps, pixelSceneMipLevel, loadPixelSceneData, reloadPixelSceneCache, PIXEL_SCENE_DATA, warmPixelScene } from './pixel_scene_generation.js';
+import { getPixelSceneAirMask, getPixelSceneCanvas, pendingPixelSceneBitmaps, PIXEL_SCENE_MAX_MIP, pixelSceneBitmapVersion, pixelSceneMipLevel, loadPixelSceneData, reloadPixelSceneCache, PIXEL_SCENE_DATA, warmPixelScene } from './pixel_scene_generation.js';
 import { addStaticPixelScenes } from './static_spawns.js';
 import { NollaPrng } from './nolla_prng.js';
 import { appSettings, updateSettings, updateSettingsFromUI, updateSpellFlags, updateSpecialFlags, RENDER_LAYERS, readRenderLayersFromUI } from './settings.js';
@@ -279,6 +279,93 @@ function poiSprite(p, poiColor, tempRadius, zoom, accessibility, simpleSymbols) 
 	return sprite;
 }
 
+// The marker colour of one PoI, by what it is.
+function poiColorFor(p) {
+	let poiColor = '#FFFFFFAA'; // Default color for unknown PoIs
+	// If the wand has specific world data, use it for exact precision
+	switch (p.type) {
+		case 'wand':
+			poiColor = '#00FFFFAA';
+			break;
+		case 'item':
+			if (p.item) {
+				if (p.item.includes('heart') || p.item === 'full_heal') {
+					poiColor = '#FF0000AA';
+				}
+				else if (MATERIAL_CONTAINER_TYPES.includes(p.item)) {
+					poiColor = '#0000FFAA';
+				}
+				else if (p.item === 'portal' || p.item === 'meditation_cube' || p.item === 'buried_eye_teleporter' || p.item === 'trailer_altar') {
+					poiColor = '#800080AA';
+				}
+				else if (p.item === 'refresh_mimic' || p.item === 'heart_mimic' || p.item === 'mimic' || p.item === 'chest_leggy' || p.item === 'mimic_potion') {
+					poiColor = '#AAAAAAAA';
+				}
+				else {
+					poiColor = '#FFFF00AA';
+				}
+			}
+			break;
+		case 'utility_box':
+		case 'puzzle':
+		case 'vault_puzzle':
+			poiColor = '#FF00FFAA';
+			break;
+		case 'chest':
+		case 'pacifist_chest':
+			poiColor = '#FFA500AA';
+			break;
+		case 'great_chest':
+			poiColor = '#FF5500AA';
+			break;
+		case 'shop':
+		case 'eye_room':
+		case 'holy_mountain_shop':
+			poiColor = '#00FF00AA';
+			break;
+		case 'enemies':
+			poiColor = '#AAAAAAAA';
+			for (let item of p.items) {
+				if (item.type === 'wand') {
+					poiColor = '#00FFFFAA';
+					break;
+				}
+			}
+			break;
+		// Add more cases as needed for different PoI types
+	}
+	return poiColor;
+}
+
+// Whole-world bakes for the zoomed-out view.
+//
+// Zoomed out past a chunk of 32 screen px (z <= 1/16) every scene of a world
+// copy is on screen -- ~1,150 drawImage calls per copy per frame for the
+// 1/16 mips alone, and as many marker sprites -- and the wide "1.5 worlds"
+// view of the render benchmark spent 11 ms a frame on the scenes and 6 ms on
+// the markers, GPU backpressure included. Each becomes ONE bitmap per world
+// copy instead:
+//   sceneBake: the mip-4 (1/16) scene bitmaps composited at exactly 1/16 (so
+//     at z = 1/16 it is the same pixels), rebuilt when a scene bitmap lands or
+//     goes (pixelSceneBitmapVersion), at most every SCENE_BAKE_MIN_INTERVAL_MS
+//     so a burst of worker replies does not rebuild it per reply;
+//   poiBake: the marker sprites at screen resolution for the current zoom,
+//     keyed by zoom bucket, flags and a checksum of the highlight flags, so a
+//     search result or a zoom step rebuilds it and a drag never does.
+const SCENE_BAKE_SCALE = 16;
+const SCENE_BAKE_MAX_CHUNK_PX = 512 / SCENE_BAKE_SCALE;
+const SCENE_BAKE_MIN_INTERVAL_MS = 300;
+const POI_BAKE_MAX_CHUNK_PX = 64;
+const POI_BAKE_SETTLE_MS = 150;
+const sceneBakes = new WeakMap();   // placement list -> { version, builtAt, bitmap, x, y, w, h, complete }
+const poiBakes = new WeakMap();     // poi list -> { key, bitmap, x, y, w, h }
+
+function poiHighlightChecksum(list) {
+	let h = 0;
+	for (let i = 0; i < list.length; i++) if (list[i].highlight === true) h = (h * 31 + i + 1) | 0;
+	return h;
+}
+
 function getPoiRadius(poi, zoom) {
 	let radius = POI_RADIUS;
 	if (poi.type === 'enemies' || poi.type === 'props') {
@@ -442,6 +529,9 @@ export const app = {
 	// to -1 by drawNow() so a repaint always re-reads (displayedColorAt, which
 	// defers the read and keeps its own 1x1 scratch context here).
 	colorProbe: { x: -1, y: -1, rgb: 0, wantX: -1, wantY: -1, timer: 0, ctx: null },
+	// Same for the decal texel (decalTexelAt); keyed on the frame it was read in.
+	decalProbe: { x: NaN, y: NaN, frame: -1, value: null, wantX: 0, wantY: 0, timer: 0 },
+	frameSerial: 0,
 	lastHoverEvent: null,
 	copyFlashTimer: 0,
 	pw: 0,
@@ -1817,6 +1907,32 @@ export const app = {
 		return null;
 	},
 
+	// The decal texel under the cursor, deferred exactly like displayedColorAt:
+	// edge_decal_layer.js edgeDecalAt draws a GPU-resident tile bitmap into a
+	// CPU canvas, which waits for every queued GPU command first -- 13-17 ms per
+	// mousemove while a drag keeps the GPU busy (measured: it was the whole
+	// input cost at 1:1). So nothing is read while dragging, and a still cursor
+	// gets its decal line ~80 ms after the frame settles.
+	decalTexelAt(absX, absY) {
+		const probe = this.decalProbe;
+		if (probe.x === absX && probe.y === absY && probe.frame === this.frameSerial) return probe.value;
+		if (this.drag.on) return null;
+		probe.wantX = absX;
+		probe.wantY = absY;
+		if (!probe.timer) {
+			probe.timer = setTimeout(() => {
+				probe.timer = 0;
+				if (this.drag.on || !this.lastHoverEvent) return;
+				probe.value = edgeDecalAt(probe.wantX, probe.wantY);
+				probe.x = probe.wantX;
+				probe.y = probe.wantY;
+				probe.frame = this.frameSerial;
+				this.hover(this.lastHoverEvent);
+			}, 80);
+		}
+		return null;
+	},
+
 	// One tooltip line per fact about the hovered world pixel: what it is, which
 	// pipeline stage painted it, and what that paint was sampled from. Runs per
 	// mousemove, so every lookup here is O(1) against data the draw path already
@@ -1875,7 +1991,7 @@ export const app = {
 		// Edge decals bake into the engine's cell colors, so a decal texel sits on
 		// top of whatever the origin above painted.
 		const decal = (appSettings.edgeDecals && appSettings.engineTerrain
-			&& appSettings.terrainRenderer === 'gl') ? edgeDecalAt(absX, absY) : null;
+			&& appSettings.terrainRenderer === 'gl') ? this.decalTexelAt(absX, absY) : null;
 		if (decal && decal.a > 0) {
 			const dhex = ((decal.r << 16) | (decal.g << 8) | decal.b).toString(16).padStart(6, '0');
 			lines.push(`Decal: <span class="coords-swatch" style="background:#${dhex}"></span> #${dhex}`
@@ -2933,6 +3049,124 @@ export const app = {
 		return bake;
 	},
 
+	// One 1/16-scale bitmap of every scene in a placement list, in draw space
+	// relative to the world copy's shift (see the header note above getPoiRadius).
+	// Scenes whose bitmap has not arrived are left out and asked for; the bake is
+	// rebuilt once they land.
+	sceneBake(list, relOffX, relOffY) {
+		const version = pixelSceneBitmapVersion();
+		let bake = sceneBakes.get(list);
+		const now = performance.now();
+		if (bake && (bake.version === version || now - bake.builtAt < SCENE_BAKE_MIN_INTERVAL_MS)) return bake;
+		if (!bake) {
+			// Bounds from the whole list, so they never move as scenes land.
+			let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+			for (const scene of list) {
+				const data = PIXEL_SCENE_DATA[scene.key];
+				if (!data) continue;
+				const x = scene.x + relOffX, y = scene.y + relOffY;
+				if (x < minX) minX = x;
+				if (y < minY) minY = y;
+				if (x + data.width > maxX) maxX = x + data.width;
+				if (y + data.height > maxY) maxY = y + data.height;
+			}
+			if (!(maxX > minX)) return null;
+			minX = Math.floor(minX / SCENE_BAKE_SCALE) * SCENE_BAKE_SCALE;
+			minY = Math.floor(minY / SCENE_BAKE_SCALE) * SCENE_BAKE_SCALE;
+			const w = Math.ceil((maxX - minX) / SCENE_BAKE_SCALE) * SCENE_BAKE_SCALE;
+			const h = Math.ceil((maxY - minY) / SCENE_BAKE_SCALE) * SCENE_BAKE_SCALE;
+			const canvas = new OffscreenCanvas(w / SCENE_BAKE_SCALE, h / SCENE_BAKE_SCALE);
+			const bctx = canvas.getContext('2d');
+			bctx.imageSmoothingEnabled = false;
+			bctx.scale(1 / SCENE_BAKE_SCALE, 1 / SCENE_BAKE_SCALE);
+			bctx.translate(-minX, -minY);
+			bake = { version, builtAt: now, canvas, bctx, bitmap: null, x: minX, y: minY, w, h, drawn: new Set() };
+			sceneBakes.set(list, bake);
+		}
+		// Incremental: transferToImageBitmap empties the canvas, so the previous
+		// bitmap is put back first and only the scenes that have landed since
+		// are drawn on top -- a burst of worker replies costs their scenes, not
+		// the whole world's again.
+		const { bctx, drawn } = bake;
+		if (bake.bitmap) bctx.drawImage(bake.bitmap, bake.x, bake.y, bake.w, bake.h);
+		for (const scene of list) {
+			if (drawn.has(scene)) continue;
+			const data = PIXEL_SCENE_DATA[scene.key];
+			if (!data) continue;
+			const bitmap = getPixelSceneCanvas(scene, PIXEL_SCENE_MAX_MIP);
+			if (!bitmap) continue;
+			bctx.drawImage(bitmap, scene.x + relOffX, scene.y + relOffY, data.width, data.height);
+			drawn.add(scene);
+		}
+		if (bake.bitmap) bake.bitmap.close?.();
+		bake.bitmap = bake.canvas.transferToImageBitmap();
+		bake.version = version;
+		bake.builtAt = now;
+		return bake;
+	},
+
+	// One screen-resolution bitmap of a world copy's PoI markers at the current
+	// zoom, in draw space relative to the copy's shift.
+	poiBake(list, relOffX, relOffY, zoomBucket, flags, accessibility, simpleSymbols, smallPois) {
+		const z = this.cam.z;
+		const key = `${flags}|${poiHighlightChecksum(list)}`;
+		let bake = poiBakes.get(list);
+		if (bake && bake.key === key && bake.zoomBucket === zoomBucket) return bake;
+		// While the zoom is moving, a bake made within 25% of the current zoom
+		// is drawn scaled rather than rebuilt every wheel step (each rebuild is
+		// the whole world's markers); it is rebuilt once the zoom has settled.
+		const now = performance.now();
+		if (this.poiBakeZoom !== z) { this.poiBakeZoom = z; this.poiBakeZoomAt = now; }
+		if (bake && bake.key === key && Math.abs(Math.log(z / bake.z)) < Math.log(1.25)
+			&& now - this.poiBakeZoomAt < POI_BAKE_SETTLE_MS) {
+			if (!this.poiBakeTimer) {
+				this.poiBakeTimer = setTimeout(() => { this.poiBakeTimer = 0; this.draw(); }, POI_BAKE_SETTLE_MS + 10);
+			}
+			return bake;
+		}
+		let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+		const items = [];
+		for (const p of list) {
+			let r = getPoiRadius(p, z);
+			if (smallPois) r = 5;
+			const x = p.x + relOffX, y = p.y + relOffY;
+			items.push([p, x, y, r]);
+			const reach = r * 2;
+			if (x - reach < minX) minX = x - reach;
+			if (y - reach < minY) minY = y - reach;
+			if (x + reach > maxX) maxX = x + reach;
+			if (y + reach > maxY) maxY = y + reach;
+		}
+		if (!items.length) return null;
+		const w = Math.ceil((maxX - minX) * z) + 2, h = Math.ceil((maxY - minY) * z) + 2;
+		if (w > 8192 || h > 8192) return null;
+		const canvas = new OffscreenCanvas(w, h);
+		const bctx = canvas.getContext('2d');
+		bctx.imageSmoothingEnabled = false;
+		bctx.scale(z, z);
+		bctx.translate(-minX, -minY);
+		bctx.strokeStyle = '#000000AA';
+		for (const [p, x, y, r] of items) {
+			const color = poiColorFor(p);
+			if (r * z <= POI_SPRITE_MAX_SCREEN_RADIUS) {
+				const sprite = poiSprite(p, color, r, z, accessibility, simpleSymbols);
+				const half = sprite.size / (2 * sprite.scale), full = sprite.size / sprite.scale;
+				bctx.drawImage(sprite.bitmap, x - half, y - half, full, full);
+			} else {
+				bctx.beginPath();
+				tracePoiShape(bctx, p, x, y, r, accessibility, simpleSymbols);
+				bctx.fillStyle = color;
+				bctx.fill();
+				bctx.lineWidth = r * (p.highlight === true ? 0.4 : 0.08);
+				bctx.stroke();
+			}
+		}
+		if (bake && bake.bitmap) bake.bitmap.close?.();
+		bake = { key, zoomBucket, z, bitmap: canvas.transferToImageBitmap(), x: minX, y: minY, w: w / z, h: h / z };
+		poiBakes.set(list, bake);
+		return bake;
+	},
+
 	drawBackgroundStack(worldOffsets, viewRect, offscreen, reverse = false, prof = null) {
 		const rawMap = document.getElementById('debug-original-biome-map').checked;
 		const worldCenter = getWorldCenter(this.isNGP, this.gameMode) * 512;
@@ -3121,6 +3355,7 @@ export const app = {
 		const L = appSettings.renderLayers;
 		const prof = this.startLayerProfile();
 		this.colorProbe.x = -1; // the tooltip's cached readback belongs to the old frame
+		this.frameSerial++;     // ... and so does the decal probe's (decalTexelAt)
 		this.ctx.fillStyle = '#050505';
 		this.ctx.fillRect(0,0,this.canvas.width,this.canvas.height);
 		if (!this.biomeData) return;
@@ -3713,6 +3948,11 @@ export const app = {
 					// Note positions of these *do not* use the tile offset
 					const sceneOffX = getWorldCenter(this.isNGP, this.gameMode)*512 - pwX*getWorldSize(this.isNGP, this.gameMode)*512 + shiftX;
 					const sceneOffY = 14*512 - pwY*24576 + shiftY;
+					// Zoomed far out, the whole copy's scenes come from one bake (see
+					// sceneBake); the loop below then only collects the art stand-ins.
+					const bake = (!appSettings.renderEverything && 512 * this.cam.z <= SCENE_BAKE_MAX_CHUNK_PX)
+						? this.sceneBake(this.pixelScenesByPW[`${pwX},${pwY}`], sceneOffX - shiftX, sceneOffY - shiftY) : null;
+					if (bake) this.ctx.drawImage(bake.bitmap, bake.x + shiftX, bake.y + shiftY, bake.w, bake.h);
 					for (let scene of this.pixelScenesByPW[`${pwX},${pwY}`]) {
 						const drawX = scene.x + sceneOffX;
 						const drawY = scene.y + sceneOffY;
@@ -3727,9 +3967,17 @@ export const app = {
 						if (!sceneData) continue;
 						if (drawX + sceneData.width < viewLeft || drawX > viewRight ||
 							drawY + sceneData.height < viewTop || drawY > viewBottom) {
-							if (!(drawX + sceneData.width < warmLeft || drawX > warmRight ||
+							if (!bake && !(drawX + sceneData.width < warmLeft || drawX > warmRight ||
 								drawY + sceneData.height < warmTop || drawY > warmBottom)) {
 								warmPixelScene(scene, sceneMipLevel);
+							}
+							continue;
+						}
+						if (bake) {
+							if (sceneArtOn) {
+								const tile = sceneArtTile(scene.key, { app: this, pwX, pwY });
+								const bitmap = tile && this.surfaceOverlayScenes[tile];
+								if (bitmap) sceneArt.push([bitmap, drawX, drawY, sceneData.width, sceneData.height]);
 							}
 							continue;
 						}
@@ -4033,63 +4281,21 @@ export const app = {
 				//if (this.cam.z < 0.03) continue;
 				const { pwX, pwY, shiftX, shiftY } = worldOffsets[worldKey];
 				const currentPois = this.poisByPW[`${pwX},${pwY}`];
+				if (currentPois && 512 * this.cam.z <= POI_BAKE_MAX_CHUNK_PX) {
+					const relOffX = -(pwX * 512 * getWorldSize(this.isNGP, this.gameMode)) + getWorldCenter(this.isNGP, this.gameMode) * 512;
+					const relOffY = 14 * 512 - (pwY * 24576);
+					const bake = this.poiBake(currentPois, relOffX, relOffY, poiZoomBucket, poiFlags,
+						poiAccessibility, poiSimpleSymbols, document.getElementById('debug-small-pois').checked);
+					if (bake) {
+						this.ctx.drawImage(bake.bitmap, bake.x + shiftX, bake.y + shiftY, bake.w, bake.h);
+						continue;
+					}
+				}
 				if (currentPois) {
 					for (let p of currentPois) {
 						// Calculate visual position on the current map
 						
-						let poiColor = '#FFFFFFAA'; // Default color for unknown PoIs
-						// If the wand has specific world data, use it for exact precision
-						switch (p.type) {
-							case 'wand':
-								poiColor = '#00FFFFAA';
-								break;
-							case 'item':
-								if (p.item) {
-									if (p.item.includes('heart') || p.item === 'full_heal') {
-										poiColor = '#FF0000AA';
-									}
-									else if (MATERIAL_CONTAINER_TYPES.includes(p.item)) {
-										poiColor = '#0000FFAA';
-									}
-									else if (p.item === 'portal' || p.item === 'meditation_cube' || p.item === 'buried_eye_teleporter' || p.item === 'trailer_altar') {
-										poiColor = '#800080AA';
-									}
-									else if (p.item === 'refresh_mimic' || p.item === 'heart_mimic' || p.item === 'mimic' || p.item === 'chest_leggy' || p.item === 'mimic_potion') {
-										poiColor = '#AAAAAAAA';
-									}
-									else {
-										poiColor = '#FFFF00AA';
-									}
-								}
-								break;
-							case 'utility_box':
-							case 'puzzle':
-							case 'vault_puzzle':
-								poiColor = '#FF00FFAA';
-								break;
-							case 'chest':
-							case 'pacifist_chest':
-								poiColor = '#FFA500AA';
-								break;
-							case 'great_chest':
-								poiColor = '#FF5500AA';
-								break;
-							case 'shop':
-							case 'eye_room':
-							case 'holy_mountain_shop':
-								poiColor = '#00FF00AA';
-								break;
-							case 'enemies':
-								poiColor = '#AAAAAAAA';
-								for (let item of p.items) {
-									if (item.type === 'wand') {
-										poiColor = '#00FFFFAA';
-										break;
-									}
-								}
-								break;
-							// Add more cases as needed for different PoI types
-						}
+						const poiColor = poiColorFor(p);
 
 						const px = p.x - (pwX * 512 * getWorldSize(this.isNGP, this.gameMode)) + getWorldCenter(this.isNGP, this.gameMode) * 512 + shiftX;
 						const py = p.y + 14 * 512 - (pwY * 24576) + shiftY; // Shift already baked into the tile spawns
@@ -4149,6 +4355,33 @@ export const app = {
 		this.ctx.restore();
 
 		this.finishLayerProfile(prof);
+
+		// The whole-world bakes the zoomed-out view draws from (backdropBake,
+		// sceneBake) cost 40-70 ms to build; build the main world's during idle
+		// time after the first frame rather than on the first zoom-out.
+		if (!this.bakesPrebuilt && !this.bakePrebuildScheduled && this.backdropRuns
+			&& this.pixelScenesByPW && this.pixelScenesByPW['0,0']) {
+			this.bakePrebuildScheduled = true;
+			const idle = window.requestIdleCallback || ((fn) => setTimeout(fn, 200));
+			idle(() => {
+				this.bakePrebuildScheduled = false;
+				if (!this.backdropRuns) return;
+				// Either bake can decline (background art still decoding, no
+				// scene bitmaps yet); then the next frame schedules another try.
+				// The heaven/hell rows come into view a little past the overview
+				// zoom (the view grows taller than the world), so theirs too.
+				let ok = true;
+				for (const runs of [this.backdropRuns, this.backdropRunsHeaven, this.backdropRunsHell]) {
+					if (runs && !this.backdropBake(runs)) ok = false;
+				}
+				const relOffX = getWorldCenter(this.isNGP, this.gameMode) * 512;
+				for (const pwY of [0, -1, 1]) {
+					const list = this.pixelScenesByPW && this.pixelScenesByPW[`0,${pwY}`];
+					if (list && !this.sceneBake(list, relOffX, 14 * 512 - pwY * 24576)) ok = false;
+				}
+				this.bakesPrebuilt = ok;
+			});
+		}
 	},
 
 	setupCamera(ctx) {

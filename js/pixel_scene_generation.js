@@ -104,7 +104,7 @@ export let PIXEL_SCENE_SPAWN_DATA = {}; // Populated during the prescan of pixel
 // are evicted least-recently-drawn first over a byte budget; an evicted variant is
 // re-requested from the overlay worker through the rebuild hook below.
 // ---------------------------------------------------------------------------
-const PIXEL_SCENE_MAX_MIP = 4; // 1/2, 1/4, 1/8, 1/16
+export const PIXEL_SCENE_MAX_MIP = 4; // 1/2, 1/4, 1/8, 1/16
 const PIXEL_SCENE_BITMAP_CACHE = new Map(); // `${key}/${variantKey}` -> entry
 let pixelSceneCacheBytes = 0;
 let pixelSceneDrawTick = 0;
@@ -183,8 +183,16 @@ function requestSceneBitmaps(pixelScene, cacheKey, textured) {
  * Accepts a finished bitmap chain from the worker (overlay_manager routes the
  * SCENE_BITMAPS reply here). Returns true when something new is drawable.
  */
+// Bumped whenever a drawable scene appears or disappears, so a caller that
+// composites many scenes into one bitmap (app.js sceneBake) knows to rebuild.
+let sceneBitmapVersion = 0;
+export function pixelSceneBitmapVersion() {
+	return sceneBitmapVersion;
+}
+
 export function putPixelSceneBitmaps(msg) {
 	pendingSceneBitmaps.delete(msg.cacheKey);
+	sceneBitmapVersion++;
 	const bitmaps = [...(msg.levels || []), msg.airMask].filter(Boolean);
 	if (msg.epoch !== sceneBitmapEpoch || !msg.levels || !msg.levels[0]) {
 		for (const b of bitmaps) b.close?.();
@@ -236,6 +244,8 @@ function releasePixelSceneEntry(entry) {
 	if (entry.airMask) entry.airMask.close();
 	pixelSceneCacheBytes -= entry.bytes;
 	PIXEL_SCENE_BITMAP_CACHE.delete(entry.cacheKey);
+	// No version bump: a bake that already holds the evicted scene's pixels
+	// stays correct, and bumping here made every eviction a full rebuild.
 }
 
 export function clearPixelSceneBitmapCache() {
@@ -243,6 +253,7 @@ export function clearPixelSceneBitmapCache() {
 	pixelSceneCacheBytes = 0;
 	pendingSceneBitmaps.clear();
 	sceneBitmapEpoch++;
+	sceneBitmapVersion++;
 }
 
 function evictPixelSceneBitmaps(keep) {
