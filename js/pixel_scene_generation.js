@@ -113,24 +113,115 @@ let pixelSceneDrawTick = 0;
 // in overlay_manager / world_manager don't re-request it while its bitmap is still alive.
 const VARIANT_RELEASED = { released: true };
 
-let variantRebuilder = null;
+// ---------------------------------------------------------------------------
+// Bitmaps are BUILT IN THE OVERLAY WORKER, never on this thread.
+//
+// Turning a scene's pixels into a drawable used to happen synchronously on the
+// first draw that needed it: recolor -> visual-art overlay -> putImageData ->
+// transferToImageBitmap, then a GPU readback + JS halving for every mip level,
+// and for a textured instance a full per-pixel material build on top. That was
+// 30-110 ms for one large scene scrolling into view and a 50 ms frame at the
+// overview zoom -- the worst frames the renderer had once the tooltip readback
+// was gone. Now a cache miss posts a BUILD_SCENE_BITMAPS request (through the
+// hook overlay_manager registers below) and returns nothing to draw; the worker
+// answers with the finished ImageBitmap chain, which lands here through
+// putPixelSceneBitmaps(). The scene is missing for the frames in between, which
+// drawNow hides by warming scenes in a margin around the view before they are
+// visible (warmPixelScene).
+//
+// A textured instance that is still being built draws its FLAT variant meanwhile
+// (same key without the position), so crossing the texture zoom shows a flat
+// scene that sharpens rather than a hole.
+// ---------------------------------------------------------------------------
+let sceneBitmapRequester = null;   // (request, sceneData) => void, set by overlay_manager
+const pendingSceneBitmaps = new Map();   // cacheKey -> textured (in flight at the worker)
+// Bumped whenever the cache is cleared, so a reply for the old contents is dropped.
+let sceneBitmapEpoch = 0;
+// In-flight caps. The worker is FIFO and cannot cancel: with no cap a pan at the
+// textured zoom would queue every instance it passed over (each a 30-110 ms
+// build) ahead of the ones actually on screen. Misses past the cap are simply
+// asked again on the next draw, which is what keeps requests tracking the view.
+const MAX_INFLIGHT_TEXTURED = 6;
+const MAX_INFLIGHT_FLAT = 48;
 
-// overlay_manager registers the way back to the worker here (importing it directly would
-// be circular).
-export function setPixelSceneVariantRebuilder(fn) {
-	variantRebuilder = fn;
+export function setPixelSceneBitmapRequester(fn) {
+	sceneBitmapRequester = fn;
 }
 
-// Cost of the per-instance textured builds, for the perf readout.
-let texturedSceneCount = 0;
-let texturedSceneMs = 0;
+/** Scene bitmaps asked of the worker and not back yet (the harness waits on it). */
+export function pendingPixelSceneBitmaps() {
+	return pendingSceneBitmaps.size;
+}
 
+function requestSceneBitmaps(pixelScene, cacheKey, textured) {
+	if (!sceneBitmapRequester || pendingSceneBitmaps.has(cacheKey)) return;
+	const data = PIXEL_SCENE_DATA[pixelScene.key];
+	if (!data) return;
+	let inflight = 0;
+	for (const t of pendingSceneBitmaps.values()) if (t === textured) inflight++;
+	if (inflight >= (textured ? MAX_INFLIGHT_TEXTURED : MAX_INFLIGHT_FLAT)) return;
+	pendingSceneBitmaps.set(cacheKey, textured);
+	sceneBitmapRequester({
+		cmd: 'BUILD_SCENE_BITMAPS',
+		epoch: sceneBitmapEpoch,
+		cacheKey,
+		key: pixelScene.key,
+		variantKey: pixelScene.variantKey || '',
+		x: pixelScene.x,
+		y: pixelScene.y,
+		textured,
+		maxLevel: sceneMaxMipLevel(data.width, data.height),
+	}, data);
+}
+
+/**
+ * Accepts a finished bitmap chain from the worker (overlay_manager routes the
+ * SCENE_BITMAPS reply here). Returns true when something new is drawable.
+ */
+export function putPixelSceneBitmaps(msg) {
+	pendingSceneBitmaps.delete(msg.cacheKey);
+	const bitmaps = [...(msg.levels || []), msg.airMask].filter(Boolean);
+	if (msg.epoch !== sceneBitmapEpoch || !msg.levels || !msg.levels[0]) {
+		for (const b of bitmaps) b.close?.();
+		return false;
+	}
+	const old = PIXEL_SCENE_BITMAP_CACHE.get(msg.cacheKey);
+	if (old) releasePixelSceneEntry(old);
+	const entry = {
+		cacheKey: msg.cacheKey,
+		width: msg.width,
+		height: msg.height,
+		levels: new Array(PIXEL_SCENE_MAX_MIP + 1).fill(null),
+		maxLevel: msg.levels.length - 1,
+		airMask: msg.airMask || null,
+		bytes: 0,
+		used: 0,
+	};
+	for (let l = 0; l < msg.levels.length; l++) addPixelSceneBitmap(entry, l, msg.levels[l]);
+	if (entry.airMask) {
+		const bytes = entry.airMask.width * entry.airMask.height * 4;
+		entry.bytes += bytes;
+		pixelSceneCacheBytes += bytes;
+	}
+	PIXEL_SCENE_BITMAP_CACHE.set(entry.cacheKey, entry);
+	// The bitmap is now the only copy this thread needs of a biome-recolored
+	// variant: material lookups (utils.js) read the pre-biome variants, which are
+	// left alone, and the worker rebuilds any variant from the base image.
+	const data = PIXEL_SCENE_DATA[msg.key];
+	if (!msg.textured && data?.variants && msg.variantKey.includes('biome=')
+		&& ArrayBuffer.isView(data.variants[msg.variantKey])) {
+		data.variants[msg.variantKey] = VARIANT_RELEASED;
+	}
+	return true;
+}
+
+/** Halving stops once either axis would round to nothing. */
+export function sceneMaxMipLevel(width, height) {
+	return Math.min(PIXEL_SCENE_MAX_MIP, Math.floor(Math.log2(Math.max(1, Math.min(width, height)))));
+}
 
 export function getPixelSceneCacheStats() {
-	return {
-		entries: PIXEL_SCENE_BITMAP_CACHE.size, bytes: pixelSceneCacheBytes,
-		texturedScenes: texturedSceneCount, texturedMs: texturedSceneMs,
-	};
+	return { entries: PIXEL_SCENE_BITMAP_CACHE.size, bytes: pixelSceneCacheBytes, pending: pendingSceneBitmaps.size };
 }
 
 function releasePixelSceneEntry(entry) {
@@ -145,6 +236,8 @@ function releasePixelSceneEntry(entry) {
 export function clearPixelSceneBitmapCache() {
 	for (const entry of [...PIXEL_SCENE_BITMAP_CACHE.values()]) releasePixelSceneEntry(entry);
 	pixelSceneCacheBytes = 0;
+	pendingSceneBitmaps.clear();
+	sceneBitmapEpoch++;
 }
 
 function evictPixelSceneBitmaps(keep) {
@@ -165,7 +258,7 @@ function addPixelSceneBitmap(entry, level, bitmap) {
 	pixelSceneCacheBytes += bytes;
 }
 
-function bitmapFromPixels(width, height, pixels) {
+export function bitmapFromPixels(width, height, pixels) {
 	const canvas = new OffscreenCanvas(width, height);
 	const ctx = canvas.getContext('2d');
 	const imageData = ctx.createImageData(width, height);
@@ -183,8 +276,10 @@ function bitmapFromPixels(width, height, pixels) {
  * colors -- but from the untouched base image and with the instance's own world
  * position, which is what the texture sampling needs.
  */
-function buildTexturedScenePixels(pixelScene, pixelSceneData) {
-	if (!sceneTextureAtlas()) return null;
+export function buildTexturedScenePixels(pixelScene, pixelSceneData, ignoreSettings = false) {
+	// The worker builds on the main thread's say-so (it decided `textured` from
+	// its own settings); its copy of the settings can lag a SYNC behind.
+	if (!(ignoreSettings ? sceneTextureModules?.atlas.getMaterialAtlas() : sceneTextureAtlas())) return null;
 	let pixels = pixelSceneData.imgElement;
 	let biome = 'general';
 	for (const part of (pixelScene.variantKey || '').split('&')) {
@@ -197,64 +292,10 @@ function buildTexturedScenePixels(pixelScene, pixelSceneData) {
 		biome, pixelScene.x, pixelScene.y);
 }
 
-function buildPixelSceneEntry(pixelScene, cacheKey, textured) {
-	const pixelSceneKey = pixelScene.key;
-	const variantKey = pixelScene.variantKey || '';
-	const pixelSceneData = PIXEL_SCENE_DATA[pixelSceneKey];
-	if (!pixelSceneData) return null;
-
-	// Textured instances are built here rather than in the overlay worker: the
-	// worker's variants are keyed by material substitution alone, and a textured
-	// scene's pixels depend on where the instance landed.
-	const t0 = textured ? performance.now() : 0;
-	const built = textured ? buildTexturedScenePixels(pixelScene, pixelSceneData) : null;
-	if (built) { texturedSceneCount++; texturedSceneMs += performance.now() - t0; }
-	const raw = built ? built.pixels : pixelSceneData.variants[variantKey];
-	if (!ArrayBuffer.isView(raw)) {
-		// Released after its bitmap was built and the bitmap has since been evicted, so
-		// ask for the recolor again. Nothing to draw for this scene until it arrives.
-		if (raw === VARIANT_RELEASED && variantRebuilder) variantRebuilder(pixelSceneKey, variantKey);
-		return null;
-	}
-	const width = pixelSceneData.width;
-	const height = pixelSceneData.height;
-	// Cell-color override art wins over whatever the material pass (textured or
-	// flat) produced, exactly as the engine paints it: the art pixel becomes the
-	// cell's color wherever a cell was actually painted (opaque), and only there
-	// -- art hanging over air/untouched pixels places no cell in the game either.
-	const art = pixelSceneData.visualArt;
-	const pixels = art ? overlayVisualArt(raw, width, height, art) : raw;
-	const entry = {
-		cacheKey,
-		width,
-		height,
-		levels: new Array(PIXEL_SCENE_MAX_MIP + 1).fill(null),
-		// Halving stops once either axis would round to nothing
-		maxLevel: Math.min(PIXEL_SCENE_MAX_MIP, Math.floor(Math.log2(Math.max(1, Math.min(width, height))))),
-		// Opaque exactly on the scene's FORCE AIR pixels; drawn destination-out so
-		// the air really erases the terrain under it. Only the textured build has one.
-		airMask: null,
-		bytes: 0,
-		used: 0,
-	};
-	addPixelSceneBitmap(entry, 0, bitmapFromPixels(width, height, pixels));
-	if (built && built.airMask) {
-		entry.airMask = bitmapFromPixels(width, height, built.airMask);
-		entry.bytes += width * height * 4;
-		pixelSceneCacheBytes += width * height * 4;
-	}
-	PIXEL_SCENE_BITMAP_CACHE.set(cacheKey, entry);
-	// The bitmap is now the only copy this thread needs of the recolored pixels. Material
-	// lookups (utils.js) read the pre-biome variants, which are left alone. A textured
-	// instance never consumed the worker's variant, so it must not drop it either.
-	if (!built && variantKey.includes('biome=')) pixelSceneData.variants[variantKey] = VARIANT_RELEASED;
-	return entry;
-}
-
 // Source-over blend of a scene's visual-art override onto a COPY of its built
 // pixels, restricted to opaque (painted-cell) destination pixels. The visual may
 // be smaller than the scene (hall_b/hall_br); both are anchored top-left.
-function overlayVisualArt(raw, width, height, art) {
+export function overlayVisualArt(raw, width, height, art) {
 	const out = new Uint8Array(raw.length);
 	out.set(raw);
 	const w = Math.min(width, art.width), h = Math.min(height, art.height);
@@ -279,13 +320,6 @@ function overlayVisualArt(raw, width, height, art) {
 	return out;
 }
 
-function readBitmapPixels(bitmap) {
-	const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
-	const ctx = canvas.getContext('2d');
-	ctx.drawImage(bitmap, 0, 0);
-	return ctx.getImageData(0, 0, bitmap.width, bitmap.height);
-}
-
 // Halve an image the way a cutout sprite wants to be halved: point sampling, but never
 // losing coverage.
 //
@@ -297,7 +331,7 @@ function readBitmapPixels(bitmap) {
 // (the block's lower-right pixel, which is what a nearest-neighbour downscale picks) and
 // falls back to whichever of the other three is painted when that one is air. Painted
 // area can only grow, never perforate, and alpha stays binary all the way down.
-function halveWithoutHoles(img) {
+export function halveWithoutHoles(img) {
 	const sw = img.width, sh = img.height, s = img.data;
 	// Round up, so an odd-sized level keeps its last row/column instead of dropping it -
 	// that trailing row is exactly the kind of one-pixel edge this reduction exists to keep.
@@ -322,24 +356,6 @@ function halveWithoutHoles(img) {
 		}
 	}
 	return out;
-}
-
-function buildPixelSceneMips(entry, level) {
-	// Each level is reduced from the one above it rather than resampled from the base,
-	// which is both cheaper and closer to a proper mip chain. Levels are always built in
-	// order, so the first missing one has its parent already in the cache; its pixels are
-	// read back once and the rest of the chain is reduced from that copy.
-	let first = 1;
-	while (first <= level && entry.levels[first]) first++;
-	if (first > level) return entry.levels[level];
-	let pixels = readBitmapPixels(entry.levels[first - 1]);
-	for (let l = first; l <= level; l++) {
-		pixels = halveWithoutHoles(pixels);
-		const canvas = new OffscreenCanvas(pixels.width, pixels.height);
-		canvas.getContext('2d').putImageData(pixels, 0, 0);
-		addPixelSceneBitmap(entry, l, canvas.transferToImageBitmap());
-	}
-	return entry.levels[level];
 }
 
 // Largest mip whose resolution still meets the on-screen resolution: at camera zoom z one
@@ -396,7 +412,7 @@ export async function reloadPixelSceneCache() {
 // Returns the bitmap to draw for this scene at the requested mip level (0 = native), or
 // null when its recolored pixels aren't available yet. The caller always draws it into
 // the scene's full-resolution world rectangle, so the level only changes sampling.
-function pixelSceneEntry(pixelScene, level = 0) {
+function pixelSceneEntry(pixelScene, level = 0, warmOnly = false) {
 	// With material textures on, a scene's pixels come from its material textures
 	// sampled at ABSOLUTE world coordinates, so two instances of the same variant
 	// no longer look alike: the cache key has to carry the instance's position.
@@ -408,10 +424,27 @@ function pixelSceneEntry(pixelScene, level = 0) {
 	// variant cache, matching the terrain's own flat falloff.
 	const textured = level === 0 && !!sceneTextureAtlas();
 	const variantKey = pixelScene.variantKey || '';
-	const cacheKey = textured
-		? `${pixelScene.key}/${variantKey}@${pixelScene.x},${pixelScene.y}`
-		: `${pixelScene.key}/${variantKey}`;
-	return PIXEL_SCENE_BITMAP_CACHE.get(cacheKey) ?? buildPixelSceneEntry(pixelScene, cacheKey, textured);
+	const flatKey = `${pixelScene.key}/${variantKey}`;
+	const cacheKey = textured ? `${flatKey}@${pixelScene.x},${pixelScene.y}` : flatKey;
+	const entry = PIXEL_SCENE_BITMAP_CACHE.get(cacheKey);
+	if (entry) return entry;
+	if (!warmOnly || !textured) requestSceneBitmaps(pixelScene, cacheKey, textured);
+	if (!textured) return null;
+	// Flat stand-in while the textured instance is being built (or, when only
+	// warming, the flat variant is all that is asked for: the textured build is
+	// per instance and expensive, so it waits until the instance is on screen).
+	const flat = PIXEL_SCENE_BITMAP_CACHE.get(flatKey);
+	if (flat) return flat;
+	requestSceneBitmaps(pixelScene, flatKey, false);
+	return null;
+}
+
+/**
+ * Asks the worker for a scene's bitmaps without drawing it, so a scene about to
+ * scroll into view is ready when it does. Textured instances are not warmed.
+ */
+export function warmPixelScene(pixelScene, level = 0) {
+	pixelSceneEntry(pixelScene, level, true);
 }
 
 export function getPixelSceneCanvas(pixelScene, level = 0) {
@@ -419,7 +452,7 @@ export function getPixelSceneCanvas(pixelScene, level = 0) {
 	if (!entry) return null;
 	entry.used = ++pixelSceneDrawTick;
 	const wanted = level > entry.maxLevel ? entry.maxLevel : level;
-	const bitmap = entry.levels[wanted] || buildPixelSceneMips(entry, wanted);
+	const bitmap = entry.levels[wanted];
 	evictPixelSceneBitmaps(entry);
 	return bitmap;
 }

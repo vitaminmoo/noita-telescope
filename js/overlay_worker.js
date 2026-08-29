@@ -1,5 +1,8 @@
 // overlay_worker.js
-import { injectPixelSceneData, PIXEL_SCENE_DATA, pixelSceneMaterialGrid, recolorPixelScene, recolorPixelSceneForBiome } from './pixel_scene_generation.js';
+import {
+	bitmapFromPixels, buildTexturedScenePixels, halveWithoutHoles, initPixelSceneTextures, injectPixelSceneData,
+	overlayVisualArt, PIXEL_SCENE_DATA, pixelSceneMaterialGrid, recolorPixelScene, recolorPixelSceneForBiome,
+} from './pixel_scene_generation.js';
 import * as bandSelect from './engine_resolve/band_select.js';
 import { createTileOverlaysCheap, createTileOverlays, createTileOverlaysExpanded } from './image_processing.js';
 import { appSettings, updateSettings } from './settings.js';
@@ -37,7 +40,80 @@ self.onmessage = async function(e) {
 	else if (data.cmd === 'GENERATE_EDGE_DECAL_TILE') {
 		await generateEdgeDecalTileWorker(data);
 	}
+	else if (data.cmd === 'BUILD_SCENE_BITMAPS') {
+		await buildSceneBitmapsWorker(data);
+	}
 };
+
+// ---------------------------------------------------------------------------
+// Scene bitmaps (pixel_scene_generation.js "Bitmaps are BUILT IN THE OVERLAY
+// WORKER"): one request = one drawable scene, as an ImageBitmap per mip level
+// plus the FORCE-AIR mask for textured instances, all transferred back.
+// ---------------------------------------------------------------------------
+// Recolored variants, so neighbouring instances of one scene do not each
+// re-run the substitution chain. Bounded; the base images stay in PIXEL_SCENE_DATA.
+const variantPixelCache = new Map();
+const VARIANT_PIXEL_CACHE_MAX = 64;
+
+function variantPixels(key, variantKey) {
+	const cacheKey = `${key}/${variantKey}`;
+	let pixels = variantPixelCache.get(cacheKey);
+	if (pixels) return pixels;
+	const data = PIXEL_SCENE_DATA[key];
+	if (!data || !ArrayBuffer.isView(data.imgElement)) return null;
+	pixels = data.imgElement;
+	for (const part of variantKey.split('&')) {
+		const eq = part.indexOf('=');
+		if (eq < 0) continue;
+		if (part.slice(0, eq) === 'biome') pixels = recolorPixelSceneForBiome(data.name, pixels, part.slice(eq + 1));
+		else pixels = recolorPixelScene(pixels, parseInt(part.slice(0, eq), 16), parseInt(part.slice(eq + 1), 16));
+	}
+	if (variantPixelCache.size >= VARIANT_PIXEL_CACHE_MAX) {
+		variantPixelCache.delete(variantPixelCache.keys().next().value);
+	}
+	variantPixelCache.set(cacheKey, pixels);
+	return pixels;
+}
+
+async function buildSceneBitmapsWorker(req) {
+	const { epoch, cacheKey, key, variantKey, x, y, textured, maxLevel, visualArt } = req;
+	const data = PIXEL_SCENE_DATA[key];
+	// The cell-color override art is not part of the metadata sync (~90 MB);
+	// the main thread ships it with the first request that needs it.
+	if (data && visualArt) data.visualArt = visualArt;
+	let pixels = null, airMask = null;
+	if (data) {
+		if (textured) {
+			await initPixelSceneTextures();
+			const built = buildTexturedScenePixels({ key, variantKey, x, y }, data, true);
+			if (built) { pixels = built.pixels; airMask = built.airMask; }
+		}
+		if (!pixels) pixels = variantPixels(key, variantKey);
+	}
+	if (!pixels) {
+		self.postMessage({ type: 'SCENE_BITMAPS', epoch, cacheKey, key, variantKey, textured, levels: null });
+		return;
+	}
+	const width = data.width, height = data.height;
+	if (data.visualArt) pixels = overlayVisualArt(pixels, width, height, data.visualArt);
+	// The whole mip chain up front: each level is reduced from the one above
+	// (halveWithoutHoles keeps the one-pixel seams), and building it here costs
+	// a third more pixels than level 0 alone, against a readback + halving on the
+	// draw thread the first time each zoom band asked for it.
+	const levels = [bitmapFromPixels(width, height, pixels)];
+	let img = { width, height, data: pixels };
+	for (let l = 1; l <= maxLevel; l++) {
+		img = halveWithoutHoles(img);
+		const canvas = new OffscreenCanvas(img.width, img.height);
+		canvas.getContext('2d').putImageData(img, 0, 0);
+		levels.push(canvas.transferToImageBitmap());
+	}
+	const airBitmap = airMask ? bitmapFromPixels(width, height, airMask) : null;
+	self.postMessage({
+		type: 'SCENE_BITMAPS', epoch, cacheKey, key, variantKey, textured, width, height,
+		levels, airMask: airBitmap,
+	}, airBitmap ? [...levels, airBitmap] : levels);
+}
 
 // ---------------------------------------------------------------------------
 // Edge decals
@@ -72,9 +148,7 @@ async function generateEdgeDecalTileWorker(msg) {
 	if (workerTileLayers && workerBiomeData) {
 		await initEdgeDecalAtlas();
 		if (decalFieldKey !== worldKey) {
-			const mapWidth = getWorldSize(ngPlusCount > 0, gameMode);
-			decalField = createMaterialField(workerTileLayers, workerBiomeData,
-				GENERATOR_CONFIG, mapWidth, seed);
+			decalField = null;   // built below only if a tile needs the CPU resolve
 			decalFieldKey = worldKey;
 			sceneGridCache.clear();
 		}
@@ -82,15 +156,31 @@ async function generateEdgeDecalTileWorker(msg) {
 		const size = EDGE_DECAL_TILE + 2 * P;
 		const x0 = tx * EDGE_DECAL_TILE - P;
 		const y0 = ty * EDGE_DECAL_TILE - P;
+		// The id grid normally arrives from the GL material-id pass
+		// (overlay_manager.js requestEdgeDecalTiles); the CPU port is the
+		// fallback when the renderer cannot answer.
 		const tResolve0 = performance.now();
-		const mat = resolveMaterialRect(decalField, x0, y0, size, size);
+		let mat;
+		if (msg.mat && msg.mat.length === size * size) {
+			mat = msg.mat;
+		} else {
+			if (!decalField) {
+				const mapWidth = getWorldSize(ngPlusCount > 0, gameMode);
+				decalField = createMaterialField(workerTileLayers, workerBiomeData,
+					GENERATOR_CONFIG, mapWidth, seed);
+			}
+			mat = resolveMaterialRect(decalField, x0, y0, size, size);
+		}
 		const tResolve1 = performance.now();
 		// Chunk boundaries sit where (world + grid shift) is a multiple of 512;
 		// both shifts are whole chunks for every shipped map width, but the stamp
 		// clips to its own chunk so pass it rather than assume.
 		const mapWidth = getWorldSize(ngPlusCount > 0, gameMode);
 		const sceneGrids = (scenes || []).map(sceneGridFor).filter(Boolean);
-		const stats = {};
+		const tGrid = performance.now();
+		// The stamp's pixel statistics cost two extra passes over the tile;
+		// only the harness reads them.
+		const stats = msg.debugStats ? {} : null;
 		const rgba = stampEdgeDecals(mat, size, size, x0, y0, seed, {
 			chunkShiftX: (mapWidth * 256) % CHUNK_SIZE,
 			chunkShiftY: (14 * CHUNK_SIZE) % CHUNK_SIZE,
@@ -103,10 +193,11 @@ async function generateEdgeDecalTileWorker(msg) {
 			mapWidth,
 			stats,
 		});
+		const tStamp = performance.now();
 		var decalDebug = {
-			scenesSent: (scenes || []).length, gridsBuilt: sceneGrids.length, ...stats,
+			scenesSent: (scenes || []).length, gridsBuilt: sceneGrids.length, ...(stats || {}),
 			// Where the tile's time goes, for the perf harness.
-			resolveMs: tResolve1 - tResolve0, stampMs: performance.now() - tResolve1,
+			resolveMs: tResolve1 - tResolve0, gridMs: tGrid - tResolve1, stampMs: tStamp - tGrid, bitmapMs: 0,
 		};
 
 		const T = EDGE_DECAL_TILE;
@@ -118,6 +209,7 @@ async function generateEdgeDecalTileWorker(msg) {
 		const canvas = new OffscreenCanvas(T, T);
 		canvas.getContext('2d').putImageData(new ImageData(cropped, T, T), 0, 0);
 		bitmap = canvas.transferToImageBitmap();
+		decalDebug.bitmapMs = performance.now() - tStamp;
 	}
 
 	self.postMessage({

@@ -51,7 +51,11 @@ const UNIFORM_NAMES = [
     'u_mapWidth', 'u_worldWidth', 'u_centerPx', 'u_baseY', 'u_maxRow', 'u_worldSizeX', 'u_edgeNoise',
     'u_matAtlasTex', 'u_matMetaTex', 'u_palMatTex', 'u_fgMatTex', 'u_matDetail',
     'u_covTex', 'u_latMatTex', 'u_engChunkTex', 'u_engTableTex', 'u_sinHashTex', 'u_engineTerrain', 'u_surfacePhase',
+    'u_vpOrigin', 'u_materialIdOut',
 ];
+
+/** Padded decal tiles per row of the material-id batch framebuffer. */
+const ID_BATCH_COLS = 12;
 
 function compile(gl, type, src) {
     const sh = gl.createShader(type);
@@ -262,6 +266,11 @@ export class GLTerrainRenderer {
     /** Frees GPU resources; the next ensureResources() rebuilds them. */
     invalidate() {
         if (this.gl && this.textures) deleteTerrainTextures(this.gl, this.textures);
+        if (this.gl && this.idFbo) {
+            this.gl.deleteFramebuffer(this.idFbo);
+            this.gl.deleteTexture(this.idTex);
+            this.idFbo = this.idTex = null;
+        }
         this.textures = null;
         this.resources = null;
         this.sourceKey = null;
@@ -300,47 +309,20 @@ export class GLTerrainRenderer {
         gl.clear(gl.COLOR_BUFFER_BIT);
         gl.useProgram(this.program);
 
-        const units = [
-            ['u_chunkTex', this.textures.chunk],
-            ['u_fgTex', this.textures.fg],
-            ['u_noiseTex', this.textures.noise],
-            ['u_indirTex', this.textures.indirection],
-            ['u_regionTex', this.textures.regionMeta],
-            ['u_atlasTex', this.textures.atlas],
-            ['u_paletteTex', this.textures.palette],
-        ];
         // The four material textures are one all-or-nothing set: without them
         // u_matDetail is false and the shader never reaches their texelFetches.
         const matDetail = !!(view.materialTextures && this.textures.matAtlas && this.textures.matMeta
             && this.textures.palMat && this.textures.fgMat);
         // Engine resolve needs its own four textures plus the material atlas set
         // (engMaterialColor reads u_matMetaTex row 1 / u_matAtlasTex).
-        const engineOn = !!(view.engineTerrain && this.textures.cov && this.textures.latMat
-            && this.textures.engChunk && this.textures.engTable && this.textures.sinHash
-            && this.textures.matAtlas && this.textures.matMeta);
+        const engineOn = !!(view.engineTerrain && this.engineReady);
         // Every sampler uniform gets its own unit even when its texture is
         // absent (the u_matDetail / u_engineTerrain flags gate all real use):
         // an unbound sampler defaults to unit 0, and a FLOAT sampler sharing
         // unit 0 with the integer u_chunkTex is a draw-time INVALID_OPERATION.
         // Placeholders match the sampler's type: chunk for integer samplers,
-        // palette for float ones.
-        const intPh = this.textures.chunk, floatPh = this.textures.palette;
-        units.push(
-            ['u_matAtlasTex', this.textures.matAtlas || intPh],
-            ['u_matMetaTex', this.textures.matMeta || intPh],
-            ['u_palMatTex', this.textures.palMat || intPh],
-            ['u_fgMatTex', this.textures.fgMat || intPh],
-            ['u_covTex', this.textures.cov || floatPh],
-            ['u_latMatTex', this.textures.latMat || intPh],
-            ['u_engChunkTex', this.textures.engChunk || intPh],
-            ['u_engTableTex', this.textures.engTable || floatPh],
-            ['u_sinHashTex', this.textures.sinHash || floatPh],
-        );
-        units.forEach(([name, tex], i) => {
-            gl.activeTexture(gl.TEXTURE0 + i);
-            gl.bindTexture(gl.TEXTURE_2D, tex);
-            gl.uniform1i(u[name], i);
-        });
+        // palette for float ones (bindTextures).
+        this.bindTextures();
 
         gl.uniform2i(u.u_originInt, intX, intY);
         gl.uniform2f(u.u_originFrac, originX - intX, originY - intY);
@@ -356,8 +338,145 @@ export class GLTerrainRenderer {
         gl.uniform1i(u.u_matDetail, matDetail ? 1 : 0);
         gl.uniform1i(u.u_engineTerrain, engineOn ? 1 : 0);
         gl.uniform1f(u.u_surfacePhase, this.surfacePhase ?? 0);
+        gl.uniform2i(u.u_vpOrigin, 0, 0);
+        gl.uniform1i(u.u_materialIdOut, 0);
 
         gl.drawArrays(gl.TRIANGLES, 0, 3);
         return this.canvas;
+    }
+
+    /** Binds every sampler to its unit (shared by the screen and tile passes). */
+    bindTextures() {
+        const gl = this.gl, u = this.uniforms;
+        const intPh = this.textures.chunk, floatPh = this.textures.palette;
+        const units = [
+            ['u_chunkTex', this.textures.chunk], ['u_fgTex', this.textures.fg], ['u_noiseTex', this.textures.noise],
+            ['u_indirTex', this.textures.indirection], ['u_regionTex', this.textures.regionMeta],
+            ['u_atlasTex', this.textures.atlas], ['u_paletteTex', this.textures.palette],
+            ['u_matAtlasTex', this.textures.matAtlas || intPh], ['u_matMetaTex', this.textures.matMeta || intPh],
+            ['u_palMatTex', this.textures.palMat || intPh], ['u_fgMatTex', this.textures.fgMat || intPh],
+            ['u_covTex', this.textures.cov || floatPh], ['u_latMatTex', this.textures.latMat || intPh],
+            ['u_engChunkTex', this.textures.engChunk || intPh], ['u_engTableTex', this.textures.engTable || floatPh],
+            ['u_sinHashTex', this.textures.sinHash || floatPh],
+        ];
+        units.forEach(([name, tex], i) => {
+            gl.activeTexture(gl.TEXTURE0 + i);
+            gl.bindTexture(gl.TEXTURE_2D, tex);
+            gl.uniform1i(u[name], i);
+        });
+    }
+
+    /** True when the engine-resolve textures are uploaded, i.e. the shader can
+     *  answer material ids (the tile pass has no legacy fallback). */
+    get engineReady() {
+        return !!(this.ready && this.textures.cov && this.textures.latMat && this.textures.engChunk
+            && this.textures.engTable && this.textures.sinHash && this.textures.matAtlas && this.textures.matMeta);
+    }
+
+    /**
+     * Resolves the material id of every pixel of several world rects on the GPU
+     * -- the edge-decal tiles' input, which the CPU port (material_field.js)
+     * took ~24 ms per 320x320 tile to answer and which the shader already
+     * computes per fragment for the screen. All rects are drawn into one
+     * framebuffer (one viewport each), read back through a pixel-pack buffer
+     * and a fence, so the draw thread never waits on the GPU: the promise
+     * resolves from a timer once the fence signals.
+     *
+     * @param {Array<{x0:number,y0:number,w:number,h:number}>} rects  world rects, absolute coords
+     * @returns {Promise<Int16Array[]|null>} one row-major id grid per rect
+     *          (0 = air, -1 = unresolved), or null when the pass is unavailable
+     */
+    resolveMaterialTiles(rects) {
+        if (!this.engineReady || !rects.length) return Promise.resolve(null);
+        const gl = this.gl, u = this.uniforms;
+        const tw = rects[0].w, th = rects[0].h;
+        const cols = Math.min(ID_BATCH_COLS, rects.length);
+        const rows = Math.ceil(rects.length / cols);
+        const fbW = cols * tw, fbH = rows * th;
+        if (fbW > maxTextureSize(gl) || fbH > maxTextureSize(gl)) return Promise.resolve(null);
+
+        // Framebuffer + color target, reallocated only when the batch outgrows it.
+        if (!this.idFbo) {
+            this.idFbo = gl.createFramebuffer();
+            this.idTex = gl.createTexture();
+            this.idTexSize = [0, 0];
+        }
+        gl.bindTexture(gl.TEXTURE_2D, this.idTex);
+        if (this.idTexSize[0] < fbW || this.idTexSize[1] < fbH) {
+            const w = Math.max(this.idTexSize[0], fbW), h = Math.max(this.idTexSize[1], fbH);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+            this.idTexSize = [w, h];
+        }
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this.idFbo);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.idTex, 0);
+
+        gl.useProgram(this.program);
+        this.bindTextures();
+        gl.uniform2f(u.u_originFrac, 0, 0);
+        gl.uniform1f(u.u_invZoom, 1);
+        gl.uniform2f(u.u_screenSize, tw, th);
+        gl.uniform1i(u.u_mapWidth, this.mapWidth);
+        gl.uniform1i(u.u_worldWidth, this.mapWidth * CHUNK_SIZE);
+        gl.uniform1i(u.u_centerPx, this.centerPx);
+        gl.uniform1i(u.u_baseY, WORLD_CHUNK_CENTER_Y * CHUNK_SIZE);
+        gl.uniform1i(u.u_maxRow, BIOME_MAP_HEIGHT - 1);
+        gl.uniform1i(u.u_worldSizeX, this.worldSizeX);
+        gl.uniform1i(u.u_edgeNoise, 1);
+        gl.uniform1i(u.u_matDetail, 0);
+        gl.uniform1i(u.u_engineTerrain, 1);
+        gl.uniform1f(u.u_surfacePhase, this.surfacePhase ?? 0);
+        gl.uniform1i(u.u_materialIdOut, 1);
+        for (let i = 0; i < rects.length; i++) {
+            const vx = (i % cols) * tw, vy = Math.floor(i / cols) * th;
+            gl.viewport(vx, vy, tw, th);
+            gl.uniform2i(u.u_vpOrigin, vx, vy);
+            gl.uniform2i(u.u_originInt, rects[i].x0, rects[i].y0);
+            gl.drawArrays(gl.TRIANGLES, 0, 3);
+        }
+        gl.uniform1i(u.u_materialIdOut, 0);
+        gl.uniform2i(u.u_vpOrigin, 0, 0);
+
+        // Async readback: pack into a buffer, fence, poll.
+        const pbo = gl.createBuffer();
+        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, pbo);
+        gl.bufferData(gl.PIXEL_PACK_BUFFER, fbW * fbH * 4, gl.STREAM_READ);
+        gl.readPixels(0, 0, fbW, fbH, gl.RGBA, gl.UNSIGNED_BYTE, 0);
+        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+        gl.flush();
+
+        return new Promise((resolve) => {
+            const poll = () => {
+                if (this.contextLost || !this.gl) { resolve(null); return; }
+                const st = gl.clientWaitSync(sync, 0, 0);
+                if (st === gl.TIMEOUT_EXPIRED) { setTimeout(poll, 3); return; }
+                gl.deleteSync(sync);
+                if (st === gl.WAIT_FAILED) { gl.deleteBuffer(pbo); resolve(null); return; }
+                const bytes = new Uint8Array(fbW * fbH * 4);
+                gl.bindBuffer(gl.PIXEL_PACK_BUFFER, pbo);
+                gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, bytes);
+                gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+                gl.deleteBuffer(pbo);
+                // readPixels rows run bottom-up; the shader put world row 0 at
+                // the top of each viewport, so flip within the tile.
+                const grids = rects.map((r, i) => {
+                    const vx = (i % cols) * tw, vy = Math.floor(i / cols) * th;
+                    const ids = new Int16Array(tw * th);
+                    for (let y = 0; y < th; y++) {
+                        let src = ((vy + th - 1 - y) * fbW + vx) * 4;
+                        const dst = y * tw;
+                        for (let x = 0; x < tw; x++, src += 4) {
+                            ids[dst + x] = (bytes[src] | (bytes[src + 1] << 8)) - 1;
+                        }
+                    }
+                    return ids;
+                });
+                resolve(grids);
+            };
+            setTimeout(poll, 2);
+        });
     }
 }

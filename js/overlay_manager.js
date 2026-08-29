@@ -2,7 +2,7 @@
 import { app } from './app.js';
 import { EDGE_DECAL_TILE, putEdgeDecalTile } from './edge_decal_layer.js';
 import { EDGE_DECAL_HALO } from './edge_decals.js';
-import { PIXEL_SCENE_DATA, setPixelSceneVariantRebuilder } from './pixel_scene_generation.js';
+import { PIXEL_SCENE_DATA, putPixelSceneBitmaps, setPixelSceneBitmapRequester } from './pixel_scene_generation.js';
 import { appSettings, updateSettingsFromUI } from './settings.js';
 import { CHUNK_SIZE } from './constants.js';
 import { getWorldCenter, getWorldStride } from './utils.js';
@@ -37,9 +37,11 @@ overlayWorker.onmessage = async (e) => {
 				PIXEL_SCENE_DATA[key].variants = {};
 			}
 			PIXEL_SCENE_DATA[key].variants[variantKey] = imgElement;
-			pendingVariantRebuilds.delete(`${key}/${variantKey}`);
 		}
 		app.draw();
+	}
+	else if (msg.type === 'SCENE_BITMAPS') {
+		if (putPixelSceneBitmaps(msg)) app.draw();
 	}
 	else if (msg.type === 'EDGE_DECAL_TILE') {
 		// Kept for harness inspection; bounded so a long session cannot grow it.
@@ -86,6 +88,7 @@ export function syncOverlayWorkerData() {
 	// ~80MB of decoded art into it.
 	const pixelSceneCache = Object.fromEntries(Object.entries(PIXEL_SCENE_DATA)
 		.map(([k, v]) => [k, v.visualArt ? { ...v, visualArt: null } : v]));
+	artSentToWorker.clear();   // the worker's copy of the art goes with the old metadata
 	overlayWorker.postMessage({
 		cmd: 'SYNC_METADATA',
 		pixelSceneCache,
@@ -140,19 +143,17 @@ export function recolorPixelScenes(pixelSceneList) {
 	}
 }
 
-// A pixel scene variant whose bitmap was evicted under the byte budget no longer has its
-// recolored pixels on this thread, so ask the worker to produce them again. Deduped
-// because the draw loop will keep asking every frame until the reply lands.
-const pendingVariantRebuilds = new Set();
-setPixelSceneVariantRebuilder((pixelSceneKey, variantKey) => {
-	const combinedKey = `${pixelSceneKey}/${variantKey}`;
-	if (pendingVariantRebuilds.has(combinedKey)) return;
-	pendingVariantRebuilds.add(combinedKey);
-	overlayWorker.postMessage({
-		cmd: 'GENERATE_PIXEL_SCENES',
-		pixelSceneKeys: [pixelSceneKey],
-		variantKeys: [variantKey]
-	});
+// Scene bitmaps are built in the worker (pixel_scene_generation.js). The visual
+// art a scene may carry is deliberately left out of SYNC_METADATA (~90 MB of
+// decoded PNGs); it rides along with the first bitmap request per scene key
+// after each sync, and the worker keeps it from then on.
+const artSentToWorker = new Set();
+setPixelSceneBitmapRequester((request, sceneData) => {
+	if (sceneData.visualArt && !artSentToWorker.has(request.key)) {
+		artSentToWorker.add(request.key);
+		request.visualArt = sceneData.visualArt;
+	}
+	overlayWorker.postMessage(request);
 });
 
 export function getOrGenerateOverlay(pw, pwVertical) {
@@ -186,8 +187,51 @@ export function getOrGenerateOverlay(pw, pwVertical) {
 	overlayWorker.postMessage(payload);
 }
 
-/** Asks the worker for one world-space edge-decal tile (edge_decal_layer.js). */
-export function requestEdgeDecalTile(worldKey, tx, ty) {
+/**
+ * Asks for a batch of world-space edge-decal tiles (edge_decal_layer.js).
+ * The per-pixel material ids -- 24 ms a tile on the CPU -- come from the GL
+ * terrain renderer's material-id pass (one batched draw + async readback for
+ * the whole request); the stamp itself runs in the overlay worker, which gets
+ * the id grid handed to it. Without the GL pass (no WebGL2, context lost) the
+ * worker resolves the ids itself, as before.
+ *
+ * Returns the tiles it accepted; a tile whose world has no scene placement list
+ * yet is left out so the layer asks for it again later.
+ */
+export function requestEdgeDecalTiles(worldKey, tiles) {
+	const accepted = [];
+	const jobs = [];
+	for (const t of tiles) {
+		const scenes = edgeDecalTileScenes(t.tx, t.ty);
+		if (!scenes) continue;
+		accepted.push(t);
+		jobs.push({ tx: t.tx, ty: t.ty, scenes });
+	}
+	if (!jobs.length) return accepted;
+	const P = EDGE_DECAL_HALO, size = EDGE_DECAL_TILE + 2 * P;
+	const base = {
+		cmd: 'GENERATE_EDGE_DECAL_TILE', worldKey,
+		seed: app.seed, ngPlusCount: app.ngPlusCount, gameMode: app.gameMode,
+	};
+	const post = (job, mat) => {
+		const msg = { ...base, tx: job.tx, ty: job.ty, scenes: job.scenes, mat: mat || null };
+		overlayWorker.postMessage(msg, mat ? [mat.buffer] : []);
+	};
+	const terrain = app.glTerrain;
+	if (!terrain || !terrain.engineReady) {
+		for (const job of jobs) post(job, null);
+		return accepted;
+	}
+	const rects = jobs.map(j => ({ x0: j.tx * EDGE_DECAL_TILE - P, y0: j.ty * EDGE_DECAL_TILE - P, w: size, h: size }));
+	terrain.resolveMaterialTiles(rects).then((grids) => {
+		jobs.forEach((job, i) => post(job, grids ? grids[i] : null));
+	});
+	return accepted;
+}
+
+/** The pixel scenes overlapping one tile's padded rect, in paint order, or
+ *  null when a world the tile touches has no placement list yet. */
+function edgeDecalTileScenes(tx, ty) {
 	// The pixel scenes overlapping the tile's padded rect, in paint order: the
 	// engine dresses a scene's cells with its own decal pass at paint time, so
 	// the worker needs to know what landed here. Tiles are world-space and
@@ -215,9 +259,9 @@ export function requestEdgeDecalTile(worldKey, tx, ty) {
 	const worldPx = getWorldStride(app.isNGP, app.gameMode); // scenes sit on the PW stride
 	const pwOf = (x) => Math.floor((x + centerPx) / worldPx);
 	const byPW = app.pixelScenesByPW;
-	if (!byPW) return false;
+	if (!byPW) return null;
 	for (let k = pwOf(left); k <= pwOf(right - 1); k++) {
-		if (!byPW[`${k},0`]) return false;
+		if (!byPW[`${k},0`]) return null;
 	}
 	for (const key in byPW) {
 		if (!key.endsWith(',0')) continue;   // vertical worlds keep the CPU overlays
@@ -229,17 +273,7 @@ export function requestEdgeDecalTile(worldKey, tx, ty) {
 			scenes.push({ key: scene.key, variantKey: scene.variantKey, x: scene.x, y: scene.y });
 		}
 	}
-	overlayWorker.postMessage({
-		cmd: 'GENERATE_EDGE_DECAL_TILE',
-		worldKey,
-		tx,
-		ty,
-		seed: app.seed,
-		ngPlusCount: app.ngPlusCount,
-		gameMode: app.gameMode,
-		scenes
-	});
-	return true;
+	return scenes;
 }
 
 export function isOverlayPending(pw, pwVertical) {

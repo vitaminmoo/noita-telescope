@@ -16,12 +16,12 @@ import { COALMINE_ALT_SCENES } from './pixel_scene_config.js';
 import { debugBiomeEdgeNoise } from './edge_noise.js';
 import { drawBiomeBoundaryContour } from './biome_boundary.js';
 import { GLTerrainRenderer } from './gl/terrain_renderer.js';
-import { getPixelSceneAirMask, getPixelSceneCanvas, pixelSceneMipLevel, loadPixelSceneData, reloadPixelSceneCache, PIXEL_SCENE_DATA } from './pixel_scene_generation.js';
+import { getPixelSceneAirMask, getPixelSceneCanvas, pendingPixelSceneBitmaps, pixelSceneMipLevel, loadPixelSceneData, reloadPixelSceneCache, PIXEL_SCENE_DATA, warmPixelScene } from './pixel_scene_generation.js';
 import { addStaticPixelScenes } from './static_spawns.js';
 import { NollaPrng } from './nolla_prng.js';
 import { appSettings, updateSettings, updateSettingsFromUI, updateSpellFlags, updateSpecialFlags, RENDER_LAYERS, readRenderLayersFromUI } from './settings.js';
 import { syncWorldWorkerData, getOrGenerateWorld, syncSettingsToWorldWorker } from './world_manager.js';
-import { syncOverlayWorkerData, getOrGenerateOverlay, syncSettingsToOverlayWorker, recolorPixelScenes, invalidatePendingOverlays, requestEdgeDecalTile } from './overlay_manager.js';
+import { syncOverlayWorkerData, getOrGenerateOverlay, syncSettingsToOverlayWorker, recolorPixelScenes, invalidatePendingOverlays, requestEdgeDecalTiles } from './overlay_manager.js';
 import { drawEdgeDecals, edgeDecalAt, invalidateEdgeDecals, pendingEdgeDecalTiles } from './edge_decal_layer.js';
 import { getMaterialAtlas, initMaterialAtlas, materialAlpha, materialAtlasEntry, materialTexelInfo } from './gl/material_atlas.js';
 import { ENGINE_MODE_FALLBACK, ENGINE_MODE_TOPO2 } from './gl/engine_resources.js';
@@ -38,7 +38,7 @@ import { pickAlchemyMaterials } from './alchemy.js';
 import {
 	BACKGROUND_VOID, backgroundLayerColor, buildBackdropRuns, buildBackgroundEdges,
 	drawBackdropRuns, drawGlobalBackgroundImages, drawSceneBackgrounds, drawStaticTileBackdrops,
-	edgeStripArt, loadBackgroundArt, loadBackgroundEdgeMasks, loadStaticTileBackgroundMasks,
+	backgroundArtLoaded, edgeStripArt, loadBackgroundArt, loadBackgroundEdgeMasks, loadStaticTileBackgroundMasks,
 	STATIC_TILE_BACKGROUNDS, tintedEdgeStrip, UNLIMITED_BACKDROP_BIOMES,
 } from './biome_backgrounds.js';
 
@@ -61,6 +61,14 @@ const STRIP_WORLD_PX = 64;
 // what the eye averages the texture to anyway. The material-texture detail pass
 // auto-disables below it (edge decals have their own gate, EDGE_DECAL_MIN_ZOOM).
 const MATERIAL_DETAIL_MIN_ZOOM = 0.5;
+// Zoomed out, the backdrop tile runs are drawn from one whole-map bake at this
+// reduction instead of thousands of per-run drawImage calls (8-13 ms a frame at
+// the overview zoom, plus the GPU backpressure that dumped onto the steps after
+// it). The bake is used while a chunk is at most BACKDROP_BAKE_MAX_CHUNK_PX on
+// screen, which is exactly where the bake's texels are at or above screen
+// resolution; zoomed in further the clipped run loop is cheap.
+const BACKDROP_BAKE_SCALE = 8;
+const BACKDROP_BAKE_MAX_CHUNK_PX = 512 / BACKDROP_BAKE_SCALE;
 
 // Paint one cell of a recolor-map canvas. `color` is either an RGB int or
 // BACKGROUND_VOID, which the engine leaves empty (biomes with no
@@ -558,6 +566,7 @@ export const app = {
 		document.getElementById('debug-unpainted-checkerboard').onchange = () => {this.saveSettings(); this.draw();};
 		document.getElementById('debug-biome-boundary-contour').onchange = () => {this.saveSettings(); this.draw();};
 		document.getElementById('debug-layer-timings').onchange = () => {this.saveSettings(); this.draw();};
+		document.getElementById('debug-render-everything').onchange = () => {this.saveSettings(); this.draw();};
 		// The GL renderer paints the fill biomes and the CPU bake does not, so the
 		// unpainted-chunk mask depends on which one is selected.
 		document.getElementById('debug-terrain-renderer').onchange = () => {this.saveSettings(); this.draw();};
@@ -1797,7 +1806,7 @@ export const app = {
 		// The detail pass is off below MATERIAL_DETAIL_MIN_ZOOM (sub-pixel texels
 		// only alias), so what is actually on screen is the flat color instead.
 		const detailOff = !(appSettings.materialTextures && appSettings.recolorMaterials
-			&& this.cam.z >= MATERIAL_DETAIL_MIN_ZOOM);
+			&& this.detailZoom() >= MATERIAL_DETAIL_MIN_ZOOM);
 		const flatNote = detailOff ? `, drawn flat #${flatHex}` : '';
 		// The atlas is fetched by the GL renderer; kick it off if the CPU bake is
 		// the active path so the texel coords appear on a later hover.
@@ -2685,7 +2694,7 @@ export const app = {
 			// resolve to their material, which is what recolorMaterials does.
 			// Auto-off when zoomed out: sub-pixel texels only alias.
 			materialTextures: appSettings.materialTextures && appSettings.recolorMaterials
-				&& this.cam.z >= MATERIAL_DETAIL_MIN_ZOOM,
+				&& this.detailZoom() >= MATERIAL_DETAIL_MIN_ZOOM,
 			engineTerrain: appSettings.engineTerrain,
 		});
 		if (!glCanvas) return null;
@@ -2718,6 +2727,33 @@ export const app = {
 	// `reverse` flips the order for the destination-over air-hole refill in the
 	// pixel-scene layer: with destination-over, later draws land *behind*
 	// earlier ones, so front-to-back paints the same stack into the holes.
+	// The zoom every level-of-detail gate reads: the camera's, or "infinitely
+	// zoomed in" under the Render Everything debug toggle so no gate ever cuts.
+	detailZoom() {
+		return appSettings.renderEverything ? Infinity : this.cam.z;
+	},
+
+	// One whole-map reduction of a world row's backdrop runs, built on first use
+	// once every art bitmap is decoded (an earlier bake would freeze the gaps).
+	// ~55 MB per row variant at 1/8; only the variants actually viewed exist.
+	backdropBake(runs) {
+		if (!this.backdropBakes) this.backdropBakes = new Map();
+		let bake = this.backdropBakes.get(runs);
+		if (bake) return bake;
+		if (!backgroundArtLoaded()) return null;
+		// An ImageBitmap, not a canvas: a canvas this large is software-backed
+		// in Chrome and re-uploaded on every draw (measured 4-8 ms a frame).
+		const scratch = new OffscreenCanvas(
+			Math.ceil(this.w * 512 / BACKDROP_BAKE_SCALE), Math.ceil(this.h * 512 / BACKDROP_BAKE_SCALE));
+		const bctx = scratch.getContext('2d');
+		bctx.imageSmoothingEnabled = true;
+		bctx.scale(1 / BACKDROP_BAKE_SCALE, 1 / BACKDROP_BAKE_SCALE);
+		drawBackdropRuns(bctx, runs, 0, 0, { left: 0, top: 0, right: this.w * 512, bottom: this.h * 512 });
+		bake = scratch.transferToImageBitmap();
+		this.backdropBakes.set(runs, bake);
+		return bake;
+	},
+
 	drawBackgroundStack(worldOffsets, viewRect, offscreen, reverse = false, prof = null) {
 		const rawMap = document.getElementById('debug-original-biome-map').checked;
 		const worldCenter = getWorldCenter(this.isNGP, this.gameMode) * 512;
@@ -2735,13 +2771,24 @@ export const app = {
 		if (!rawMap) {
 			// Below ~8 screen px per chunk the tiling detail is invisible and the
 			// flat per-image colors are already what the eye averages the art to.
-			if (512 * this.cam.z >= 8) {
+			if (512 * this.detailZoom() >= 8) {
+				const useBake = 512 * this.detailZoom() <= BACKDROP_BAKE_MAX_CHUNK_PX;
 				steps.push(['backdrops', () => {
 					for (let worldKey of this.worldsInView) {
 						const { pwY, shiftX, shiftY } = worldOffsets[worldKey];
 						const runs = pwY === 0 ? this.backdropRuns
 							: pwY > 0 ? this.backdropRunsHell : this.backdropRunsHeaven;
-						if (runs) drawBackdropRuns(this.ctx, runs, shiftX, shiftY, viewRect);
+						if (!runs) continue;
+						const bake = useBake ? this.backdropBake(runs) : null;
+						if (bake) {
+							// The bake is minified further at the lowest zooms;
+							// nearest sampling would just sparkle.
+							this.ctx.imageSmoothingEnabled = true;
+							this.ctx.drawImage(bake, shiftX, shiftY, this.w * 512, this.h * 512);
+							this.ctx.imageSmoothingEnabled = false;
+						} else {
+							drawBackdropRuns(this.ctx, runs, shiftX, shiftY, viewRect);
+						}
 					}
 				}]);
 			}
@@ -2793,7 +2840,7 @@ export const app = {
 		// The strips are 64 world px wide; below a few screen pixels they are not
 		// worth the per-boundary work, and at that zoom the whole 70x48 map is in
 		// view at once.
-		if (STRIP_WORLD_PX * this.cam.z < 3) return;
+		if (STRIP_WORLD_PX * this.detailZoom() < 3) return;
 		if (document.getElementById('debug-original-biome-map').checked) return;
 		for (let worldKey of this.worldsInView) {
 			const { pwY, shiftX, shiftY } = worldOffsets[worldKey];
@@ -3441,7 +3488,10 @@ export const app = {
 			// Scenes are sampled from a mip chain rather than always blitting the native
 			// image, so zooming out costs a 1/16 bitmap per scene instead of a full one.
 			// That replaces the old "stop drawing scenes below z 0.0625" cutoff.
-			const sceneMipLevel = pixelSceneMipLevel(this.cam.z);
+			const sceneMipLevel = pixelSceneMipLevel(this.detailZoom());
+			// Warm margin: half a screen on every side (see the cull below).
+			const warmLeft = viewLeft - halfViewW, warmRight = viewRight + halfViewW;
+			const warmTop = viewTop - halfViewH, warmBottom = viewBottom + halfViewH;
 			for (let worldKey of this.worldsInView) {
 				const { pwX, pwY, shiftX, shiftY } = worldOffsets[worldKey];
 
@@ -3458,7 +3508,7 @@ export const app = {
 				// and the scene draws itself (js/pixel_scene_art.js). Only the stamped
 				// copies -- the orb rooms' vertical-PW repeats have no scene at all, and
 				// keep their tile below.
-				const sceneArtOn = artOn && this.cam.z < SCENE_ART_MAX_ZOOM;
+				const sceneArtOn = artOn && this.detailZoom() < SCENE_ART_MAX_ZOOM;
 				if (this.pixelScenesByPW && this.pixelScenesByPW[`${pwX},${pwY}`]) {
 					for (let scene of this.pixelScenesByPW[`${pwX},${pwY}`]) {
 						//if (!scene || !scene.imgElement) continue;
@@ -3466,14 +3516,22 @@ export const app = {
 						const drawX = scene.x + getWorldCenter(this.isNGP, this.gameMode)*512 - pwX*getWorldSize(this.isNGP, this.gameMode)*512 + shiftX;
 						const drawY = scene.y + 14*512 - pwY*24576 + shiftY;
 
-						// Cull offscreen scenes before getPixelSceneCanvas(), so scenes
-						// outside the view never pay for their lazily-built bitmaps
-						// either. With cosmetic pixel scenes enabled this loop is roughly an
-						// order of magnitude longer, and nearly all of it is offscreen.
+						// Cull offscreen scenes before getPixelSceneCanvas(). With cosmetic
+						// pixel scenes enabled this loop is roughly an order of magnitude
+						// longer, and nearly all of it is offscreen. Scenes just outside
+						// the view are warmed instead: their bitmaps are built in the
+						// worker, so asking a margin ahead is what keeps a pan from
+						// showing a scene a few frames after it scrolled in.
 						const sceneData = PIXEL_SCENE_DATA[scene.key];
 						if (!sceneData) continue;
 						if (drawX + sceneData.width < viewLeft || drawX > viewRight ||
-							drawY + sceneData.height < viewTop || drawY > viewBottom) continue;
+							drawY + sceneData.height < viewTop || drawY > viewBottom) {
+							if (!(drawX + sceneData.width < warmLeft || drawX > warmRight ||
+								drawY + sceneData.height < warmTop || drawY > warmBottom)) {
+								warmPixelScene(scene, sceneMipLevel);
+							}
+							continue;
+						}
 
 						const pixelSceneCanvas = getPixelSceneCanvas(scene, sceneMipLevel);
 						if (!pixelSceneCanvas) continue;
@@ -3585,7 +3643,7 @@ export const app = {
 		// material identity to hang the pass off, hence the gate.
 		if (L.tileOverlays && appSettings.edgeDecals && appSettings.engineTerrain
 			&& appSettings.terrainRenderer === 'gl' && biomeOverlayMode !== 'none') {
-			drawEdgeDecals(this.ctx, this, viewRect, requestEdgeDecalTile);
+			drawEdgeDecals(this.ctx, this, viewRect, requestEdgeDecalTiles);
 			if (prof) markLayer(prof, 'edgeDecals');
 		}
 
@@ -4078,8 +4136,13 @@ export const app = {
 	},
 
 	// Exposed for the render harness: how many decal tiles are still in flight.
+	// Asynchronous render work still in flight at the overlay worker: edge-decal
+	// tiles and scene bitmaps. The render harnesses keep drawing until this is 0.
+	asyncRenderPending() {
+		return pendingEdgeDecalTiles() + pendingPixelSceneBitmaps();
+	},
 	edgeDecalsPending() {
-		return pendingEdgeDecalTiles();
+		return this.asyncRenderPending();
 	},
 
 	saveSettings() {
@@ -4117,6 +4180,7 @@ export const app = {
 			renderLayers: readRenderLayersFromUI(),
 			terrainRenderer: document.getElementById('debug-terrain-renderer').value,
 			debugLayerTimings: document.getElementById('debug-layer-timings').checked,
+			renderEverything: document.getElementById('debug-render-everything').checked,
 			checkerboardUnpainted: document.getElementById('debug-unpainted-checkerboard').checked,
 			biomeBoundaryContour: document.getElementById('debug-biome-boundary-contour').checked,
 			pixelSceneBitmapBudgetMB: Number.parseInt(document.getElementById('debug-pixel-scene-budget').value),
@@ -4220,6 +4284,8 @@ export const app = {
 				document.getElementById('debug-terrain-renderer').value = settings.terrainRenderer || 'gl';
 				settings.terrainRenderer = document.getElementById('debug-terrain-renderer').value;
 				document.getElementById('debug-layer-timings').checked = settings.debugLayerTimings || false;
+				document.getElementById('debug-render-everything').checked = settings.renderEverything || false;
+				settings.renderEverything = document.getElementById('debug-render-everything').checked;
 				document.getElementById('debug-unpainted-checkerboard').checked = settings.checkerboardUnpainted ?? true;
 				settings.checkerboardUnpainted = document.getElementById('debug-unpainted-checkerboard').checked;
 				document.getElementById('debug-biome-boundary-contour').checked = settings.biomeBoundaryContour ?? false;

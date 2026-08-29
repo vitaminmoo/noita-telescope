@@ -21,10 +21,16 @@ export const EDGE_DECAL_TILE = 256;
 /** Below this zoom a decal is smaller than a screen pixel, and the number of
  *  tiles in view stops being reasonable. */
 export const EDGE_DECAL_MIN_ZOOM = 1;
-/** Tiles asked for per draw, so panning stays responsive while the queue fills. */
-const REQUESTS_PER_DRAW = 4;
-/** Roughly a 4K screen's worth at zoom 1, times a couple of pans. */
-const MAX_CACHED_TILES = 512;
+/** Tiles in flight at once. The material resolve is one GPU batch per draw
+ *  and the stamp runs in the overlay worker, which is FIFO and cannot cancel:
+ *  the cap is what keeps a pan from queueing tiles it has already left behind.
+ *  Misses past it are asked again on the next draw, centre of the view first. */
+const MAX_INFLIGHT = 48;
+/** Tiles requested beyond the view on every side, so a pan never exposes a
+ *  missing tile at the edge. */
+const PREFETCH_RING = 1;
+/** Roughly a 4K screen's worth at zoom 1 plus its ring, times a couple of pans. */
+const MAX_CACHED_TILES = 768;
 
 const tiles = new Map();       // "tx,ty" -> ImageBitmap
 const pending = new Set();
@@ -93,12 +99,15 @@ export function edgeDecalAt(worldX, worldY) {
 }
 
 /**
- * Blits the decal tiles covering `viewRect` and asks for the missing ones.
+ * Blits the decal tiles covering `viewRect` and asks for the missing ones --
+ * those in view and one ring beyond it, nearest the view centre first, up to
+ * MAX_INFLIGHT outstanding -- in one batched request.
  *
  * @param {CanvasRenderingContext2D} ctx  already under the camera transform
  * @param {object} app
  * @param {{left:number,right:number,top:number,bottom:number}} viewRect
- * @param {(tx:number, ty:number)=>void} request
+ * @param {(key:string, tiles:Array<{tx:number,ty:number}>)=>Array<{tx:number,ty:number}>} request
+ *        returns the subset it accepted (the rest are asked again later)
  * @returns {boolean} true when anything was drawn or requested
  */
 export function drawEdgeDecals(ctx, app, viewRect, request) {
@@ -119,25 +128,32 @@ export function drawEdgeDecals(ctx, app, viewRect, request) {
     const tx1 = Math.floor((viewRect.right - offX) / EDGE_DECAL_TILE);
     const ty0 = Math.floor((viewRect.top - offY) / EDGE_DECAL_TILE);
     const ty1 = Math.floor((viewRect.bottom - offY) / EDGE_DECAL_TILE);
+    const cx = ((viewRect.left + viewRect.right) / 2 - offX) / EDGE_DECAL_TILE - 0.5;
+    const cy = ((viewRect.top + viewRect.bottom) / 2 - offY) / EDGE_DECAL_TILE - 0.5;
 
-    let asked = 0;
-    for (let ty = ty0; ty <= ty1; ty++) {
-        for (let tx = tx0; tx <= tx1; tx++) {
+    const missing = [];
+    for (let ty = ty0 - PREFETCH_RING; ty <= ty1 + PREFETCH_RING; ty++) {
+        for (let tx = tx0 - PREFETCH_RING; tx <= tx1 + PREFETCH_RING; tx++) {
             const tileKey = `${tx},${ty}`;
             const bitmap = tiles.get(tileKey);
             if (bitmap) {
-                ctx.drawImage(bitmap,
-                    tx * EDGE_DECAL_TILE + offX, ty * EDGE_DECAL_TILE + offY,
-                    EDGE_DECAL_TILE, EDGE_DECAL_TILE);
+                if (tx >= tx0 && tx <= tx1 && ty >= ty0 && ty <= ty1) {
+                    ctx.drawImage(bitmap,
+                        tx * EDGE_DECAL_TILE + offX, ty * EDGE_DECAL_TILE + offY,
+                        EDGE_DECAL_TILE, EDGE_DECAL_TILE);
+                }
                 continue;
             }
-            if (asked >= REQUESTS_PER_DRAW || pending.has(tileKey)) continue;
-            // A declined request (=== false: scene placement not ready yet) is
-            // not marked pending, so the tile is asked for again on a later draw.
-            if (request(key, tx, ty) === false) continue;
-            pending.add(tileKey);
-            asked++;
+            if (pending.has(tileKey)) continue;
+            missing.push({ tx, ty, d: (tx - cx) * (tx - cx) + (ty - cy) * (ty - cy) });
         }
+    }
+    const room = MAX_INFLIGHT - pending.size;
+    if (missing.length && room > 0) {
+        missing.sort((a, b) => a.d - b.d);
+        // Tiles the request declines (scene placement not ready for their
+        // world) are not marked pending, so they are asked for again later.
+        for (const t of request(key, missing.slice(0, room))) pending.add(`${t.tx},${t.ty}`);
     }
     return true;
 }

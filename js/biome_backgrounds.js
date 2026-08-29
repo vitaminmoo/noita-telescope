@@ -279,12 +279,20 @@ export function loadBackgroundArt() {
 			try { ART_BITMAPS.set(p, await loadPNGBitmap('../' + p)); }
 			catch (e) { console.warn('Background art failed to load:', p, e); }
 		}));
+		artLoaded = true;
 		return artData;
 	})();
 }
 
 export function backgroundArtReady() {
 	return !!artData;
+}
+
+/** True once every backdrop/strip/scene bitmap has been decoded (or failed),
+ *  i.e. a draw made now will not change when more art lands. */
+let artLoaded = false;
+export function backgroundArtLoaded() {
+	return artLoaded;
 }
 
 /** The real strip art for one buildBackgroundEdges record, or null. */
@@ -376,17 +384,30 @@ export function drawBackdropRuns(ctx, rows, shiftX, shiftY, viewRect) {
  */
 export function drawSceneBackgrounds(ctx, scenes, toDrawX, toDrawY, viewRect, artPathFor) {
 	if (!artData) return;
-	for (const scene of scenes) {
-		const path = artPathFor(scene);
-		if (!path) continue;
-		const img = ART_BITMAPS.get(path);
-		if (!img) continue;
-		const dx = toDrawX(scene.x), dy = toDrawY(scene.y);
-		if (dx + img.width < viewRect.left || dx > viewRect.right ||
-			dy + img.height < viewRect.top || dy > viewRect.bottom) continue;
-		ctx.drawImage(img, dx, dy);
+	// Only ~1 placed scene in 10 has a background, and the manifest lookup per
+	// scene per frame was 3 ms at the overview zoom (every list, every world in
+	// view). Resolve each placement list once, after the art has finished
+	// loading so a missing bitmap is really missing.
+	let entries = sceneBackgroundEntries.get(scenes);
+	if (!entries) {
+		entries = [];
+		for (const scene of scenes) {
+			const path = artPathFor(scene);
+			const img = path ? ART_BITMAPS.get(path) : null;
+			if (img) entries.push({ img, x: scene.x, y: scene.y, w: img.width, h: img.height });
+		}
+		if (artLoaded) sceneBackgroundEntries.set(scenes, entries);
+	}
+	// toDrawX/Y are translations, so one origin resolves every entry.
+	const ox = toDrawX(0), oy = toDrawY(0);
+	for (const e of entries) {
+		const dx = ox + e.x, dy = oy + e.y;
+		if (dx + e.w < viewRect.left || dx > viewRect.right ||
+			dy + e.h < viewRect.top || dy > viewRect.bottom) continue;
+		ctx.drawImage(e.img, dx, dy);
 	}
 }
+const sceneBackgroundEntries = new WeakMap();   // placement list -> resolved backgrounds
 
 // ---------------------------------------------------------------------------
 // Static-tile backdrops

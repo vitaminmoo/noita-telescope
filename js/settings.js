@@ -79,6 +79,10 @@ export const appSettings = {
 	// canvases (the parity reference), 'gl' is the WebGL2 terrain pass.
 	terrainRenderer: 'gl',
 	debugLayerTimings: false,
+	// Debug: ignore every zoom-based detail cut (mip levels, backdrop/strip
+	// gates, material textures, stand-in art) so a frame costs the same at any
+	// zoom. Edge decals keep their 1:1 gate: below it the tile count explodes.
+	renderEverything: false,
 	checkerboardUnpainted: true,
 	biomeBoundaryContour: false,
 	// Byte budget for the pixel scene ImageBitmap + mip cache, least-recently-drawn first
@@ -133,6 +137,7 @@ export function updateSettingsFromUI() {
 		renderLayers: readRenderLayersFromUI(),
 		terrainRenderer: document.getElementById('debug-terrain-renderer')?.value || 'gl',
 		debugLayerTimings: document.getElementById('debug-layer-timings')?.checked || false,
+		renderEverything: document.getElementById('debug-render-everything')?.checked || false,
 		checkerboardUnpainted: document.getElementById('debug-unpainted-checkerboard')?.checked ?? true,
 		biomeBoundaryContour: document.getElementById('debug-biome-boundary-contour')?.checked ?? false,
 		pixelSceneBitmapBudgetMB: parseInt(document.getElementById('debug-pixel-scene-budget')?.value) || 256,

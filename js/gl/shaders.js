@@ -84,6 +84,8 @@ uniform ivec2 u_originInt;
 uniform vec2 u_originFrac;
 uniform float u_invZoom;
 uniform vec2 u_screenSize;
+uniform ivec2 u_vpOrigin;               // viewport origin in the framebuffer (tile pass)
+uniform bool u_materialIdOut;           // write material ids instead of colors (tile pass)
 
 uniform int u_mapWidth;     // getWorldSize(): 70 normal NG0, 64 NG+/nightmare
 uniform int u_worldWidth;   // u_mapWidth * 512
@@ -918,7 +920,9 @@ void engMaterialColor(int mat, ivec2 w) {
 
 void main() {
     // Screen pixel center -> world. gl_FragCoord.y counts from the bottom.
-    vec2 pix = vec2(gl_FragCoord.x, u_screenSize.y - gl_FragCoord.y);
+    // u_vpOrigin is (0,0) for the screen pass; the material-id tile pass draws
+    // several tiles into one framebuffer through offset viewports.
+    vec2 pix = vec2(gl_FragCoord.x - float(u_vpOrigin.x), u_screenSize.y - (gl_FragCoord.y - float(u_vpOrigin.y)));
     vec2 off = u_originFrac + pix * u_invZoom;
     ivec2 w = u_originInt + ivec2(floor(off));
 
@@ -954,6 +958,33 @@ void main() {
         ivec2 cell = engResolveCell(w, wFold);
         uint info = engInfoAt(cell.x, cell.y);
         uint mode = (info >> 8) & 3u;
+        // Material-id output (edge-decal tiles, terrain_renderer.js
+        // resolveMaterialTiles): the same resolve the color pass runs, but the
+        // answer is the material id -- what engine_resolve/material_field.js
+        // computes on the CPU, at 24 ms a tile. Encoded id+1 in R (low byte)
+        // and G (high byte); 0 = unresolved (fallback chunk, the CPU's -1),
+        // 1 = air. A "paints nothing" chunk is air, as in the color pass.
+        if (u_materialIdOut) {
+            int mat = -1;
+            if ((info & 2048u) != 0u) {
+                mat = 0;
+            } else if (mode != 2u) {
+                int slot = int(info & 0xffu);
+                if (mode == 1u) {
+                    mat = engTopo2(slot, w);
+                } else {
+                    int pcx = fdiv(wFold.x + u_centerPx, CHUNK);
+                    int pcy = fdiv(w.y + u_baseY, CHUNK);
+                    int physSlot = int(engInfoAt(pcx, pcy) & 0xffu);
+                    int leftSlot = int(engInfoAt(pcx - 1, pcy) & 0xffu);
+                    mat = engTopo0(slot, physSlot, leftSlot, w);
+                }
+                if (mat < 0) mat = 0;
+            }
+            int code = mat + 1;
+            outColor = vec4(float(code & 0xff) / 255.0, float((code >> 8) & 0xff) / 255.0, 0.0, 1.0);
+            return;
+        }
         // The resolved cell's biome generates no terrain at all: a BIOME_WANG_TILE
         // biome with an empty wang_template_file, which ProceduralTerrain_Init
         // @0x0087a900 never gives a wang region (it needs
