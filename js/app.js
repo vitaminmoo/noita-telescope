@@ -264,8 +264,10 @@ export const app = {
 	drag: { on: false, lx: 0, ly: 0, startX: -10, startY: -10 },
 	pinnedTooltip: null,
 	// Last canvas pixel read back for the hover tooltip's color swatch; x is reset
-	// to -1 by drawNow() so a repaint always re-reads (displayedColorAt).
-	colorProbe: { x: -1, y: -1, rgb: 0 },
+	// to -1 by drawNow() so a repaint always re-reads (displayedColorAt, which
+	// defers the read and keeps its own 1x1 scratch context here).
+	colorProbe: { x: -1, y: -1, rgb: 0, wantX: -1, wantY: -1, timer: 0, ctx: null },
+	lastHoverEvent: null,
 	copyFlashTimer: 0,
 	pw: 0,
 	pwVertical: 0,
@@ -1554,6 +1556,7 @@ export const app = {
 
 	hover(e) {
 		if (this.biomeData) {
+			this.lastHoverEvent = e;
 			const rect = document.getElementById('view').getBoundingClientRect();
 			const wx = (e.clientX - rect.left - this.canvas.width/2) / this.cam.z + this.cam.x;
 			const wy = (e.clientY - rect.top - this.canvas.height/2) / this.cam.z + this.cam.y;
@@ -1583,23 +1586,47 @@ export const app = {
 		}
 	},
 
-	// The composited color under the cursor, read straight back from the main 2D
-	// canvas: the GL terrain pass renders to its own offscreen canvas that drawNow()
-	// blits into this one, so this context holds the final pixel of every layer.
+	// The composited color under the cursor: the GL terrain pass renders to its own
+	// offscreen canvas that drawNow() blits into the main one, so the main context
+	// holds the final pixel of every layer.
 	//
-	// A 1x1 getImageData is a partial readback, but it still syncs with the GPU, so
-	// it is cached per (pixel, frame): the cache is dropped by drawNow() and by the
-	// cursor moving, which bounds this at one readback per drawn frame while panning
-	// and one per cursor pixel while still.
+	// It is NEVER read with getImageData on the main canvas. Chrome counts those
+	// readbacks and, after a handful, permanently drops the canvas to software
+	// rasterization -- measured here as every later frame going from ~1 ms to
+	// 30 ms (350 ms zoomed out), for the rest of the session, drag or no drag.
+	// Instead the pixel is copied into a 1x1 CPU-backed scratch canvas (the same
+	// trick edge_decal_layer.js uses) and read from there, and even that is
+	// deferred: nothing is read while dragging, and a still cursor gets its swatch
+	// ~80 ms after the frame settles. Until the deferred read lands the tooltip
+	// simply has no color line.
 	displayedColorAt(canvasX, canvasY) {
 		if (canvasX < 0 || canvasY < 0 || canvasX >= this.canvas.width || canvasY >= this.canvas.height) return null;
 		const probe = this.colorProbe;
 		if (probe.x === canvasX && probe.y === canvasY) return probe.rgb;
-		const d = this.ctx.getImageData(canvasX, canvasY, 1, 1).data;
-		probe.x = canvasX;
-		probe.y = canvasY;
-		probe.rgb = (d[0] << 16) | (d[1] << 8) | d[2];
-		return probe.rgb;
+		if (this.drag.on) return null;
+		probe.wantX = canvasX;
+		probe.wantY = canvasY;
+		if (!probe.timer) {
+			probe.timer = setTimeout(() => {
+				probe.timer = 0;
+				if (this.drag.on || !this.lastHoverEvent) return;
+				if (!probe.ctx) {
+					const c = document.createElement('canvas');
+					c.width = 1;
+					c.height = 1;
+					probe.ctx = c.getContext('2d', { willReadFrequently: true });
+				}
+				probe.ctx.clearRect(0, 0, 1, 1);
+				probe.ctx.drawImage(this.canvas, probe.wantX, probe.wantY, 1, 1, 0, 0, 1, 1);
+				const d = probe.ctx.getImageData(0, 0, 1, 1).data;
+				probe.x = probe.wantX;
+				probe.y = probe.wantY;
+				probe.rgb = (d[0] << 16) | (d[1] << 8) | d[2];
+				// Re-run the tooltip for the cursor's last position; it now hits the cache.
+				this.hover(this.lastHoverEvent);
+			}, 80);
+		}
+		return null;
 	},
 
 	// One tooltip line per fact about the hovered world pixel: what it is, which
@@ -2691,38 +2718,41 @@ export const app = {
 	// `reverse` flips the order for the destination-over air-hole refill in the
 	// pixel-scene layer: with destination-over, later draws land *behind*
 	// earlier ones, so front-to-back paints the same stack into the holes.
-	drawBackgroundStack(worldOffsets, viewRect, offscreen, reverse = false) {
+	drawBackgroundStack(worldOffsets, viewRect, offscreen, reverse = false, prof = null) {
 		const rawMap = document.getElementById('debug-original-biome-map').checked;
 		const worldCenter = getWorldCenter(this.isNGP, this.gameMode) * 512;
 		const worldSize = getWorldSize(this.isNGP, this.gameMode) * 512;
 		const steps = [];
-		steps.push(() => {
+		// Each step is profiled under its own bucket (debug-layer-timings); the
+		// prefix keeps the refill pass distinguishable from the base pass.
+		const bucket = reverse ? 'bg-refill:' : 'bg:';
+		steps.push(['flat', () => {
 			for (let worldKey of this.worldsInView) {
 				const { pwY, shiftX, shiftY } = worldOffsets[worldKey];
 				this.ctx.drawImage(this.biomeBackgroundImage(pwY), shiftX, shiftY, this.w * 512, this.h * 512);
 			}
-		});
+		}]);
 		if (!rawMap) {
 			// Below ~8 screen px per chunk the tiling detail is invisible and the
 			// flat per-image colors are already what the eye averages the art to.
 			if (512 * this.cam.z >= 8) {
-				steps.push(() => {
+				steps.push(['backdrops', () => {
 					for (let worldKey of this.worldsInView) {
 						const { pwY, shiftX, shiftY } = worldOffsets[worldKey];
 						const runs = pwY === 0 ? this.backdropRuns
 							: pwY > 0 ? this.backdropRunsHell : this.backdropRunsHeaven;
 						if (runs) drawBackdropRuns(this.ctx, runs, shiftX, shiftY, viewRect);
 					}
-				});
+				}]);
 			}
-			steps.push(() => this.drawBackgroundEdges(worldOffsets, viewRect, offscreen));
+			steps.push(['edges', () => this.drawBackgroundEdges(worldOffsets, viewRect, offscreen)]);
 			// The static-tile structures' masked backdrops, at the same world rect
 			// (and with the same PW offsets) as their tile layers. They sit with the
 			// backdrops rather than with the scenes: they are the SAME sprite the
 			// backdrop runs draw, only masked to a silhouette instead of filling a
 			// chunk. Vertical bands are the clamped edge row repeated, so a main-world
 			// structure says nothing about what is up or down there.
-			steps.push(() => {
+			steps.push(['staticTiles', () => {
 				for (let worldKey of this.worldsInView) {
 					const { pwX, pwY, shiftX, shiftY } = worldOffsets[worldKey];
 					if (pwY !== 0) continue;
@@ -2731,8 +2761,8 @@ export const app = {
 						shiftX + pwOffset + VISUAL_TILE_OFFSET_X,
 						shiftY + VISUAL_TILE_OFFSET_Y, viewRect);
 				}
-			});
-			steps.push(() => {
+			}]);
+			steps.push(['sceneBgs', () => {
 				for (let worldKey of this.worldsInView) {
 					const { pwX, pwY, shiftX, shiftY } = worldOffsets[worldKey];
 					const scenes = this.pixelScenesByPW && this.pixelScenesByPW[`${pwX},${pwY}`];
@@ -2741,18 +2771,21 @@ export const app = {
 					const toDrawY = (y) => y + 14 * 512 - pwY * 24576 + shiftY;
 					drawSceneBackgrounds(this.ctx, scenes, toDrawX, toDrawY, viewRect, sceneBackgroundArt);
 				}
-			});
-			steps.push(() => {
+			}]);
+			steps.push(['globalImages', () => {
 				for (let worldKey of this.worldsInView) {
 					const { pwX, pwY, shiftX, shiftY } = worldOffsets[worldKey];
 					const toDrawX = (x) => x + worldCenter - pwX * worldSize + shiftX;
 					const toDrawY = (y) => y + 14 * 512 - pwY * 24576 + shiftY;
 					drawGlobalBackgroundImages(this.ctx, toDrawX, toDrawY, viewRect);
 				}
-			});
+			}]);
 		}
 		if (reverse) steps.reverse();
-		for (const step of steps) step();
+		for (const [name, step] of steps) {
+			step();
+			if (prof) markLayer(prof, bucket + name);
+		}
 	},
 
 	drawBackgroundEdges(worldOffsets, viewRect, offscreen) {
@@ -2876,7 +2909,7 @@ export const app = {
 		// Layer 1
 		// Background biome colors
 		if (L.biomeBackground) {
-			this.drawBackgroundStack(worldOffsets, viewRect, offscreen);
+			this.drawBackgroundStack(worldOffsets, viewRect, offscreen, false, prof);
 		}
 		if (prof) markLayer(prof, 'biomeBackground');
 
@@ -3483,7 +3516,7 @@ export const app = {
 				// behind the terrain, and forced air correctly reads as empty.
 				if (airErased && L.biomeBackground) {
 					this.ctx.globalCompositeOperation = 'destination-over';
-					this.drawBackgroundStack(worldOffsets, viewRect, offscreen, true);
+					this.drawBackgroundStack(worldOffsets, viewRect, offscreen, true, prof);
 					this.ctx.globalCompositeOperation = 'source-over';
 				}
 

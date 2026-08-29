@@ -82,7 +82,9 @@ async function generateEdgeDecalTileWorker(msg) {
 		const size = EDGE_DECAL_TILE + 2 * P;
 		const x0 = tx * EDGE_DECAL_TILE - P;
 		const y0 = ty * EDGE_DECAL_TILE - P;
+		const tResolve0 = performance.now();
 		const mat = resolveMaterialRect(decalField, x0, y0, size, size);
+		const tResolve1 = performance.now();
 		// Chunk boundaries sit where (world + grid shift) is a multiple of 512;
 		// both shifts are whole chunks for every shipped map width, but the stamp
 		// clips to its own chunk so pass it rather than assume.
@@ -101,7 +103,11 @@ async function generateEdgeDecalTileWorker(msg) {
 			mapWidth,
 			stats,
 		});
-		var decalDebug = { scenesSent: (scenes || []).length, gridsBuilt: sceneGrids.length, ...stats };
+		var decalDebug = {
+			scenesSent: (scenes || []).length, gridsBuilt: sceneGrids.length, ...stats,
+			// Where the tile's time goes, for the perf harness.
+			resolveMs: tResolve1 - tResolve0, stampMs: performance.now() - tResolve1,
+		};
 
 		const T = EDGE_DECAL_TILE;
 		const cropped = new Uint8ClampedArray(T * T * 4);
