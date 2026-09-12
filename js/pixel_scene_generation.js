@@ -64,6 +64,19 @@ const SCENE_COLORS_FILE_ALIASES = {
 	"excavationsite/machine_7_alt": "machine_5_visual",
 	"excavationsite/shop_alt": "shop_visual",
 	"general/bunker2": "bunker_visual",
+	// The cauldron room's colors file is the one that does not follow the
+	// `<name>_visual.png` convention at all: it ships as cauldron_fg.png beside
+	// cauldron.png, so VISUAL_OVERLAY_SCENES -- which only knows that convention
+	// -- never named the room and the art was loaded by nothing. The room is not
+	// in any data.wak on disk (see data/pixel_scenes/general/cauldron*.png), so
+	// the pairing is established from the art itself: cauldron_fg.png's
+	// non-transparent pixels number 195,042, which is exactly the cauldron.png
+	// cells that are sand (89,608) + rock_static (69,007) + rock_hard_border
+	// (36,427), and it is transparent over every one of the scene's other cells.
+	// That is a colors file for this material PNG and nothing else. Without it
+	// the room's stone and its sand both drew material-derived, which is the
+	// whole of what was reported missing.
+	"general/cauldron": "cauldron_fg",
 	"general/essenceroom_submerged": "essenceroom_visual",
 	"pyramid/boss_limbs": "reward_visual",
 	"snowcave/pipe_alt": "pipe_visual",
@@ -82,7 +95,7 @@ const SCENE_COLORS_FILE_ALIASES = {
  * Basename (no extension) of the colors file the engine paints this scene with,
  * inside data/pixel_scenes/<dir>/, or null when the scene has none.
  */
-function sceneColorsFileName(dir, name) {
+export function sceneColorsFileName(dir, name) {
 	const id = `${dir}/${name}`;
 	if (SCENE_COLORS_FILE_ALIASES[id]) return SCENE_COLORS_FILE_ALIASES[id];
 	return VISUAL_OVERLAY_SCENES.has(id) ? `${name}_visual` : null;
