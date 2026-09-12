@@ -600,5 +600,51 @@
   "ngPlus": 0,
   "captured": "2026-08-28",
   "note": "pyramid_right chunks 55-57 x 12-14: the $biome_pyramid modifier grid (byte-exact replay) under the pyramid scene. Captured by groundtruth/bitmap_caves/capture.py (worker eee45aad; world verified ng=0 70x48 via LUAEVAL; cellsim off)."
+ },
+ "matdump/spawnmountain": {
+  "kind": "matdump-pgm",
+  "path": "/home/vitaminmoo/reverse/noita/groundtruth/edge_decals/spawnmountain_mat.pgm",
+  "matlist": "/home/vitaminmoo/reverse/noita/groundtruth/edge_decals/matlist.txt",
+  "rect": [
+   512,
+   -512,
+   512,
+   512
+  ],
+  "seed": 786433191,
+  "ngPlus": 0,
+  "captured": "2026-09-12",
+  "note": "Spawn-mountain chunk (biome-map cell 36,13 = mountain_hall, paintsNothing/sceneOnly). Captured 2026-09-12 by groundtruth/edge_decals/capture.py (worker 11675df1, seed 786433191 ng0 verified live via LUAEVAL as map=70x48; SUBSYSTEMS on cellsim explosions explosions_queue). One BAKEDUMP + MAPDUMP + MATDUMP of the SAME rect from the SAME worker: MAPDUMP re-renders the material grid and carries NO decals, BAKEDUMP reads the cells' baked mColor and carries them all, so baked != map inside a solid cell is the engine's own decal mask."
+ },
+ "mapdump/spawnmountain": {
+  "kind": "mapdump-ppm",
+  "path": "/home/vitaminmoo/reverse/noita/groundtruth/edge_decals/spawnmountain_map.ppm",
+  "rect": [
+   512,
+   -512,
+   512,
+   512
+  ],
+  "seed": 786433191,
+  "ngPlus": 0,
+  "captured": "2026-09-12",
+  "note": "Spawn-mountain chunk (biome-map cell 36,13 = mountain_hall, paintsNothing/sceneOnly). Captured 2026-09-12 by groundtruth/edge_decals/capture.py (worker 11675df1, seed 786433191 ng0 verified live via LUAEVAL as map=70x48; SUBSYSTEMS on cellsim explosions explosions_queue). One BAKEDUMP + MAPDUMP + MATDUMP of the SAME rect from the SAME worker: MAPDUMP re-renders the material grid and carries NO decals, BAKEDUMP reads the cells' baked mColor and carries them all, so baked != map inside a solid cell is the engine's own decal mask."
+ },
+ "bakedump/spawnmountain": {
+  "kind": "bakedump-ppm",
+  "path": "/home/vitaminmoo/reverse/noita/groundtruth/edge_decals/spawnmountain_baked.ppm",
+  "map": "/home/vitaminmoo/reverse/noita/groundtruth/edge_decals/spawnmountain_map.ppm",
+  "mat": "/home/vitaminmoo/reverse/noita/groundtruth/edge_decals/spawnmountain_mat.pgm",
+  "matlist": "/home/vitaminmoo/reverse/noita/groundtruth/edge_decals/matlist.txt",
+  "rect": [
+   512,
+   -512,
+   512,
+   512
+  ],
+  "seed": 786433191,
+  "ngPlus": 0,
+  "captured": "2026-09-12",
+  "note": "Spawn-mountain chunk (biome-map cell 36,13 = mountain_hall, paintsNothing/sceneOnly). Captured 2026-09-12 by groundtruth/edge_decals/capture.py (worker 11675df1, seed 786433191 ng0 verified live via LUAEVAL as map=70x48; SUBSYSTEMS on cellsim explosions explosions_queue). One BAKEDUMP + MAPDUMP + MATDUMP of the SAME rect from the SAME worker: MAPDUMP re-renders the material grid and carries NO decals, BAKEDUMP reads the cells' baked mColor and carries them all, so baked != map inside a solid cell is the engine's own decal mask."
  }
 }
