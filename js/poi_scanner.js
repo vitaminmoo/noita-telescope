@@ -593,7 +593,13 @@ export function getSpecialPoIs(biomeData, worldSeed, ngPlusCount, pwIndex, pwInd
         }
     }
     if (ngPlusCount === 0 && pwIndex === 0) {
-        if (GENERATOR_CONFIG['pyramid_top'].enabled) {
+        // The pyramid is main-world surface content, like the triangle, alchemist and
+        // dragon bosses, which the pwIndexVertical === 0 block above already gates.
+        // This block can't be gated the same way -- the heaven/hell shops below want
+        // pwIndexVertical +/-1 -- so the boss carries its own vertical guard.
+        // generatePyramidBossDrops() has no vertical term, so without it the same drop
+        // is emitted at identical coordinates in all three vertical worlds.
+        if (pwIndexVertical === 0 && GENERATOR_CONFIG['pyramid_top'].enabled) {
             let pyramidBossDrops = generatePyramidBossDrops(worldSeed, pwIndex);
             if (pyramidBossDrops) {
                 pois = pois.concat([pyramidBossDrops]);
