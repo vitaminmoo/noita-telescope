@@ -100,3 +100,23 @@ export const SCENE_BACKGROUNDS = {
 	"vault/lab3": "data/backgrounds/biome_impl/vault/lab3_background.png",
 	"vault/lab_puzzle": "data/backgrounds/biome_impl/vault/lab_puzzle_background.png"
 };
+
+// biome -> scene name -> background, for the (biome, scene) pairs where the
+// biome's OWN lua passes different art than the map above. One scene PNG can be
+// stamped by many biomes with different backgrounds: essenceroom.png is loaded
+// by nine biome scripts, three of which (rock_room, moon_room, essenceroom_air)
+// pass the 88%-transparent essenceroom_background_diamond.png instead of the
+// opaque essenceroom_background_with_diamond.png, so in those three the biome
+// backdrop shows through the room. A placement carries the biome it spawned for,
+// so the scene loader checks here first (js/pixel_scene_generation.js).
+export const SCENE_BACKGROUNDS_BY_BIOME = {
+	"essenceroom_air": {
+		"essenceroom": "data/backgrounds/biome_impl/essenceroom_background_diamond.png"
+	},
+	"moon_room": {
+		"essenceroom": "data/backgrounds/biome_impl/essenceroom_background_diamond.png"
+	},
+	"rock_room": {
+		"essenceroom": "data/backgrounds/biome_impl/essenceroom_background_diamond.png"
+	}
+};

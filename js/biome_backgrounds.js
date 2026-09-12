@@ -1,5 +1,5 @@
 import { fetchSafeJson } from "./utils.js";
-import { SCENE_BACKGROUNDS } from "./pixel_scene_backgrounds.js";
+import { SCENE_BACKGROUNDS, SCENE_BACKGROUNDS_BY_BIOME } from "./pixel_scene_backgrounds.js";
 
 // Biome backgrounds, keyed the way the engine keys them.
 //
@@ -274,6 +274,12 @@ export function loadBackgroundArt() {
 		// whose background comes from a lua scene table; the manifest supersedes
 		// it, and only the art it references is worth decoding.
 		for (const p of Object.values(SCENE_BACKGROUNDS)) wanted.add(p);
+		// ... plus the art the biome-specific overrides point at, which is the
+		// only art some biomes ever ask for: rock_room's essence room never draws
+		// the opaque with_diamond slab the flat map carries.
+		for (const scenes of Object.values(SCENE_BACKGROUNDS_BY_BIOME)) {
+			for (const p of Object.values(scenes)) wanted.add(p);
+		}
 		for (const g of artData.globalImages) wanted.add(g.file);
 		await Promise.all([...wanted].map(async (p) => {
 			try { ART_BITMAPS.set(p, await loadPNGBitmap('../' + p)); }

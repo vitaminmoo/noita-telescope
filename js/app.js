@@ -105,8 +105,11 @@ function bandColumnPaints(biomeColor) {
 // placement record carries only the scene key; the loaded scene knows which
 // data/pixel_scenes entry it came from, which is what the manifest is keyed by
 // (js/pixel_scene_backgrounds.js).
+// A placement carries its own art only when the biome it spawned for overrides
+// the scene's default (SCENE_BACKGROUNDS_BY_BIOME) -- one scene key serves
+// several biomes, so the per-key record cannot answer for all of them.
 function sceneBackgroundArt(scene) {
-	return PIXEL_SCENE_DATA[scene.key]?.backgroundArt ?? null;
+	return scene.backgroundArt ?? PIXEL_SCENE_DATA[scene.key]?.backgroundArt ?? null;
 }
 
 function writeBackgroundPixel(imageData, i, color) {
