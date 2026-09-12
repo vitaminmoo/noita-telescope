@@ -9,6 +9,7 @@ import { scanSpawnFunctions, getSpecialPoIs, prescanSpawnFunctions } from './poi
 import { performSearch, navigateSearch, cancelSearch, isSearchActive, clearHighlights, performLocalSearch, syncSearchWorkerData, activeLocalSearchArea, syncSettingsToSearchWorker, continueSearchSequence } from './search_manager.js';
 import { TIME_UNTIL_LOADING, POI_RADIUS, CHUNK_SIZE, BIOME_EDGE_NOISE_PADDING_PIXELS, VISUAL_TILE_OFFSET_X, VISUAL_TILE_OFFSET_Y, MIN_CAM_Z, SKY_EXTRA_HEIGHT } from './constants.js';
 import { getBiomeAtWorldCoordinates, getMaterialProvenanceAtWorldCoordinates, getWorldCenter, getWorldSize, getPWLimit, MATERIAL_CONTAINER_TYPES } from './utils.js';
+import { camZFromLogZoom, cameraFromWorld, formatViewParams, logZoomFromCamZ, parseViewParams, worldFromCamera } from './view_url.js';
 import { renderWallMessages } from './wall_messages.js';
 import { findEyeMessages, renderEyeMessages } from './eye_messages.js';
 import { BIOME_COLOR_LOOKUP, createBiomeMapAlphaMask, createTileOverlays, createTileOverlaysCheap, createTileOverlaysExpanded, terrainFillColor } from './image_processing.js';
@@ -42,6 +43,9 @@ import {
 	backgroundArtLoaded, edgeStripArt, loadBackgroundArt, loadBackgroundEdgeMasks, loadStaticTileBackgroundMasks,
 	STATIC_TILE_BACKGROUNDS, tintedEdgeStrip, UNLIMITED_BACKDROP_BIOMES,
 } from './biome_backgrounds.js';
+
+// How often a pan or zoom may rewrite the URL, in ms.
+const VIEW_URL_SYNC_MS = 200;
 
 const biomeColorsOf = (names) => new Set([...names]
 	.map(name => GENERATOR_CONFIG[name] && (GENERATOR_CONFIG[name].color & 0xffffff))
@@ -569,7 +573,17 @@ export const app = {
 	worldsInView: new Set(),
 	gameMode: 'normal', // or nightmare
 
+	// View framing from the URL (js/view_url.js): parsed at startup, applied
+	// once a world exists, then kept up to date as the camera moves.
+	pendingView: null,
+	viewURLTimer: null,
+	lastViewURL: null,
+
 	init() {
+		// Read x/y/z before anything async can run: the first background asset to
+		// land calls draw(), which would otherwise write the default view over the
+		// parameters we are about to read.
+		this.pendingView = parseViewParams(new URLSearchParams(window.location.search));
 		this.canvas = document.getElementById('canvas');
 		this.ctx = this.canvas.getContext('2d');
 		//this.overlay = document.getElementById('overlay');
@@ -2411,6 +2425,14 @@ export const app = {
 		document.getElementById('ng').disabled = false;
 		document.getElementById('pw').disabled = false;
 		document.getElementById('pw-vertical').disabled = false;
+
+		// The world is up: frame whatever view the URL asked for. Cleared first so
+		// the rescan applyView may trigger doesn't come back here and loop.
+		if (this.pendingView) {
+			const view = this.pendingView;
+			this.pendingView = null;
+			Promise.resolve().then(() => this.applyView(view));
+		}
 	},
 
 	loadWorld(pwX, pwY) {
@@ -2786,12 +2808,78 @@ export const app = {
 	// and search paths that call app.draw() as results stream in) benefits, and
 	// nothing reads back canvas pixels synchronously after a draw().
 	draw() {
+		this.scheduleViewURLSync();
 		if (this.drawScheduled) return;
 		this.drawScheduled = true;
 		requestAnimationFrame(() => {
 			this.drawScheduled = false;
 			this.drawNow();
 		});
+	},
+
+	// --- View <-> URL (x/y/z, noitamap's scheme; see js/view_url.js) ---------
+
+	// The camera as the three URL parameters, or null before there is a canvas
+	// to measure the zoom against.
+	currentViewParams() {
+		if (!this.canvas || !this.canvas.width) return null;
+		const world = worldFromCamera(this.cam, this.pw, this.pwVertical,
+			getWorldSize(this.isNGP, this.gameMode), getWorldCenter(this.isNGP, this.gameMode));
+		return formatViewParams(world.x, world.y, logZoomFromCamZ(this.cam.z, this.canvas.width));
+	},
+
+	// replaceState, never pushState: panning must not grow the back history.
+	syncViewToURL() {
+		const view = this.currentViewParams();
+		if (!view) return;
+		const key = `${view.x},${view.y},${view.z}`;
+		if (key === this.lastViewURL) return;
+		this.lastViewURL = key;
+		const url = new URL(window.location.href);
+		url.searchParams.set('x', view.x);
+		url.searchParams.set('y', view.y);
+		url.searchParams.set('z', view.z);
+		window.history.replaceState(null, '', url.toString());
+	},
+
+	// Trailing-edge throttle: a drag writes the URL at most every VIEW_URL_SYNC_MS
+	// and always once more after it stops. Suppressed while a URL-supplied view is
+	// still waiting for a world, so we never overwrite what we are about to apply.
+	scheduleViewURLSync() {
+		if (this.pendingView || this.viewURLTimer) return;
+		this.viewURLTimer = setTimeout(() => {
+			this.viewURLTimer = null;
+			this.syncViewToURL();
+		}, VIEW_URL_SYNC_MS);
+	},
+
+	// Frame the view given by URL parameters. A position outside the current
+	// parallel world switches to the one that holds it and rescans, exactly as
+	// dragging across the seam does.
+	applyView(view) {
+		if (!view) return;
+		const worldSize = getWorldSize(this.isNGP, this.gameMode);
+		const worldCenter = getWorldCenter(this.isNGP, this.gameMode);
+		if (view.z !== null) this.cam.z = camZFromLogZoom(view.z, this.canvas.width);
+		if (view.x !== null || view.y !== null) {
+			const here = worldFromCamera(this.cam, this.pw, this.pwVertical, worldSize, worldCenter);
+			const target = cameraFromWorld(view.x ?? here.x, view.y ?? here.y,
+				worldSize, worldCenter, getPWLimit(this.isNGP, this.gameMode));
+			const pwChanged = target.pw !== this.pw || target.pwVertical !== this.pwVertical;
+			this.cam.x = target.camX;
+			this.cam.y = target.camY;
+			if (pwChanged) {
+				this.pw = target.pw;
+				this.pwVertical = target.pwVertical;
+				document.getElementById('pw').value = this.pw;
+				document.getElementById('pw-vertical').value = this.pwVertical;
+				this.checkBounds();
+				this.generate(false, false);
+				return;
+			}
+		}
+		this.checkBounds();
+		this.draw();
 	},
 
 	// Returns a profiling handle for this frame, or null when debug-layer-timings is off.
