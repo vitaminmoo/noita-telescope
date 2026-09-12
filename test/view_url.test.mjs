@@ -72,6 +72,26 @@ test('the same z frames the same world width at any container width', () => {
 	assert.ok(Math.abs((1920 / wide) - (800 / narrow)) < 1e-6);
 });
 
+test('a shared z is the same magnification, not the same span', () => {
+	// noitamap's OSD container is the whole window; telescope's canvas is the
+	// window minus the 300px sidebar and its 1px border. app.js passes the
+	// WINDOW width so that a link pasted between the tools draws features at
+	// the same size, which is the whole point of sharing one.
+	const windowWidth = 1920, sidebar = 301;
+	const canvasWidth = windowWidth - sidebar;
+	const z = 1200;
+	const camZ = camZFromLogZoom(z, windowWidth);
+	// What noitamap renders at: screen px per world px on the same window.
+	const noitamapScale = windowWidth / Math.pow(2, z / 100);
+	assert.ok(Math.abs(camZ - noitamapScale) < 1e-9, `${camZ} vs ${noitamapScale}`);
+	// The accepted cost: telescope shows less world across, exactly by the sidebar.
+	const telescopeSpan = canvasWidth / camZ;
+	const noitamapSpan = windowWidth / noitamapScale;
+	assert.ok(Math.abs(telescopeSpan / noitamapSpan - canvasWidth / windowWidth) < 1e-9);
+	// Measuring against the canvas instead would have matched span, not size.
+	assert.ok(Math.abs((canvasWidth / camZFromLogZoom(z, canvasWidth)) - noitamapSpan) < 1e-9);
+});
+
 test('absent parameters leave the default view untouched', () => {
 	assert.equal(parseViewParams(params('')), null);
 	assert.equal(parseViewParams(params('seed=123&ng=2&gamemode=nightmare')), null);

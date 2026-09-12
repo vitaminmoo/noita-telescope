@@ -35,22 +35,30 @@
 //     z = 100 * log2(world pixels across the width of the view)
 //
 // Telescope's camera stores the opposite quantity — `cam.z` is screen pixels
-// per world pixel (`ctx.scale(cam.z, cam.z)`), over a canvas sized to
-// `#view`.clientWidth in CSS pixels (no devicePixelRatio), which is the same
-// unit OSD measures its container in. So the two convert as:
+// per world pixel (`ctx.scale(cam.z, cam.z)`) — so the two convert as:
 //
-//     visibleWorldPx = canvas.width / cam.z
-//     z              = 100 * log2(canvas.width / cam.z)
-//     cam.z          = canvas.width / 2 ** (z / 100)
+//     visibleWorldPx = viewWidthPx / cam.z
+//     z              = 100 * log2(viewWidthPx / cam.z)
+//     cam.z          = viewWidthPx / 2 ** (z / 100)
 //
 // Larger z is further out, as in noitamap. An integer z is a 2^(1/100) step,
 // about 0.7% of zoom, which is finer than a single wheel notch in either tool.
 //
-// The horizontal span of the view therefore matches exactly between the tools
-// regardless of each one's container width; only the vertical span can differ,
-// because each tool derives its height from its own aspect ratio (and
-// telescope's canvas excludes the side panels that noitamap overlays on top of
-// its map).
+// WHICH width goes in matters, and it is NOT telescope's canvas. noitamap's
+// #osContainer is `width: 100%` of a full-viewport wrapper with its navbar
+// stacked above and its menus overlaid, so OSD measures the whole window.
+// Telescope's canvas is #view: the window minus the 300px sidebar (plus its
+// 1px border). Feeding the canvas width in would make a shared z mean the same
+// world SPAN in both tools but a DIFFERENT magnification — the same link would
+// draw everything ~16% smaller here on a 1920px window — which defeats the
+// point of pasting a link across to compare the two renderings.
+//
+// app.js therefore passes the WINDOW width (documentElement.clientWidth, the
+// same quantity OSD reads off its container). A shared z is then the same
+// screen-pixels-per-world-pixel in both tools, so features are the same size
+// and the views are centred on the same world point; telescope simply shows
+// less world horizontally, by exactly the sidebar. The vertical span still
+// differs, for that reason plus each tool's own aspect ratio.
 import { CHUNK_SIZE, MIN_CAM_Z, WORLD_CHUNK_CENTER_Y } from './constants.js';
 
 /** Height of one vertical parallel world, in world pixels (48 chunks). */

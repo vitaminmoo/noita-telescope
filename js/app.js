@@ -2819,13 +2819,24 @@ export const app = {
 
 	// --- View <-> URL (x/y/z, noitamap's scheme; see js/view_url.js) ---------
 
+	// The width `z` is measured against: the WINDOW, not telescope's canvas.
+	// noitamap's #osContainer spans the whole window, while our canvas is the
+	// window minus the sidebar, so measuring against the canvas would make a
+	// shared z mean the same world span at a different magnification — the same
+	// link would draw everything smaller here. See js/view_url.js's header.
+	viewReferenceWidth() {
+		const win = (typeof document !== 'undefined' && document.documentElement
+			&& document.documentElement.clientWidth) || window.innerWidth || 0;
+		return win > 0 ? win : (this.canvas ? this.canvas.width : 0);
+	},
+
 	// The camera as the three URL parameters, or null before there is a canvas
 	// to measure the zoom against.
 	currentViewParams() {
 		if (!this.canvas || !this.canvas.width) return null;
 		const world = worldFromCamera(this.cam, this.pw, this.pwVertical,
 			getWorldSize(this.isNGP, this.gameMode), getWorldCenter(this.isNGP, this.gameMode));
-		return formatViewParams(world.x, world.y, logZoomFromCamZ(this.cam.z, this.canvas.width));
+		return formatViewParams(world.x, world.y, logZoomFromCamZ(this.cam.z, this.viewReferenceWidth()));
 	},
 
 	// replaceState, never pushState: panning must not grow the back history.
@@ -2860,7 +2871,7 @@ export const app = {
 		if (!view) return;
 		const worldSize = getWorldSize(this.isNGP, this.gameMode);
 		const worldCenter = getWorldCenter(this.isNGP, this.gameMode);
-		if (view.z !== null) this.cam.z = camZFromLogZoom(view.z, this.canvas.width);
+		if (view.z !== null) this.cam.z = camZFromLogZoom(view.z, this.viewReferenceWidth());
 		if (view.x !== null || view.y !== null) {
 			const here = worldFromCamera(this.cam, this.pw, this.pwVertical, worldSize, worldCenter);
 			const target = cameraFromWorld(view.x ?? here.x, view.y ?? here.y,
