@@ -441,7 +441,15 @@ export function addStaticPixelScenes(ws, ng, pwIndex, pwIndexVertical, biomeData
 		], x: -12800, y: 610, biome: 'lake'}); // Approx position
 
 		// Gourd
-		newPois.push({type: 'item', item: 'gourd', x: -32*512 + 256, y: -13*512 + 256, biome: 'gourd_room'});
+		// data/scripts/biomes/gourd_room.lua registers 0xff31d0b0 -> spawn_fruit, which
+		// EntityLoads five gourds centred on that magic pixel. The spliced scene is stamped at
+		// (-33*512, -14*512), which is exactly the splice origin in
+		// data/biome_impl/spliced/_gourd.bat (-x -16896 -y -7168), and gourd_room.png contains
+		// exactly one 0x31d0b0 pixel, at (711, 902) -- so the cluster centre is (-16185, -6266),
+		// sitting on the floor of the room's air pocket. The shipped scene agrees independently:
+		// gourd_room/4.plz (pos_x -16384, pos_y -6656) carries the same lone pixel at local
+		// (199, 390), which resolves to the same world point.
+		newPois.push({type: 'item', item: 'gourd', x: -33*512 + 711, y: -14*512 + 902, biome: 'gourd_room'});
 
 		// Tower treasure
 		newPois.push({type: 'item', item: 'treasure', x: 9472, y: 4347, biome: 'hills'});
