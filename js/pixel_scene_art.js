@@ -51,10 +51,14 @@ export const SCENE_ART = {
 		},
 	},
 	// Every orb room is the same data/biome_impl/orbroom.png; the cursed tile
-	// marks the parallel-world copies, whose orbs carry the curse.
+	// marks the parallel-world copies, whose orbs carry the curse -- horizontally
+	// AND vertically. Only the true main-world room is uncursed: upstream 79ae135
+	// ("Fix orb tower minor display bug") added the pwY test to the equivalent
+	// predicate back when app.js still chose the tile inline, and the choice has
+	// since moved here, so the condition lives here now.
 	'general/orbroom': {
 		tiles: ['orb_room', 'cursed_orb_room'],
-		pick: ({ app, pwX }) => (pwX === 0 && app.gameMode !== 'nightmare')
+		pick: ({ app, pwX, pwY }) => (pwX === 0 && pwY === 0 && app.gameMode !== 'nightmare')
 			? 'orb_room' : 'cursed_orb_room',
 	},
 };
