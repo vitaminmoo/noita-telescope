@@ -383,6 +383,113 @@ export async function performSearch(allowIterative = true, autoNavigate = true) 
 
     searchContinuing = isBackgroundSearchEnabled() || searchAllPW; // If searching all PW, we consider it a long-running search even if not in background mode
 
+    // Rare-ish search pre-checks
+    if (isMatch('vault_puzzle_varpuluuta', filters.queryList[0])) {
+        // Check tiles for possible broom spawns to avoid wasting time searching a seed that can't spawn them
+        let seedValid = false;
+        app.tileLayers.forEach(layer => {
+            if (layer.biomeName != 'vault') return;
+            // Cheap check of tile indices
+            layer.tileIndices.forEach(tileIndex => {
+                if (tileIndex == 10 || tileIndex == 14) {
+                    seedValid = true;
+                    return;
+                }
+            });
+            // More expensive but precise check of spawn pixel colors
+            // 0xFF0080
+            if (seedValid) {
+                seedValid = false;
+                for (let x = 0; x < layer.width; x++) {
+                    for (let y = 0; y < layer.mapH; y++) {
+                        const pixelIndex = y * layer.width + x;
+                        const pixelColor = layer.buffer[pixelIndex+2] | (layer.buffer[pixelIndex+1] << 8) | (layer.buffer[pixelIndex] << 16);
+                        if (pixelColor == 0xFF0080) {
+                            seedValid = true;
+                            break;
+                        }
+                    }
+                    if (seedValid) break;
+                }
+            }
+        });
+        if (!seedValid) {
+            alert("Hämis says: This seed does not have any possible broom spawns!");
+            cancelSearch();
+            return;
+        }
+    }
+
+    if (isMatch('meditation_cube', filters.queryList[0])) {
+        let seedValid = false;
+        app.tileLayers.forEach(layer => {
+            if (layer.biomeName != 'excavationsite') return;
+            // Cheap check of tile indices
+            layer.tileIndices.forEach(tileIndex => {
+                if (tileIndex == 4 || tileIndex == 12 || tileIndex == 16384+17 || tileIndex == 16384+23 || tileIndex == 16384+25) {
+                    seedValid = true;
+                    return;
+                }
+            });
+            // More expensive but precise check of spawn pixel colors
+            // 0xb09016
+            if (seedValid) {
+                seedValid = false;
+                for (let x = 0; x < layer.width; x++) {
+                    for (let y = 0; y < layer.mapH; y++) {
+                        const pixelIndex = y * layer.width + x;
+                        const pixelColor = layer.buffer[pixelIndex+2] | (layer.buffer[pixelIndex+1] << 8) | (layer.buffer[pixelIndex] << 16);
+                        if (pixelColor == 0xb09016) {
+                            seedValid = true;
+                            break;
+                        }
+                    }
+                    if (seedValid) break;
+                }
+            }
+        });
+        if (!seedValid) {
+            alert("Hämis says: This seed does not have any possible meditation cube spawns!");
+            cancelSearch();
+            return;
+        }
+    }
+
+    if (isMatch('buried_eye_teleporter', filters.queryList[0])) {
+        let seedValid = false;
+        app.tileLayers.forEach(layer => {
+            if (layer.biomeName != 'snowcave') return;
+            // Cheap check of tile indices
+            layer.tileIndices.forEach(tileIndex => {
+                if (tileIndex == 15 || tileIndex == 23 || tileIndex == 16384+31) {
+                    seedValid = true;
+                    return;
+                }
+            });
+            // More expensive but precise check of spawn pixel colors
+            // 0x00AC33
+            if (seedValid) {
+                seedValid = false;
+                for (let x = 0; x < layer.width; x++) {
+                    for (let y = 0; y < layer.mapH; y++) {
+                        const pixelIndex = y * layer.width + x;
+                        const pixelColor = layer.buffer[pixelIndex+2] | (layer.buffer[pixelIndex+1] << 8) | (layer.buffer[pixelIndex] << 16);
+                        if (pixelColor == 0x00AC33) {
+                            seedValid = true;
+                            break;
+                        }
+                    }
+                    if (seedValid) break;
+                }
+            }
+        });
+        if (!seedValid) {
+            alert("Hämis says: This seed does not have any possible buried eye spawns!");
+            cancelSearch();
+            return;
+        }
+    }
+
     // Send the payload to the worker
     searchWorker.postMessage({
         cmd: 'START_PW_SEARCH',
