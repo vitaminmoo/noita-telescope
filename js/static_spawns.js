@@ -37,7 +37,11 @@ export const STATIC_PIXEL_SCENES = [
 	{name: "overworld/music_machine_stand", x: 14650, y: -34},
 	{name: "overworld/music_machine_stand", x: -1953, y: -1360},
 	{name: "general/huussi", x: 9000, y: -1900},
-	{name: "general/cauldron", x: 7*512, y: 10*512},
+	// `required` because the chunk this sits in is solid wall: the scene IS the
+	// room, so dropping it leaves no room at all -- and since the room's
+	// hand-drawn tile moved onto the scene (53d7013) dropping the scene drops
+	// the art with it, where the old hardcoded blit drew it either way.
+	{name: "general/cauldron", x: 7*512, y: 10*512, required: true},
 	// entities...
 ];
 

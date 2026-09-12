@@ -36,7 +36,12 @@
 //
 // To give another scene a tile: drop the PNG in data/biome_maps/custom/ and add
 // one line here. Nothing in app.js needs to change.
-import { getCauldronVariation } from './cauldron.js';
+//
+// This module imports nothing. `pick` is a pure function of the context the
+// draw pass hands it, so the manifest can be exercised under `node --test`
+// (test/scene_art.test.mjs) -- importing js/cauldron.js here would drag in
+// js/app.js and the whole browser module graph. Anything a `pick` needs from
+// the clock or the DOM arrives through ctx, like `cauldronVariation` below.
 
 export const SCENE_ART = {
 	// data/scripts/... loads one cauldron scene; which of the two tiles shows is
@@ -44,9 +49,9 @@ export const SCENE_ART = {
 	// leap-year December case, which flips per second.
 	'general/cauldron': {
 		tiles: ['cauldron_room', 'cauldron_room_broken'],
-		pick: ({ app }) => {
+		pick: ({ app, cauldronVariation }) => {
 			if (app.cauldronState === null || app.gameMode === 'nightmare') return null;
-			return (app.cauldronState === 0 || (app.cauldronState === 2 && getCauldronVariation()))
+			return (app.cauldronState === 0 || (app.cauldronState === 2 && cauldronVariation?.()))
 				? 'cauldron_room_broken' : 'cauldron_room';
 		},
 	},
@@ -77,8 +82,9 @@ export const SCENE_ART_TILES = [...new Set(Object.values(SCENE_ART).flatMap(e =>
  * scene has none (the common case) or its condition does not hold.
  *
  * @param {string} key   scene key, e.g. "general/cauldron"
- * @param {object} ctx   { app, pwX, pwY } -- the world this draw pass is on,
- *                       not app.pw, since several worlds can be on screen.
+ * @param {object} ctx   { app, pwX, pwY, cauldronVariation } -- the world this
+ *                       draw pass is on, not app.pw, since several worlds can
+ *                       be on screen, plus any clock/DOM reader a pick needs.
  */
 export function sceneArtTile(key, ctx) {
 	const entry = SCENE_ART[key];

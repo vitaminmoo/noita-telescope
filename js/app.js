@@ -29,7 +29,7 @@ import { getMaterialAtlas, initMaterialAtlas, materialAlpha, materialAtlasEntry,
 import { ENGINE_MODE_FALLBACK, ENGINE_MODE_TOPO2 } from './gl/engine_resources.js';
 import { MATERIAL_BY_NAME } from './potion_config.js';
 import { getBiomeModifiers, getStartingWeather } from './misc_generation.js';
-import { getCauldronState } from './cauldron.js';
+import { getCauldronState, getCauldronVariation } from './cauldron.js';
 import { SCENE_ART_MAX_ZOOM, SCENE_ART_TILES, sceneArtTile } from './pixel_scene_art.js';
 import { WAND_TIERS } from './wand_config.js';
 import { renderFungalShifts, renderAlchemyRecipes, getPerkSimulationState, importPerkPickups, updatePerksState } from './misc_ui.js';
@@ -4074,7 +4074,7 @@ export const app = {
 						}
 						if (bake) {
 							if (sceneArtOn) {
-								const tile = sceneArtTile(scene.key, { app: this, pwX, pwY });
+								const tile = sceneArtTile(scene.key, { app: this, pwX, pwY, cauldronVariation: getCauldronVariation });
 								const bitmap = tile && this.surfaceOverlayScenes[tile];
 								if (bitmap) sceneArt.push([bitmap, drawX, drawY, sceneData.width, sceneData.height]);
 							}
@@ -4103,7 +4103,7 @@ export const app = {
 						this.ctx.drawImage(pixelSceneCanvas, drawX, drawY, sceneData.width, sceneData.height);
 
 						if (sceneArtOn) {
-							const tile = sceneArtTile(scene.key, { app: this, pwX, pwY });
+							const tile = sceneArtTile(scene.key, { app: this, pwX, pwY, cauldronVariation: getCauldronVariation });
 							const bitmap = tile && this.surfaceOverlayScenes[tile];
 							if (bitmap) sceneArt.push([bitmap, drawX, drawY, sceneData.width, sceneData.height]);
 						}
