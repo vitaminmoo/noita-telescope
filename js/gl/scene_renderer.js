@@ -339,7 +339,8 @@ export class GLSceneRenderer {
         s.incomplete = false;
         // Each scene's best slot key at this level, built once per list and level:
         // string building was most of a query.
-        const keyId = `${level}|${pixelScenesTexturedAt(level)}`;
+        const textured = pixelScenesTexturedAt(level);
+        const keyId = `${level}|${textured}`;
         if (s.keyId !== keyId) {
             s.keyId = keyId;
             s.primaryKeys = new Array(list.length);
@@ -366,7 +367,17 @@ export class GLSceneRenderer {
                         const isNear = !(x + data.width < near.left || x > near.right || y + data.height < near.top || y > near.bottom);
                         if (isNear) {
                             const d = getPixelSceneDrawable(scene, level);
-                            if (d) slot = this.slotFor(d, level, s);
+                            // A stand-in (the shared flat build, while this
+                            // instance's textured one is being made) is not
+                            // brought in fresh. Arriving cold at a textured
+                            // zoom, the terrain under the scene is already
+                            // textured: the flat colours would replace it for
+                            // a few frames and then be replaced in turn, and
+                            // the scene reads as a flash. A stand-in already
+                            // on the GPU -- the scene was on screen from
+                            // further out -- keeps being drawn (the search
+                            // below), so zooming in stays continuous.
+                            if (d && (!textured || `${d.cacheKey}#${level}` === pk)) slot = this.slotFor(d, level, s);
                         } else {
                             warmPixelScene(scene, level);
                         }

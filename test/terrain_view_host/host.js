@@ -79,6 +79,7 @@ let rafId = 0, redrawTimer = 0;
 
 /** Draws now. Returns TerrainView.render's result, or null before a world exists. */
 host.draw = () => {
+	if (host.holdFrame) return null;
 	const t0 = performance.now();
 	const r = host.view.render({
 		width: host.size.width, height: host.size.height,
@@ -162,6 +163,9 @@ host.fitWorlds = (count = 3) => {
  *   scan       'workers' (the world scan pool) or 'main'
  *   translations  load PoI names (not needed to draw)
  *   settle     keep drawing until the view is complete before resolving
+ *   reveal     'terrain': draw the terrain as soon as it is ready, scenes as
+ *              they arrive (the first load's default); 'scanned': keep the
+ *              frame on screen until the worlds are scanned (a later seed's)
  * @returns the host's timings object
  */
 host.load = async (o = {}) => {
@@ -192,6 +196,12 @@ host.load = async (o = {}) => {
 	mark('generated');
 
 	T.prepareEarly = await early;
+	// A later seed is shown when its scenes can be: until then the frame on
+	// screen stays the old seed's. Drawing its terrain first would take away
+	// every scene the two seeds share (the static ones) for the few frames the
+	// scans are out, and bring them back.
+	const reveal = o.reveal ?? (host.world ? 'scanned' : 'terrain');
+	host.holdFrame = reveal === 'scanned';
 	host.world = world;
 	host.view.setWorld(world);
 	if (fit) host.fitWorlds(fit);
@@ -218,8 +228,10 @@ host.load = async (o = {}) => {
 
 	// Terrain is drawable now, whatever the scans are doing.
 	const f0 = performance.now();
-	host.draw();
-	host.view.terrain.finish();
+	if (!host.holdFrame) {
+		host.draw();
+		host.view.terrain.finish();
+	}
 	T.firstFrame = { terrainOnly: performance.now() - f0 };
 	mark('firstFrame');
 
@@ -232,6 +244,7 @@ host.load = async (o = {}) => {
 	}
 	await scans;
 	host.loading = false;
+	host.holdFrame = false;
 	T.scan = { total: performance.now() - t0 };
 	for (const [k, v] of Object.entries(world.timings)) if (k.startsWith('scan')) T.scan[k] = v;
 	mark('scansDone');
