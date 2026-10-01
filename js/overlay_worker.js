@@ -1,6 +1,6 @@
 // overlay_worker.js
 import {
-	bitmapFromPixels, buildTexturedScenePixels, ensureScenePixels, eraseFlatScenePixels, halveWithoutHoles, initPixelSceneTextures, injectPixelSceneData,
+	buildTexturedScenePixels, ensureScenePixels, eraseFlatScenePixels, halveWithoutHoles, initPixelSceneTextures, injectPixelSceneData,
 	overlayVisualArt, PIXEL_SCENE_DATA, pixelSceneMaterialGrid, recolorPixelScene, recolorPixelSceneForBiome, SCENE_SHARED_SAMPLE_LEVEL,
 } from './pixel_scene_generation.js';
 import * as bandSelect from './engine_resolve/band_select.js';
@@ -170,23 +170,35 @@ async function buildSceneBitmapsWorker(req) {
 		// level it erases for. halveWithoutHoles keeps any erased pixel of a block.
 		// A zoomed-out per-instance build is only ever drawn at its own level and
 		// coarser, so the finer levels are halved through but not kept.
-		const levels = [buildLevel === 0 ? bitmapFromPixels(width, height, pixels) : null];
-		const airMasks = airMask ? [buildLevel === 0 ? bitmapFromPixels(width, height, airMask) : null] : [];
+		// The bitmaps are made from ImageData, never through an OffscreenCanvas.
+		// A canvas in a worker is GPU-accelerated, so transferToImageBitmap()
+		// hands back a GPU texture: a build burst (a zoom across a mip level asks
+		// for ~100 scenes a frame, each a chain of levels and masks) flooded the
+		// GPU process with hundreds of small textures and the page's own frames
+		// queued behind them -- 100+ ms gaps with nothing running on the main
+		// thread. createImageBitmap(ImageData) keeps the pixels in memory until
+		// the draw side uploads them.
+		const toBitmap = (w, h, px) => createImageBitmap(px instanceof ImageData ? px
+			: new ImageData(px instanceof Uint8ClampedArray ? px : new Uint8ClampedArray(px.buffer, px.byteOffset, px.byteLength), w, h));
+		const pending = [];
+		const levels = [], airMasks = [];
+		const keep = (list, l, w, h, px) => {
+			list[l] = null;
+			if (l >= buildLevel) pending.push(toBitmap(w, h, px).then((b) => { list[l] = b; }));
+		};
+		keep(levels, 0, width, height, pixels);
+		if (airMask) keep(airMasks, 0, width, height, airMask);
 		let img = { width, height, data: pixels };
 		let mask = airMask && { width, height, data: airMask };
-		const toBitmap = (im) => {
-			const canvas = new OffscreenCanvas(im.width, im.height);
-			canvas.getContext('2d').putImageData(im, 0, 0);
-			return canvas.transferToImageBitmap();
-		};
 		for (let l = 1; l <= maxLevel; l++) {
 			img = halveWithoutHoles(img);
-			levels.push(l >= buildLevel ? toBitmap(img) : null);
+			keep(levels, l, img.width, img.height, img);
 			if (mask) {
 				mask = halveWithoutHoles(mask);
-				airMasks.push(l >= buildLevel ? toBitmap(mask) : null);
+				keep(airMasks, l, mask.width, mask.height, mask);
 			}
 		}
+		await Promise.all(pending);
 		const transfer = [...levels, ...airMasks].filter(Boolean);
 		self.postMessage({
 			type: 'SCENE_BITMAPS', epoch, cacheKey, key, variantKey, textured, width, height,

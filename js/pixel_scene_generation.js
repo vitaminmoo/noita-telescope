@@ -379,15 +379,6 @@ function addPixelSceneBitmap(entry, level, bitmap) {
 	pixelSceneCacheBytes += bytes;
 }
 
-export function bitmapFromPixels(width, height, pixels) {
-	const canvas = new OffscreenCanvas(width, height);
-	const ctx = canvas.getContext('2d');
-	const imageData = ctx.createImageData(width, height);
-	imageData.data.set(pixels);
-	ctx.putImageData(imageData, 0, 0);
-	return canvas.transferToImageBitmap();
-}
-
 /**
  * The engine-faithful pixels for one stamped scene instance, or null when the
  * atlas/band tables are not loaded (or scene texturing is off).
