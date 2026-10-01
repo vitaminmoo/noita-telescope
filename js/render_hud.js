@@ -53,7 +53,7 @@ let on = false;
 let tracing = false;         // items are traced with the HUD off (frame_slo.js)
 let missSource = null;       // (n) => { load, frames }: the load and the frames that missed their budgets
 let shownMisses = [];        // what the Missed frames section is showing, for the click-to-copy
-let missLoadEl = null;       // the missed page load's line, above the missed frames
+let missLoadEl = null;       // the latest page load and new seed, above the missed frames
 let copiedUntil = 0;
 let root = null, barsCanvas = null, stripCanvas = null, headEl = null, totalEl = null, queueEl = null, cachesEl = null, missEl = null;
 let timer = 0;
@@ -90,9 +90,10 @@ export const renderHud = {
 	},
 
 	/** The frame log's entries for the Missed frames section:
-	 *  (n) => { load, frames }, each a { line, record } (the text shown and the
-	 *  full record) -- the page's first load if it missed the load budget, or
-	 *  null, and the last n frames that missed theirs, newest first. */
+	 *  (n) => { loads, frames } -- the latest load of each kind as
+	 *  { name, line, record } (line and record missing until there is one),
+	 *  and the last n frames that missed their budget as { line, record },
+	 *  newest first. */
 	setMissSource(fn) { missSource = fn; },
 
 	/** Count of async render work in flight, including work posted before the HUD was on. */
@@ -235,9 +236,11 @@ function buildDom(container) {
 	queueEl = section('Queue');
 	missEl = section('Missed frames');
 	cachesEl = section('Caches');
-	// A page load that ran over its budget sits right above the missed frames.
+	// The latest page load and the latest new seed sit right above the missed
+	// frames, one line each, red when over budget; each stays until the next
+	// load of its kind replaces it.
 	missLoadEl = document.createElement('div');
-	Object.assign(missLoadEl.style, { color: INK_OVER, whiteSpace: 'pre', overflow: 'hidden', display: 'none' });
+	Object.assign(missLoadEl.style, { whiteSpace: 'pre', overflow: 'hidden' });
 	// The one part of the HUD that takes clicks: it copies what it shows.
 	for (const el of [missEl.h, missLoadEl, missEl.pre]) {
 		Object.assign(el.style, { pointerEvents: 'auto', cursor: 'copy' });
@@ -461,19 +464,24 @@ function renderCaches() {
 function renderMisses() {
 	if (!missSource) {
 		shownMisses = [];
-		missLoadEl.style.display = 'none';
+		missLoadEl.replaceChildren();
 		missEl.pre.textContent = '(frame log off)';
 		return;
 	}
-	const { load, frames } = missSource(MISS_ROWS);
-	shownMisses = load ? [load, ...frames] : frames;
+	const { loads, frames } = missSource(MISS_ROWS);
+	shownMisses = [...loads.filter((l) => l.record), ...frames];
 	missEl.h.textContent = now() < copiedUntil
 		? `Missed frames — copied ${shownMisses.length} to the clipboard`
 		: 'Missed frames — over 60 fps; ms over, what ran, what was queued (click to copy)';
 	const w = Math.max(40, Math.floor((root.clientWidth - 20) / 6.7));
 	const fit = (line) => (line.length > w ? line.slice(0, w - 1) + '…' : line);
-	missLoadEl.style.display = load ? 'block' : 'none';
-	if (load) missLoadEl.textContent = fit(`load  ${load.line}`);
+	// Always one line per kind of load, so the list below does not move.
+	missLoadEl.replaceChildren(...loads.map((l) => {
+		const row = document.createElement('div');
+		row.textContent = fit(l.record ? l.line : `${l.name}: none yet`);
+		row.style.color = !l.record ? INK_MUTED : l.record.ok ? INK : INK_OVER;
+		return row;
+	}));
 	missEl.pre.textContent = frames.length ? frames.map(({ line }) => fit(line)).join('\n') : '(none yet)';
 }
 
