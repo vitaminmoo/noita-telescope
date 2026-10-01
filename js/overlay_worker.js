@@ -21,10 +21,12 @@ self.onmessage = async function(e) {
 	const data = e.data;
 
 	if (data.cmd === 'SYNC_METADATA') {
-		injectPixelSceneData(data.pixelSceneCache);
-		workerBiomeData = data.biomeData;
-		workerTileLayers = data.tileLayers;
-		workerRecolorBuffers = data.recolorBuffers;
+		// Each part is optional: the pool (overlay_worker_pool.js) sends the scene
+		// table and the biome map separately, and never the tile layers.
+		if (data.pixelSceneCache) injectPixelSceneData(data.pixelSceneCache);
+		if ('biomeData' in data) workerBiomeData = data.biomeData;
+		if ('tileLayers' in data) workerTileLayers = data.tileLayers;
+		if ('recolorBuffers' in data) workerRecolorBuffers = data.recolorBuffers;
 	}
 	else if (data.cmd === 'SYNC_SETTINGS') {
 		updateSettings(data.settings);
@@ -224,8 +226,10 @@ function sceneGridFor(scene) {
 
 async function generateEdgeDecalTileWorker(msg) {
 	const { worldKey, tx, ty, seed, ngPlusCount, gameMode, scenes } = msg;
-	let bitmap = null;
-	if (workerTileLayers && workerBiomeData) {
+	let tile = null;
+	// The id grid normally comes with the request; only the CPU resolve needs
+	// the tile layers, which a pool worker is never given.
+	if (workerBiomeData && (msg.matRGBA || workerTileLayers)) {
 		await initEdgeDecalAtlas();
 		if (decalFieldKey !== worldKey) {
 			decalField = null;   // built below only if a tile needs the CPU resolve
@@ -283,26 +287,25 @@ async function generateEdgeDecalTileWorker(msg) {
 		var decalDebug = {
 			scenesSent: (scenes || []).length, gridsBuilt: sceneGrids.length, ...(stats || {}),
 			// Where the tile's time goes, for the perf harness.
-			resolveMs: tResolve1 - tResolve0, gridMs: tGrid - tResolve1, stampMs: tStamp - tGrid, bitmapMs: 0,
+			resolveMs: tResolve1 - tResolve0, gridMs: tGrid - tResolve1, stampMs: tStamp - tGrid, cropMs: 0,
 		};
 
+		// The tile goes back as its bytes, straight alpha: the draw side uploads
+		// them to a texture layer as they are (gl/decal_renderer.js).
 		const T = EDGE_DECAL_TILE;
-		const cropped = new Uint8ClampedArray(T * T * 4);
+		tile = new Uint8ClampedArray(T * T * 4);
 		for (let row = 0; row < T; row++) {
 			const src = ((row + P) * size + P) * 4;
-			cropped.set(rgba.subarray(src, src + T * 4), row * T * 4);
+			tile.set(rgba.subarray(src, src + T * 4), row * T * 4);
 		}
-		const canvas = new OffscreenCanvas(T, T);
-		canvas.getContext('2d').putImageData(new ImageData(cropped, T, T), 0, 0);
-		bitmap = canvas.transferToImageBitmap();
-		decalDebug.bitmapMs = performance.now() - tStamp;
+		decalDebug.cropMs = performance.now() - tStamp;
 	}
 
 	self.postMessage({
 		type: 'EDGE_DECAL_TILE',
-		worldKey, tx, ty, bitmap,
+		worldKey, tx, ty, rgba: tile,
 		debug: typeof decalDebug !== 'undefined' ? decalDebug : null,
-	}, bitmap ? [bitmap] : []);
+	}, tile ? [tile.buffer] : []);
 }
 
 async function generatePixelSceneImagesWorker(pixelSceneKeys, variantKeys) {
@@ -427,6 +430,6 @@ if (!this.tileOverlaysByPW[`${pwX},${pwY}`]) {
 // A module worker's message port can start delivering before this module has
 // finished evaluating (its imports await their data), and a message that lands
 // before `onmessage` is assigned is dropped without a trace. A pool that posts
-// to a worker it has only just created (scene_bitmap_pool.js,
+// to a worker it has only just created (overlay_worker_pool.js,
 // world_scan_pool.js) holds its messages until this arrives.
 self.postMessage({ type: 'READY' });

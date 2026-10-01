@@ -14,12 +14,14 @@
 //      &pws=0,0;-1,0;1,0     worlds to scan (default: every world the framed view sees,
 //                            heaven and hell rows included); pws=none scans nothing
 //      &scan=workers|main    where the parallel-world scans run (default workers)
-//      &worldWorkers=N &sceneWorkers=N   pool sizes (default: what the modules pick)
-//      &scenes=0  &terrain=0  &engine=0  &textures=0  &edgenoise=0   switch an operation off
+//      &worldWorkers=N &sceneWorkers=N   pool sizes (sceneWorkers: the overlay pool, which
+//                            builds scene bitmaps and decal tiles) (default: what the modules pick)
+//      &scenes=0  &terrain=0  &engine=0  &textures=0  &edgenoise=0  &decals=0   switch an operation off
 //      &auto=0               do not load on arrival; a driver calls terrainHost.load()
 //      &framelog=1           log every frame over the 60 fps budget (js/frame_slo.js)
 import { frameSlo } from '../../js/frame_slo.js';
-import { onSceneBitmaps, sceneBitmapPoolStats, startSceneBitmapPool } from '../../js/scene_bitmap_pool.js';
+import { onEdgeDecalTile } from '../../js/edge_decal_layer.js';
+import { onSceneBitmaps, overlayPoolStats, startOverlayWorkerPool } from '../../js/overlay_worker_pool.js';
 import { applyTerrainSettings, drawSpace, TerrainView } from '../../js/terrain_view.js';
 import { generateTerrainWorld, loadTerrainAssets, scanTerrainWorld, scanTerrainWorlds } from '../../js/terrain_world.js';
 import { getWorldSize } from '../../js/utils.js';
@@ -44,6 +46,7 @@ const host = {
 		engineTerrain: flag('engine'),
 		materialTextures: flag('textures'),
 		edgeNoise: flag('edgenoise'),
+		edgeDecals: flag('decals'),
 	},
 	/** Marks since navigation start (ms), in the order they happened. */
 	timeline: [],
@@ -61,7 +64,7 @@ window.terrainHost = host;
 const num = (name) => (params.has(name) ? Number(params.get(name)) : undefined);
 const DEFAULT_SCAN = params.get('scan') || 'workers';
 host.scanMode = DEFAULT_SCAN;
-if (flag('scenes')) startSceneBitmapPool({ count: num('sceneWorkers') });
+if (flag('scenes')) startOverlayWorkerPool({ count: num('sceneWorkers') });
 if (host.scanMode === 'workers') host.pool = new WorldScanPool({ count: num('worldWorkers') });
 
 const mark = (name) => host.timeline.push({ name, t: performance.now() });
@@ -125,8 +128,9 @@ host.ensureWorlds = () => {
 		.finally(() => { for (const k of keys) scanning.delete(`${world.seed}|${k}`); });
 };
 
-// A scene bitmap landed: the frame on screen is stale.
+// A scene bitmap or a decal tile landed: the frame on screen is stale.
 onSceneBitmaps(() => host.requestDraw());
+onEdgeDecalTile(() => host.requestDraw());
 
 // --- camera --------------------------------------------------------------------
 
@@ -339,7 +343,7 @@ host.measureFrames = (n, ops = {}) => {
 host.stats = () => ({
 	renderer: rendererName(),
 	pending: host.view.pending(),
-	scenePool: sceneBitmapPoolStats(),
+	scenePool: overlayPoolStats(),
 	scenes: host.view.scenes.stats(),
 	frame: host.view.timings.frame,
 	gpu: host.view.pollGpuTimings(),
@@ -363,7 +367,7 @@ function showStatus() {
 		`scenes ${ms(T.settle?.total)}`,
 		T.load ? `${T.load.name}: ${T.load.ms} ms (budget ${T.load.budgetMs})` : '',
 		`frame ${host.lastFrame ? host.lastFrame.ms.toFixed(2) : '-'} ms  zoom ${host.cam.z.toFixed(4)}`,
-		`pending: ${p.sceneBitmaps} scene builds, ${p.sceneWorlds} worlds`,
+		`pending: ${p.sceneBitmaps} scene builds, ${p.edgeDecalTiles} decal tiles, ${p.sceneWorlds} worlds`,
 		frameSlo.enabled ? `frames over 60 fps: ${frameSlo.missed}` : '',
 		host.view.failed ? `GL unavailable: ${host.view.failed}` : '',
 	].filter(Boolean).join('\n');

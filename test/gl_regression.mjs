@@ -14,10 +14,9 @@
 //
 // --host=view renders the same fixtures through the minimal terrain view host
 // (test/terrain_view_host/) instead of telescope's page: js/terrain_view.js
-// with no app around it, which is what an embedding viewer runs. It draws the
-// world's cells only -- terrain and pixel scenes -- so a fixture whose
-// baseline includes the edge-decal layer app.js draws on top can read lower
-// there. The thresholds are the app page's, and --rebaseline is refused.
+// with no app around it, which is what an embedding viewer runs: terrain,
+// pixel scenes and edge decals, as the app page draws them. The thresholds
+// are the app page's, and --rebaseline is refused.
 //
 // (plain `node` makes headless Chrome SIGTRAP in this environment.)
 //
@@ -187,7 +186,8 @@ async function renderApp(d, f) {
 
 /** The same rect through the terrain view host. The view's canvas is
  *  transparent where the world is air; the app page paints #050505 behind the
- *  terrain, so the comparison composites over the same colour. */
+ *  terrain, so the comparison composites over the same colour. `decals=0` in
+ *  the fixture run (--decals=0) leaves the decal pass out. */
 async function renderView(d, f) {
 	const dataUrl = await d.evalIn(`window.terrainHost.renderRect(${JSON.stringify(f.world)})`);
 	const img = UPNG.decode(Buffer.from(dataUrl.split(',')[1], 'base64'));
@@ -204,7 +204,7 @@ const server = await startServer();
 let d = null;
 try {
 	if (HOST === 'view') {
-		d = await openPage({ port: server.port, path: '/test/terrain_view_host/index.html?auto=0' });
+		d = await openPage({ port: server.port, path: `/test/terrain_view_host/index.html?auto=0&decals=${flagVal('decals', '1')}` });
 		for (let i = 0; i < 100; i++) {
 			if (await d.evalIn('!!window.terrainHost').catch(() => false)) break;
 			await sleep(200);
@@ -322,7 +322,7 @@ try {
 	}
 	if (d.errors.length) console.log(`\npage errors: ${d.errors.length}\n  ${d.errors.slice(0, 3).join('\n  ')}`);
 	console.log(`\n${rows.length} checks, ${failures} failing${REBASELINE ? ' (thresholds rewritten)' : ''}`
-		+ (HOST === 'view' ? '  [terrain view host: cells only, no edge decals; thresholds are the app page\'s]' : ''));
+		+ (HOST === 'view' ? '  [terrain view host; thresholds are the app page\'s]' : ''));
 	if (failures) process.exitCode = 1;
 } finally {
 	if (d) d.close();

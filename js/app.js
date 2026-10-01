@@ -26,8 +26,8 @@ import { addStaticPixelScenes } from './static_spawns.js';
 import { NollaPrng } from './nolla_prng.js';
 import { appSettings, updateSettings, updateSettingsFromUI, updateSpellFlags, updateSpecialFlags, RENDER_LAYERS, readRenderLayersFromUI } from './settings.js';
 import { syncWorldWorkerData, getOrGenerateWorld, syncSettingsToWorldWorker } from './world_manager.js';
-import { syncOverlayWorkerData, getOrGenerateOverlay, syncSettingsToOverlayWorker, recolorPixelScenes, invalidatePendingOverlays, requestEdgeDecalTiles, overlayQueueStats } from './overlay_manager.js';
-import { drawEdgeDecals, edgeDecalAt, invalidateEdgeDecals, pendingEdgeDecalTiles } from './edge_decal_layer.js';
+import { syncOverlayWorkerData, getOrGenerateOverlay, syncSettingsToOverlayWorker, recolorPixelScenes, invalidatePendingOverlays, overlayQueueStats } from './overlay_manager.js';
+import { edgeDecalAt, invalidateEdgeDecals, pendingEdgeDecalTiles } from './edge_decal_layer.js';
 import { runRenderBenchmark } from './render_benchmark.js';
 import { renderHud, renderTrace } from './render_hud.js';
 import { atlasEntryMeanRGB, getMaterialAtlas, initMaterialAtlas, materialAlpha, materialAtlasEntry, materialTexelInfo } from './gl/material_atlas.js';
@@ -344,8 +344,6 @@ export const app = {
 	// to -1 by drawNow() so a repaint always re-reads (displayedColorAt, which
 	// defers the read and keeps its own 1x1 scratch context here).
 	colorProbe: { x: -1, y: -1, rgb: 0, wantX: -1, wantY: -1, timer: 0, ctx: null },
-	// Same for the decal texel (decalTexelAt); keyed on the frame it was read in.
-	decalProbe: { x: NaN, y: NaN, frame: -1, value: null, wantX: 0, wantY: 0, timer: 0 },
 	frameSerial: 0,
 	frameLogFromURL: new URLSearchParams(location.search).get('framelog') === '1',
 	lastHoverEvent: null,
@@ -1768,30 +1766,12 @@ export const app = {
 		return null;
 	},
 
-	// The decal texel under the cursor, deferred exactly like displayedColorAt:
-	// edge_decal_layer.js edgeDecalAt draws a GPU-resident tile bitmap into a
-	// CPU canvas, which waits for every queued GPU command first -- 13-17 ms per
-	// mousemove while a drag keeps the GPU busy (measured: it was the whole
-	// input cost at 1:1). So nothing is read while dragging, and a still cursor
-	// gets its decal line ~80 ms after the frame settles.
+	// The decal texel under the cursor. The tiles near the view are kept as plain
+	// bytes on this thread (edge_decal_layer.js), so this is an array read. It
+	// used to draw a GPU-resident tile bitmap into a CPU canvas, which waited for
+	// every queued GPU command first: 13-17 ms per mousemove while dragging.
 	decalTexelAt(absX, absY) {
-		const probe = this.decalProbe;
-		if (probe.x === absX && probe.y === absY && probe.frame === this.frameSerial) return probe.value;
-		if (this.drag.on) return null;
-		probe.wantX = absX;
-		probe.wantY = absY;
-		if (!probe.timer) {
-			probe.timer = setTimeout(() => {
-				probe.timer = 0;
-				if (this.drag.on || !this.lastHoverEvent) return;
-				probe.value = edgeDecalAt(probe.wantX, probe.wantY);
-				probe.x = probe.wantX;
-				probe.y = probe.wantY;
-				probe.frame = this.frameSerial;
-				this.hover(this.lastHoverEvent);
-			}, 80);
-		}
-		return null;
+		return edgeDecalAt(absX, absY);
 	},
 
 	// One tooltip line per fact about the hovered world pixel: what it is, which
@@ -3013,6 +2993,7 @@ export const app = {
 
 		view.setWorld({
 			seed: this.seed,
+			ngPlusCount: this.ngPlusCount,
 			isNGP: this.isNGP,
 			gameMode: this.gameMode,
 			tileLayers: this.tileLayers,
@@ -3032,6 +3013,7 @@ export const app = {
 			frame: this.frameSerial,
 			detailZoom: this.detailZoom(),
 			scenes: !!scenes,
+			edgeDecals: appSettings.edgeDecals,
 			onPass: prof ? (name) => markLayer(prof, name) : null,
 		});
 
@@ -3575,18 +3557,21 @@ export const app = {
 		}
 		// The frame log runs with the HUD, with its own option, or by ?framelog=1.
 		const frameLog = !!(appSettings.debugRenderHud || appSettings.debugFrameLog) || this.frameLogFromURL;
-		if (frameSlo.enabled !== frameLog) {
+		if (!this.frameLogStates) {
+			// Registered whether or not the log is on yet: ?framelog=1 switches
+			// it on before the app exists.
+			this.frameLogStates = true;
 			frameSlo.addState('view', () => ({
 				x: Math.round(this.cam.x), y: Math.round(this.cam.y), z: +this.cam.z.toFixed(4),
 				pw: this.pw, pwVertical: this.pwVertical, canvas: [this.canvas.width, this.canvas.height],
 				worlds: this.worldsInView.size, dragging: this.drag.on,
 			}));
 			frameSlo.addState('overlays', () => overlayQueueStats());
-			frameSlo.setEnabled(frameLog);
 		}
+		if (frameSlo.enabled !== frameLog) frameSlo.setEnabled(frameLog);
 		const prof = this.startLayerProfile();
 		this.colorProbe.x = -1; // the tooltip's cached readback belongs to the old frame
-		this.frameSerial++;     // ... and so does the decal probe's (decalTexelAt)
+		this.frameSerial++;
 		this.scenesOnGL = false;
 		this.ctx.fillStyle = '#050505';
 		this.ctx.fillRect(0,0,this.canvas.width,this.canvas.height);
@@ -4314,19 +4299,9 @@ export const app = {
 		}
 		if (prof) markLayer(prof, 'pixelScenes');
 
-		// Layer 5b
-		// Edge decals: the sprite band the engine bakes into cell colors along
-		// material borders. Drawn ABOVE the pixel scenes because the tiles carry
-		// the engine's full stamp history: the terrain pass, then each scene's
-		// own paint-time pass — a scene erases the terrain stamps under the
-		// cells it replaces and dresses its own, so every texel left in a tile
-		// belongs on top. Only the engine-resolved GL terrain has per-pixel
-		// material identity to hang the pass off, hence the gate.
-		if (L.tileOverlays && appSettings.edgeDecals && appSettings.engineTerrain
-			&& appSettings.terrainRenderer === 'gl' && biomeOverlayMode !== 'none') {
-			drawEdgeDecals(this.ctx, this, viewRect, requestEdgeDecalTiles);
-			if (prof) markLayer(prof, 'edgeDecals');
-		}
+		// (Layer 5b, the edge decals -- the sprite band the engine bakes into cell
+		// colors along material borders -- is a GL pass of the terrain view now,
+		// drawn over the scenes inside drawTerrainGL: js/edge_decal_layer.js.)
 
 		// Layer 6
 		// Debug overlays (tile bounds, pathfinding)

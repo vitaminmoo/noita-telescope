@@ -20,7 +20,7 @@ import { GENERATOR_CONFIG } from './generator_config.js';
 import { loadPixelSceneData } from './pixel_scene_generation.js';
 import { loadPNG } from './png_sanitizer.js';
 import { getSpecialPoIs, prescanSpawnFunctions, scanSpawnFunctions } from './poi_scanner.js';
-import { syncSceneBitmapPoolMetadata } from './scene_bitmap_pool.js';
+import { syncOverlayPoolMetadata } from './overlay_worker_pool.js';
 import { appSettings } from './settings.js';
 import { addStaticPixelScenes } from './static_spawns.js';
 import { generateBiomeTiles } from './tile_generator.js';
@@ -69,7 +69,7 @@ function timedSync(timings, name, fn) {
  * @param {object} [opts]
  * @param {boolean} [opts.translations]   PoI names (default on; the scan runs
  *        without them, PoIs then carry raw ids)
- * @param {boolean} [opts.sceneWorkers]   start the scene bitmap pool and give it
+ * @param {boolean} [opts.sceneWorkers]   start the overlay worker pool and give it
  *        the scene table (default on; off for a host that draws no scenes)
  * @param {string[]} [opts.baseMaps]      which base biome maps to decode now
  *        ('normal', 'ngp', 'nightmare'); the others load on first use
@@ -86,7 +86,7 @@ export async function loadTerrainAssets({ translations = true, sceneWorkers = tr
 		.map(async (conf) => { conf.wangData = await loadPNG(conf.wangFile); }))));
 	jobs.push(timed(timings, 'pixelSceneMeta', () => loadPixelSceneData()));
 	await Promise.all(jobs);
-	if (sceneWorkers) await timed(timings, 'sceneWorkerSync', () => syncSceneBitmapPoolMetadata());
+	if (sceneWorkers) await timed(timings, 'sceneWorkerSync', () => syncOverlayPoolMetadata());
 	return timings;
 }
 

@@ -291,6 +291,7 @@ try {
 					'scenes: colour pass only': { terrain: false, sceneAir: false },
 					'no material texels': { materialTextures: false },
 					'no edge noise': { edgeNoise: false },
+					'no edge decals': { edgeDecals: false },
 					'1/10 palette terrain': { engineTerrain: false },
 				};
 				const res = {};

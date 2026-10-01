@@ -3,10 +3,11 @@
 //
 // Telescope's own page (app.js drawTerrainGL) and an embedding map viewer both
 // drive this class and nothing below it. The host owns the camera, the canvas
-// it shows and everything that is not a world cell (backgrounds, PoI markers,
-// decals); the view owns the WebGL2 context, the GL terrain pass
-// (gl/terrain_renderer.js) and the GL scene pass (gl/scene_renderer.js), and
-// knows which parallel-world copies a camera can see.
+// it shows and everything that is not a world cell (backgrounds, PoI markers);
+// the view owns the WebGL2 context and the three passes that draw into it --
+// terrain (gl/terrain_renderer.js), pixel scenes (gl/scene_renderer.js) and
+// edge decals (edge_decal_layer.js, gl/decal_renderer.js) -- and knows which
+// parallel-world copies a camera can see.
 //
 // Nothing is stored per zoom level. A frame is shaded from the seed's data for
 // exactly the pixels on screen, so panning or zooming never swaps in a coarser
@@ -34,15 +35,17 @@
 // budgets) are realm-wide state in settings.js, shared with the workers; a host
 // without telescope's settings UI sets them through applyTerrainSettings().
 import { CHUNK_SIZE, WORLD_CHUNK_CENTER_Y } from './constants.js';
+import { drawEdgeDecals, EDGE_DECAL_MAX_TILES, EDGE_DECAL_TILE, pendingEdgeDecalTiles } from './edge_decal_layer.js';
 import { frameSlo } from './frame_slo.js';
 import { GENERATOR_CONFIG } from './generator_config.js';
+import { GLDecalRenderer } from './gl/decal_renderer.js';
 import { initMaterialAtlas } from './gl/material_atlas.js';
 import { GLSceneRenderer } from './gl/scene_renderer.js';
 import { GLTerrainRenderer } from './gl/terrain_renderer.js';
 import {
 	getPixelSceneCacheStats, initPixelSceneTextures, pendingPixelSceneBitmaps, pixelSceneMipLevel,
 } from './pixel_scene_generation.js';
-import { sceneBitmapPoolStats, syncSceneBitmapPoolSettings } from './scene_bitmap_pool.js';
+import { overlayPoolStats, syncOverlayPoolSettings } from './overlay_worker_pool.js';
 import { appSettings, updateSettings } from './settings.js';
 import { getPWLimit, getWorldCenter, getWorldSize } from './utils.js';
 
@@ -71,7 +74,7 @@ export function drawSpace(isNGP, gameMode = 'normal') {
  */
 export function applyTerrainSettings(settings) {
 	updateSettings(settings);
-	syncSceneBitmapPoolSettings(appSettings);
+	syncOverlayPoolSettings(appSettings);
 }
 
 export class TerrainView {
@@ -85,6 +88,7 @@ export class TerrainView {
 	constructor({ canvas = null } = {}) {
 		this.terrain = new GLTerrainRenderer({ canvas });
 		this.scenes = new GLSceneRenderer();
+		this.decals = new GLDecalRenderer(EDGE_DECAL_TILE, EDGE_DECAL_MAX_TILES);
 		this.world = null;
 		this.frame = 0;
 		/** `prepare`: ms per load step of the last prepare() or lazy build.
@@ -103,7 +107,8 @@ export class TerrainView {
 					building: c.pending, buildingTextured: c.pendingTextured,
 					requests: c.requests, refetches: c.refetches, evictions: c.evictions, failures: c.failures,
 				},
-				sceneWorkers: sceneBitmapPoolStats().inflight,
+				poolWorkers: overlayPoolStats().inflight,
+				decals: this.decals.stats(),
 				sceneAtlas: { pages: g.pages, mb: Math.round(g.bytes / 1048576), images: g.slots },
 				gpuMs: this.timings.gpu,
 				failed: this.failed,
@@ -125,7 +130,7 @@ export class TerrainView {
 	 * The world to draw. Cheap to call every frame: resources are rebuilt only
 	 * when the layers / biome data objects or the seed change.
 	 * @param {object} world
-	 *   seed, isNGP, gameMode
+	 *   seed, ngPlusCount, isNGP, gameMode
 	 *   tileLayers       generateBiomeTiles' layers (PW 0; shared by every PW)
 	 *   biomeData        generateBiomeData's result
 	 *   generatorConfig  GENERATOR_CONFIG by default
@@ -255,8 +260,8 @@ export class TerrainView {
 	 *   pw, pwVertical       draw space's anchor world (default 0)
 	 *   worlds               world keys to draw scenes for (default: worldsInView)
 	 *   frame                the host's frame serial (default: a counter)
-	 *   onPass               (name) => void, called as 'terrainGL' and 'scenesGL'
-	 *                        finish, for a host's own per-layer profiler
+	 *   onPass               (name) => void, called as 'terrainGL', 'scenesGL'
+	 *                        and 'edgeDecals' finish, for a host's own profiler
 	 *  Operations, each on unless said otherwise:
 	 *   terrain              false: clear only, no terrain pass
 	 *   engineTerrain        the game's per-pixel resolve; false = the 1/10
@@ -267,14 +272,18 @@ export class TerrainView {
 	 *   scenes               false: no pixel scenes at all (nothing requested)
 	 *   sceneAir, sceneColor false: skip that sub-pass of the scene draw
 	 *   sceneBudgetBytes     GPU atlas budget for scene bitmaps
+	 *   edgeDecals           the decal band the engine bakes along material
+	 *                        borders (default: the setting; needs engineTerrain,
+	 *                        pwVertical 0, and only draws at camZ >= 1)
 	 *   detailZoom           the zoom every level-of-detail gate reads
 	 *                        (default camZ; Infinity = never reduce detail)
 	 *
-	 * @returns {null|{canvas, terrain:boolean, scenes:boolean, worlds:string[],
-	 *                 redrawInMs:number|null, complete:boolean}}
-	 *   null when GL is unavailable (see `failed`). `scenes` says the scene pass
-	 *   ran; `redrawInMs` is non-null when landed bitmaps were left for a later
-	 *   frame; `complete` is false while anything the frame wanted is missing.
+	 * @returns {null|{canvas, terrain:boolean, scenes:boolean, edgeDecals:boolean,
+	 *                 worlds:string[], redrawInMs:number|null, complete:boolean}}
+	 *   null when GL is unavailable (see `failed`). `scenes` / `edgeDecals` say
+	 *   that pass ran; `redrawInMs` is non-null when landed bitmaps were left
+	 *   for a later frame; `complete` is false while anything the frame wanted
+	 *   is missing.
 	 */
 	render(view) {
 		const w = this.world;
@@ -324,11 +333,20 @@ export class TerrainView {
 			lap('scenesGL');
 			view.onPass?.('scenesGL');
 		}
+		// Above the scenes: a tile carries the stamps of the terrain and of every
+		// scene painted over it (edge_decal_layer.js).
+		let edgeDecals = false;
+		if ((view.edgeDecals ?? appSettings.edgeDecals) && engineTerrain && view.terrain !== false) {
+			edgeDecals = drawEdgeDecals(terrain, this.decals, w, { ...view, pw, pwVertical }, this.frame);
+			lap('edgeDecals');
+			view.onPass?.('edgeDecals');
+		}
 		this.timings.frame = t;
 		return {
 			canvas,
 			terrain: view.terrain !== false,
 			scenes,
+			edgeDecals,
 			worlds,
 			redrawInMs: this.redrawInMs,
 			complete: this.pending().total === 0,
@@ -373,14 +391,18 @@ export class TerrainView {
 
 	/**
 	 * What the last frame wanted and did not have yet. A view is complete when
-	 * `total` is 0: every scene bitmap in view has been built and uploaded, and
-	 * every world in view has its placement list.
+	 * `total` is 0: every scene bitmap in view has been built and uploaded,
+	 * every world in view has its placement list, and no decal tile is in flight.
 	 */
 	pending() {
 		const sceneBitmaps = pendingPixelSceneBitmaps();
 		const sceneUploads = this.redrawInMs != null ? 1 : 0;
 		const sceneWorlds = this.missingSceneWorlds || 0;
-		return { sceneBitmaps, sceneUploads, sceneWorlds, total: sceneBitmaps + sceneUploads + sceneWorlds };
+		const edgeDecalTiles = pendingEdgeDecalTiles();
+		return {
+			sceneBitmaps, sceneUploads, sceneWorlds, edgeDecalTiles,
+			total: sceneBitmaps + sceneUploads + sceneWorlds + edgeDecalTiles,
+		};
 	}
 
 	/** Frees the terrain resources; the next frame rebuilds them. */
@@ -391,6 +413,7 @@ export class TerrainView {
 	/** Frees everything, including the scene atlas pages. */
 	dispose() {
 		this.scenes.dropAll();
+		this.decals.dropAll();
 		this.terrain.dispose();
 		this.world = null;
 	}
