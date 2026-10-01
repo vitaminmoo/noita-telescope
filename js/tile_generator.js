@@ -201,7 +201,10 @@ function findBiomeRegions(pixels, width, height, targetColor) {
     return { regions, bboxes };
 }
 
-function applyMasking(pixels, imgData, mapW, bbox, validChunks, offsetY = 4) {
+// Blanks the buffer outside the region's own chunks. (It used to fill a preview
+// image for a canvas as well; nothing drew that canvas, and a worker has no
+// document to make one with.)
+function applyMasking(pixels, mapW, bbox, validChunks, offsetY = 4) {
     const [minCX, minCY, maxCX, maxCY] = bbox;
     let tx = 0;
     for (let cx = minCX; cx <= maxCX; cx++) {
@@ -211,19 +214,7 @@ function applyMasking(pixels, imgData, mapW, bbox, validChunks, offsetY = 4) {
         for (let cy = minCY; cy <= maxCY; cy++) {
             let ch = 51;
             if (cy % 5 === 4) ch += 1;
-            if (validChunks.has(`${cx},${cy}`)) {
-                for (let y = 0; y < ch; y++) {
-                    for (let x = 0; x < cw; x++) {
-                        const srcIdx = ((ty + y + offsetY) * mapW + (tx + x)) * 3;
-                        const dstIdx = ((ty + y) * mapW + (tx + x)) * 4;
-                        const r = pixels[srcIdx], g = pixels[srcIdx + 1], b = pixels[srcIdx + 2];
-                        imgData.data[dstIdx] = r; imgData.data[dstIdx+1] = g; imgData.data[dstIdx+2] = b;
-                        imgData.data[dstIdx+3] = (r <= 1 && g <= 1 && b <= 1) ? 0 : 255; // TODO: Hopefully this doesn't miss anything.
-                        // Actually, not really seeing any effect from this?
-                    }
-                }
-            }
-            else {
+            if (!validChunks.has(`${cx},${cy}`)) {
                 for (let y = 0; y < ch; y++) {
                     for (let x = 0; x < cw; x++) {
                         const srcIdx = ((ty + y + offsetY) * mapW + (tx + x)) * 3;
@@ -296,25 +287,17 @@ function generateStaticTile(biomeName, config, bbox) {
     // For static tiles, we can just load the image and convert it to the same format as the generated buffers
     
     const wangData = config.wangData;
-    // Generate canvas and buffer
-    const canvas = document.createElement('canvas');
-    canvas.width = wangData.width;
-    canvas.height = wangData.height;
-    const ctx = canvas.getContext('2d');
-    const imgData = ctx.createImageData(wangData.width, wangData.height + 4); // Add 4 pixels of height to match generated buffers
+    // 4 rows of height on top, to match the generated buffers
     const buffer = new Uint8Array(wangData.width * (wangData.height + 4) * 3);
     for (let y = 0; y < wangData.height; y++) {
         for (let x = 0; x < wangData.width; x++) {
-            // Original data is RGBA, need to convert to canvas format
+            // Original data is RGBA
             const inIdx = (y * wangData.width + x) * 4;
             const outIdxBuffer = ((y+4) * wangData.width + x) * 3;
-            const outIdxCanvas = ((y+4) * wangData.width + x) * 4;
-            const r = wangData.data[inIdx], g = wangData.data[inIdx + 1], b = wangData.data[inIdx + 2], a = wangData.data[inIdx + 3];
-            imgData.data[outIdxCanvas] = r; imgData.data[outIdxCanvas + 1] = g; imgData.data[outIdxCanvas + 2] = b; imgData.data[outIdxCanvas + 3] = a;
+            const r = wangData.data[inIdx], g = wangData.data[inIdx + 1], b = wangData.data[inIdx + 2];
             buffer[outIdxBuffer] = r; buffer[outIdxBuffer + 1] = g; buffer[outIdxBuffer + 2] = b;
         }
     }
-    ctx.putImageData(imgData, 0, 0);
 
     // Try to make corrected position...
     const div5x = Math.floor(bbox[0] / 5);
@@ -462,15 +445,10 @@ export async function generateBiomeTiles(biomePixels, width, height, biomeConfig
                 }
 
                 const { minX, minY, width: mapW, mapH: renderH } = rawResult;
-                const canvas = document.createElement('canvas');
-                canvas.width = mapW; canvas.height = renderH;
-                const ctx = canvas.getContext('2d');
-                const imgData = ctx.createImageData(mapW, renderH);
                 const validChunks = new Set(regions[i].map(p => `${p[0]},${p[1]}`));
 
-                // Masking off sections which aren't in valid chunks (writes to buffer and imgData)
-                applyMasking(rawResult.buffer, imgData, mapW, bboxes[i], validChunks);
-                ctx.putImageData(imgData, 0, 0);
+                // Masking off sections which aren't in valid chunks
+                applyMasking(rawResult.buffer, mapW, bboxes[i], validChunks);
 
                 // Try to make corrected position...
                 const div5x = Math.floor(bboxes[i][0] / 5);
