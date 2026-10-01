@@ -5,6 +5,12 @@
 # requests. Deflated even though PNGs already are: it still saves ~25% of the
 # download, and zip.js inflates through the browser's native DecompressionStream.
 #
+# The app reads the PIXELS of the pixel scenes (and of the wang templates and
+# base biome maps) from data/packs instead, already decoded; the zips are what
+# it falls back to. When a PNG in one of those folders changes, rebuild the
+# packs too: node tools/build_asset_packs.mjs (test/asset_packs.test.mjs fails
+# until you do).
+#
 # Run: tools/build_asset_zips.sh [folder...]   (default: all of them)
 set -eu
 cd "$(dirname "$0")/../data"

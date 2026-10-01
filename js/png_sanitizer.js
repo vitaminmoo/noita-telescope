@@ -1,3 +1,4 @@
+import { loadPackedImage } from "./asset_pack.js";
 import { getFromZipFirst } from "./zip_extraction.js";
 
 // Detect Node so the rest of this file can pick the npm package instead of the
@@ -76,6 +77,13 @@ async function readPngBufferNode(url) {
 // Updated version using UPNG
 
 export async function loadPNG(url, { bitmap: wantBitmap = true } = {}) {
+    // Pixels only: an asset pack (js/asset_pack.js) has them already decoded,
+    // the same bytes the UPNG path below produces. A caller that wants the
+    // bitmap too gets the PNG, so the browser decodes what it always did.
+    if (!IS_NODE && !wantBitmap) {
+        const packed = await loadPackedImage(url);
+        if (packed) return { data: packed.data, width: packed.width, height: packed.height, bitmap: null };
+    }
     // TODO: Is this loading the library for every PNG?
     const UPNG = await loadUpng();
     let originalBuffer;
