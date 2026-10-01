@@ -1,7 +1,6 @@
-// Lazy so Node can import this module without resolving the https URL.
+// Lazy, so Node (which never unzips) does not load it. Vendored: js/vendor/README.md.
 let _zipPromise = null;
-const loadZipLib = () => _zipPromise ??=
-    import("https://cdn.jsdelivr.net/npm/@zip.js/zip.js@2.8/index.min.js");
+const loadZipLib = () => _zipPromise ??= import("./vendor/zip.js");
 
 const availableZipBundles = [
 	{ prefix: "../data/pixel_scenes/", zipUrl: "../data/pixel_scenes.zip" },

@@ -1,16 +1,16 @@
 import { getFromZipFirst } from "./zip_extraction.js";
 
-// Detect Node so the rest of this file can pick ESM-local deps instead of the
-// browser CDN URLs. `process` is injected by Node; browsers leave it undefined.
+// Detect Node so the rest of this file can pick the npm package instead of the
+// browser build. `process` is injected by Node; browsers leave it undefined.
 const IS_NODE = typeof process !== 'undefined' && !!process?.versions?.node;
 
-// Lazy so Node can import this module without resolving the https URL.
-// In Node the browser CDN URL fails to resolve, so swap to the local npm copy.
+// Lazy, and the browser's copy is vendored (js/vendor/README.md): it used to
+// come from a CDN at run time, and the page did not load when that fetch failed.
 let _upngPromise = null;
 const loadUpng = () => _upngPromise ??= (
     IS_NODE
         ? import("upng-js").then(m => m.default || m)
-        : import("https://cdn.jsdelivr.net/npm/upng-js@2.1.0/+esm").then(m => m.default)
+        : import("./vendor/upng.js").then(m => m.default)
 );
 
 /**
