@@ -9,8 +9,8 @@ import { bandBiomeMap, getBiomeAtWorldCoordinates, getWorldSize, tileToWorldCoor
 
 export async function createBiomeColorLookup(mapPath) {
 	const [img1, img2] = await Promise.all([
-		loadPNG('../data/biome_maps/biome_map.png'),
-		loadPNG(mapPath)
+		loadPNG('../data/biome_maps/biome_map.png', { bitmap: false }),
+		loadPNG(mapPath, { bitmap: false })
 	]);
 
 	const nameLookup = {};

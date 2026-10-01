@@ -3,6 +3,7 @@
 // Rebuilds the asset packs js/asset_pack.js reads: for every PNG under the
 // folders a pack covers, the RGBA bytes js/png_sanitizer.js loadPNG decodes it
 // to, gzipped, behind a JSON index. The app then inflates instead of decoding.
+// Run it when a PNG in one of those folders is added or changed.
 //
 //   node tools/build_asset_packs.mjs [--check]
 //
@@ -14,7 +15,7 @@
 import { readdirSync, readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { gzipSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
-import { ASSET_PACKS, PACK_MAGIC, PACK_VERSION } from '../js/asset_pack.js';
+import { ASSET_PACKS, PACK_MAGIC, PACK_VERSION, packOf } from '../js/asset_pack.js';
 import { loadPNG } from '../js/png_sanitizer.js';
 
 const DATA = fileURLToPath(new URL('../data/', import.meta.url));
@@ -33,6 +34,9 @@ export async function buildAssetPack(spec) {
 	let offset = 0;
 	for (const paths of [...spec.folders.map(pngsUnder), [...spec.files].sort()]) {
 		for (const path of paths) {
+			// In the pack the app will look for it in: an earlier pack may have
+			// taken single files out of this one's folder.
+			if (packOf(path) !== spec) continue;
 			// Through loadPNG itself, so the pack cannot disagree with the decode
 			// it replaces (ancillary chunks stripped, then UPNG).
 			const img = await loadPNG(`../data/${path}`, { bitmap: false });

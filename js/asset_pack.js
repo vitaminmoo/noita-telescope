@@ -1,17 +1,19 @@
-// Asset packs: the PNGs the generation and the scene builds read pixels from,
-// already decoded.
+// Asset packs: the site's PNGs, already decoded, a folder's worth to a file.
 //
-// Those pixels are needed as bytes (wang templates, base biome maps, pixel
-// scenes and their colors files), so each PNG used to be pulled out of a zip
-// and inflated and unfiltered in JavaScript (UPNG) -- on a first visit, most of
-// what the workers did before they could start: a few hundred milliseconds for
-// the terrain worker's templates, and well over a second across the scene
-// workers for the scenes of an overview.
+// The app reads a couple of thousand images: the generation and the scene
+// builds need pixels as bytes (wang templates, base biome maps, pixel scenes
+// and their colors files), the page draws the rest (background art, weather
+// sprites, its overlays of the biome map). One request apiece is too many, so
+// they used to travel as zips, and each image was then pulled out of its zip
+// in JavaScript and, where bytes were wanted, inflated and unfiltered there
+// too (UPNG) -- on a first visit, most of what the workers did before they
+// could start.
 //
-// A pack (tools/build_asset_packs.mjs) holds the same RGBA bytes UPNG would
+// A pack (tools/build_asset_packs.mjs) holds the RGBA bytes UPNG would
 // produce, one gzip member per image, so reading one is the browser's own
-// inflate (DecompressionStream) and nothing else. An image that is not in a
-// pack -- or a browser without DecompressionStream -- falls back to the PNG.
+// inflate (DecompressionStream) and nothing else, and the bytes are fewer than
+// the PNGs' were. An image that is not in a pack -- or a browser without
+// DecompressionStream -- is fetched as its PNG.
 //
 // Layout: 'NTPK', u32 LE index length, the index as JSON
 // ({ version, entries: { '<path under data/>': [offset, length, width, height] } }),
@@ -33,7 +35,17 @@ export const ASSET_PACKS = [
 	},
 	// The pixel scenes and their colors files.
 	{ file: 'packs/pixel_scenes.pack', folders: ['pixel_scenes/'], files: [] },
+	// What is only drawn: the background art and the weather sprites.
+	{ file: 'packs/backgrounds.pack', folders: ['backgrounds/', 'weather_gfx/', 'biome_impl/'], files: [] },
+	// The page's overlays of the biome map (surface, sky, weather, scene art)
+	// and the other biome maps: all of the folder the terrain pack leaves.
+	{ file: 'packs/biome_maps.pack', folders: ['biome_maps/'], files: [] },
 ];
+
+/** The pack that holds `path` (under data/): the first whose files or folders name it. */
+export function packOf(path) {
+	return ASSET_PACKS.find(s => s.files.includes(path) || s.folders.some(f => path.startsWith(f))) ?? null;
+}
 
 export const PACK_MAGIC = 0x4b50544e;   // 'NTPK', little-endian
 export const PACK_VERSION = 1;
@@ -74,7 +86,7 @@ export async function loadPackedImage(url) {
 	const href = new URL(url, import.meta.url).href;
 	if (!href.startsWith(DATA_URL)) return null;
 	const path = href.slice(DATA_URL.length);
-	const spec = ASSET_PACKS.find(s => s.files.includes(path) || s.folders.some(f => path.startsWith(f)));
+	const spec = packOf(path);
 	if (!spec) return null;
 	const pack = await loadPack(spec.file);
 	const entry = pack?.entries[path];

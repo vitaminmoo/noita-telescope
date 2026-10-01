@@ -1,13 +1,10 @@
 // Bitmap loader: PNGs decoded to ImageBitmaps in a worker.
 //
-// The page's background art is a few hundred PNGs that are only ever drawn, so
-// all it needs of each is an ImageBitmap. Getting one is cheap for the browser
-// (it decodes off-thread) but not for the page: each file is pulled out of a
-// zip and stripped of its color chunks first (png_sanitizer.js), a few
-// milliseconds of script apiece, and on a first load that script ran on the
-// page's thread in the middle of everything else -- 0.8 s of it alone, 2.3 s
-// while the seed was loading. Here it runs in a worker of its own and the
-// bitmaps are handed over.
+// The page's background art is a few hundred images that are only ever drawn,
+// so all it needs of each is an ImageBitmap. Each is inflated out of its asset
+// pack and made a bitmap (png_sanitizer.js) -- a little script apiece, which on
+// a first load ran on the page's thread in the middle of everything else. Here
+// it runs in a worker of its own and the bitmaps are handed over.
 //
 // Without workers (or if the worker fails) the files load on this thread, as before.
 import { loadTimeline } from './load_timeline.js';

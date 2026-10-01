@@ -23,7 +23,7 @@ async function preloadOverlays() {
 
 	for (let key in BiomeOverlays) {
 		const entry = BiomeOverlays[key];
-		entry.image = await loadPNG(entry.path);
+		entry.image = await loadPNG(entry.path, { bitmap: false });
 	}
 }
 preloadOverlays();

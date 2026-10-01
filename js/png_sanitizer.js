@@ -1,5 +1,5 @@
 import { loadPackedImage } from "./asset_pack.js";
-import { getFromZipFirst } from "./zip_extraction.js";
+import { assetUrl } from "./asset_url.js";
 
 // Detect Node so the rest of this file can pick the npm package instead of the
 // browser build. `process` is injected by Node; browsers leave it undefined.
@@ -14,14 +14,22 @@ const loadUpng = () => _upngPromise ??= (
         : import("./vendor/upng.js").then(m => m.default)
 );
 
+// A PNG's bytes, by its URL (relative to this module). The images the app
+// reads are in the asset packs (js/asset_pack.js), already decoded; this is
+// for one that is not, or a browser that cannot read the packs.
+async function fetchPng(url) {
+    const response = await fetch(assetUrl(new URL(url, import.meta.url)));
+    if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
+    return response.arrayBuffer();
+}
+
 /**
  * sanitizes a PNG buffer by removing ancillary chunks (gAMA, iCCP, sRGB, etc.)
  * that cause browsers to alter pixel values.
  * Returns a Blob to the cleaned image.
  */
 export async function sanitizePng(url) {
-    const response = await getFromZipFirst(url);
-    const buffer = await response.arrayBuffer();
+    const buffer = await fetchPng(url);
     const view = new DataView(buffer);
     
     // PNG Signature: 89 50 4E 47 0D 0A 1A 0A
@@ -64,9 +72,9 @@ export async function sanitizePng(url) {
     return new Blob(chunks, { type: 'image/png' });
 }
 
-// In Node, `getFromZipFirst` can't resolve browser-relative URLs or use
-// `fetch`. Read the underlying PNG straight off disk; the zip bundles exist
-// only to avoid N requests from the browser, which isn't a Node concern.
+// Node's `fetch` can't read file:// URLs. Read the PNG straight off disk; the
+// asset packs exist to spare the browser N requests and the decode, which
+// isn't a Node concern.
 async function readPngBufferNode(url) {
     const fs = await import('node:fs/promises');
     const { fileURLToPath } = await import('node:url');
@@ -77,12 +85,11 @@ async function readPngBufferNode(url) {
 // Updated version using UPNG
 
 export async function loadPNG(url, { bitmap: wantBitmap = true } = {}) {
-    // Pixels only: an asset pack (js/asset_pack.js) has them already decoded,
-    // the same bytes the UPNG path below produces. A caller that wants the
-    // bitmap too gets the PNG, so the browser decodes what it always did.
-    if (!IS_NODE && !wantBitmap) {
+    // An asset pack (js/asset_pack.js) has the pixels already decoded, the
+    // same bytes the UPNG path below produces.
+    if (!IS_NODE) {
         const packed = await loadPackedImage(url);
-        if (packed) return { data: packed.data, width: packed.width, height: packed.height, bitmap: null };
+        if (packed) return { ...packed, bitmap: wantBitmap ? await pixelsToBitmap(packed) : null };
     }
     // TODO: Is this loading the library for every PNG?
     const UPNG = await loadUpng();
@@ -90,8 +97,7 @@ export async function loadPNG(url, { bitmap: wantBitmap = true } = {}) {
     if (IS_NODE) {
         originalBuffer = await readPngBufferNode(url);
     } else {
-        const response = await getFromZipFirst(url);
-        originalBuffer = await response.arrayBuffer();
+        originalBuffer = await fetchPng(url);
     }
     
     // 1. Sanitize the buffer (Remove gAMA, etc.)
@@ -167,10 +173,17 @@ function stripAncillaryChunks(buffer) {
     return combined;
 }
 
+// Straight (unpremultiplied) RGBA bytes as a bitmap: what decoding the PNG
+// they came from gives.
+function pixelsToBitmap({ data, width, height }) {
+    return createImageBitmap(new ImageData(new Uint8ClampedArray(data.buffer, data.byteOffset, data.byteLength), width, height));
+}
+
 export async function loadPNGBitmap(url) {
-    // Only the bitmap is wanted, so skip loadPNG's JS decode to RGBA.
     if (IS_NODE) return null;
-    const response = await getFromZipFirst(url);
-    const sanitized = stripAncillaryChunks(await response.arrayBuffer());
+    const packed = await loadPackedImage(url);
+    if (packed) return pixelsToBitmap(packed);
+    // Only the bitmap is wanted, so skip loadPNG's JS decode to RGBA.
+    const sanitized = stripAncillaryChunks(await fetchPng(url));
     return createImageBitmap(new Blob([sanitized], { type: 'image/png' }));
 }
