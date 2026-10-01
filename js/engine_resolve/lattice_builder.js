@@ -35,21 +35,29 @@ function regionPlanes(layer, spawn) {
     const { buffer, width, mapH } = layer;
     const n = width * mapH;
     const cov = new Float32Array(n), mat = new Uint16Array(n);
+    // A layer is runs of a few colors, so the answer for the last color is
+    // kept: the two table lookups were most of this function's time.
+    let lastRgb = 0, lastMat = 0, lastCov = 0;
     for (let y = 0; y < mapH; y++) {
-        const srow = (y + BUFFER_HEADER_ROWS) * width;
+        let s = (y + BUFFER_HEADER_ROWS) * width * 3;
         const drow = y * width;
-        for (let x = 0; x < width; x++) {
-            const s = (srow + x) * 3;
+        for (let x = 0; x < width; x++, s += 3) {
             const g = buffer[s + 1], bl = buffer[s + 2];
             const rgb = (buffer[s] << 16) | (g << 8) | bl;
             if (rgb === 0) continue;
-            const id = COLOR_TO_ID.get(rgb);
-            if (id !== undefined) { mat[drow + x] = id + 1; cov[drow + x] = id === 0 ? -1 : 1; }
-            else if (spawn && spawn.has(rgb)) { /* magic pixel: cov 0, mat 0 */ }
-            else {
-                const fb = F(bl * INV255), fg = F(g * INV255);
-                cov[drow + x] = F(F(F(fg + fb) + fb) / 3);
+            if (rgb !== lastRgb) {
+                lastRgb = rgb;
+                const id = COLOR_TO_ID.get(rgb);
+                if (id !== undefined) { lastMat = id + 1; lastCov = id === 0 ? -1 : 1; }
+                else if (spawn && spawn.has(rgb)) { lastMat = 0; lastCov = 0; /* magic pixel */ }
+                else {
+                    const fb = F(bl * INV255), fg = F(g * INV255);
+                    lastMat = 0;
+                    lastCov = F(F(F(fg + fb) + fb) / 3);
+                }
             }
+            mat[drow + x] = lastMat;
+            cov[drow + x] = lastCov;
         }
     }
     neighbourMajority(cov, mat, width, mapH);
@@ -60,32 +68,38 @@ function regionPlanes(layer, spawn) {
 // majority material against a snapshot; neighbour reads wrap toroidally and a
 // 2-2 tie goes to the value that REACHED 2 first (strict > running max).
 function neighbourMajority(cov, mat, w, h) {
-    const out = mat.slice();
-    const at = (x, y) => {
-        let px = x, py = y;
-        if (px < 0) px += (1 - Math.trunc(px / w)) * w;
-        if (py < 0) py += (1 - Math.trunc(py / h)) * h;
-        if (px >= w) px %= w;
-        if (py >= h) py %= h;
-        return mat[py * w + px];
-    };
-    const counts = new Map();
+    let out = null;   // copied on the first change: most regions have none
     for (let y = 0; y < h; y++) {
+        const row = y * w;
+        const up = (y === 0 ? h - 1 : y - 1) * w, down = (y === h - 1 ? 0 : y + 1) * w;
         for (let x = 0; x < w; x++) {
-            const i = y * w + x;
+            const i = row + x;
             if (mat[i] !== 0 || cov[i] !== 0) continue;
-            counts.clear();
-            let best = 0, bestN = -1;
-            for (const v of [at(x - 1, y), at(x + 1, y), at(x, y - 1), at(x, y + 1)]) {
-                if (v === 0) continue;
-                const c = (counts.get(v) || 0) + 1;
-                counts.set(v, c);
-                if (c > bestN) { bestN = c; best = v; }
+            // In the order the engine visits them: left, right, up, down.
+            const a = mat[row + (x === 0 ? w - 1 : x - 1)], b = mat[row + (x === w - 1 ? 0 : x + 1)];
+            const c = mat[up + x], d = mat[down + x];
+            // The first value to reach the highest count wins, zeros never counted.
+            let best = 0, bestN = 0;
+            if (a !== 0) { best = a; bestN = 1; }
+            if (b !== 0) {
+                const nb = b === a ? 2 : 1;
+                if (nb > bestN) { best = b; bestN = nb; }
             }
-            if (best) out[i] = best;
+            if (c !== 0) {
+                const nc = 1 + (c === a ? 1 : 0) + (c === b ? 1 : 0);
+                if (nc > bestN) { best = c; bestN = nc; }
+            }
+            if (d !== 0) {
+                const nd = 1 + (d === a ? 1 : 0) + (d === b ? 1 : 0) + (d === c ? 1 : 0);
+                if (nd > bestN) best = d;
+            }
+            if (best !== 0) {
+                if (!out) out = mat.slice();
+                out[i] = best;
+            }
         }
     }
-    mat.set(out);
+    if (out) mat.set(out);
 }
 
 // Mirrors gl/indirection.js claimedChunks.

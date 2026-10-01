@@ -285,6 +285,12 @@ export function prescanSpawnFunctions(tileLayers, isNGP, gameMode='normal') {
 
         if (sourceSpawnFunctions.length === 0) continue;
 
+        // getSpawnFunctionIndex's answer per color (the first function with
+        // it), looked up once per run of a color instead of scanned per pixel.
+        const indexByColor = new Map();
+        sourceSpawnFunctions.forEach((fn, i) => { if (!indexByColor.has(fn.color)) indexByColor.set(fn.color, i); });
+        let lastColor = -1, index = null;
+
         // Accidentally used the height before the offset by 4...? Eh it's fine
         for (let y = 4; y < height + 4; y++) {
             for (let x = 0; x < width; x++) {
@@ -296,7 +302,10 @@ export function prescanSpawnFunctions(tileLayers, isNGP, gameMode='normal') {
 
                 if (colorInt === 0x000000 || colorInt === 0xffffff) continue;
 
-                const index = getSpawnFunctionIndex(sourceBiome, colorInt);
+                if (colorInt !== lastColor) {
+                    lastColor = colorInt;
+                    index = indexByColor.get(colorInt) ?? null;
+                }
 
                 if (index !== null) {
                     const coords = tileToWorldCoordinates(layer.minX, layer.minY, x, y - 4, 0, 0, isNGP, gameMode);

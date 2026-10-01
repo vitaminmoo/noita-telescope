@@ -62,50 +62,53 @@ function midpoint(seq) {
 
 export function findMinPath(pixels, width, height, startSegment) {
     const stride = 3;
-    let startY = 4;
-    let topSequences = [];
+    const startY = 4;
 
     // Forced start, whether or not that tile ended up open.
-    topSequences = startSegment ? [startSegment] : findSequences(pixels, width, startY, stride);
+    const topSequences = startSegment ? [startSegment] : findSequences(pixels, width, startY, stride);
     if (topSequences.length === 0) return null;
 
     const bottomSequences = findSequences(pixels, width, height - 1, stride);
     if (bottomSequences.length === 0) return null;
 
-    const directions = [[0, 1], [-1, 0], [1, 0], [0, -1]];
+    // Breadth-first over tile indices, neighbours visited down, left, right,
+    // up. The queue is a flat array with a read cursor: every tile enters it at
+    // most once. (It was an array of {x, y} objects drained with shift(), which
+    // was a third of a seed's tile generation.)
+    const queue = new Int32Array(width * height);
+    const visited = new Uint8Array(width * height);
+    const parents = new Int32Array(width * height);
+    const visit = (nIdx, from, tail) => {
+        if (visited[nIdx] !== 0 || !isOpen(pixels, nIdx * stride)) return tail;
+        visited[nIdx] = 1;
+        parents[nIdx] = from;
+        queue[tail] = nIdx;
+        return tail + 1;
+    };
 
     for (const startSeq of topSequences) {
         const startX = midpoint(startSeq);
         if (startX < 0 || startX >= width) continue;
 
-        const visited = new Uint8Array(width * height);
-        const parents = new Int32Array(width * height).fill(-1);
-
-        const queue = [];
-        queue.push({x: startX, y: startY});
+        visited.fill(0);
+        parents.fill(-1);
+        let head = 0, tail = 0;
+        queue[tail++] = startY * width + startX;
 
         visited[startY * width + startX] = 1;
         parents[startY * width + startX] = -2;
 
         let maxY = startY;
 
-        while (queue.length > 0) {
-            const curr = queue.shift();
-            if (curr.y > maxY) maxY = curr.y;
+        while (head < tail) {
+            const curr = queue[head++];
+            const cx = curr % width, cy = (curr - cx) / width;
+            if (cy > maxY) maxY = cy;
 
-            for (const [dx, dy] of directions) {
-                const nx = curr.x + dx;
-                const ny = curr.y + dy;
-
-                if (nx >= 0 && nx < width && ny > 3 && ny < height) {
-                    const nIdx = ny * width + nx;
-                    if (visited[nIdx] === 0 && isOpen(pixels, nIdx * stride)) {
-                        visited[nIdx] = 1;
-                        parents[nIdx] = curr.y * width + curr.x;
-                        queue.push({x: nx, y: ny});
-                    }
-                }
-            }
+            if (cy + 1 < height) tail = visit(curr + width, curr, tail);
+            if (cx > 0) tail = visit(curr - 1, curr, tail);
+            if (cx + 1 < width) tail = visit(curr + 1, curr, tail);
+            if (cy - 1 > 3) tail = visit(curr - width, curr, tail);
         }
 
         // The path only counts if it reached an opening in the bottom row.
