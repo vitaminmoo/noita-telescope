@@ -5,7 +5,7 @@ import { biomeEdgeNoiseFlag } from './wobble_flags.js';
 import { MATERIAL_COLOR_LOOKUP } from './potion_config.js';
 import { PIXEL_SCENE_DATA, requestScenePixels, sceneDensityClassAt } from './pixel_scene_generation.js';
 import { appSettings } from './settings.js';
-import { assetUrl } from './asset_url.js';
+import { fetchAsset } from './asset_url.js';
 
 export const CONTAINER_TYPES = [
     'utility_box',
@@ -628,7 +628,7 @@ export async function fetchSafeJson(url) {
         return JSON.parse(await readFile(fileURLToPath(dataUrl), 'utf8'));
     }
     
-    const res = await fetch(assetUrl(dataUrl));
+    const res = await fetchAsset(dataUrl);
 
     // Check if the server returned a 404 or other error
     if (!res.ok) {

@@ -4,6 +4,26 @@
     <meta charset="UTF-8">
     <link rel="icon" type="image/x-icon" href="./favicon.ico">
     <title>Lymm's Telescope</title>
+    <!-- What every visit fetches before it can draw, asked for now, at once:
+         left to the scripts, each is only asked for when a module gets to it,
+         one after another, and a first visit waits a round trip for each. The
+         deployed build (tools/build_site.mjs) points these at its copies. -->
+    <link rel="preload" as="fetch" crossorigin href="./data/biome_flags.json">
+    <link rel="preload" as="fetch" crossorigin href="./data/material_data.json">
+    <link rel="preload" as="fetch" crossorigin href="./data/sprite_distributions/wand_sprite_rates.json">
+    <link rel="preload" as="fetch" crossorigin href="./data/rng/sampo_seeds.json">
+    <link rel="preload" as="fetch" crossorigin href="./data/biome_backgrounds.json">
+    <link rel="preload" as="fetch" crossorigin href="./data/background_data.json">
+    <link rel="preload" as="fetch" crossorigin href="./data/packs/terrain.pack">
+    <!-- The large ones, behind the scripts. -->
+    <link rel="preload" as="fetch" crossorigin fetchpriority="low" href="./data/material_atlas.json">
+    <link rel="preload" as="fetch" crossorigin fetchpriority="low" href="./data/material_atlas.bin">
+    <link rel="preload" as="fetch" crossorigin fetchpriority="low" href="./data/pixel_scene_meta.json">
+    <link rel="preload" as="fetch" crossorigin fetchpriority="low" href="./data/translations.csv">
+    <link rel="preload" as="fetch" crossorigin fetchpriority="low" href="./data/packs/biome_maps.pack">
+    <link rel="preload" as="fetch" crossorigin fetchpriority="low" href="./data/packs/backgrounds.pack">
+    <!-- Read by the scene workers only, so not a preload (the page would never use it). -->
+    <link rel="prefetch" href="./data/packs/pixel_scenes.pack">
     <style>
         body { background: #111; color: #eee; font-family: monospace; display: flex; height: 100vh; margin: 0; overflow: hidden; }
         

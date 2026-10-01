@@ -13,12 +13,16 @@
 //
 //   - the page's scripts and each worker (js/*_worker.js) bundled into one file
 //     apiece, named by a hash of its content;
-//   - a copy of each entry of data/ under a hash of that entry's content:
-//     assets/data/<hash>/<entry>/...
+//   - a copy of each entry of data/ (a file or a folder) under a hash of that
+//     entry's content: assets/data/<hash>/<entry>, with a gzipped copy beside
+//     each file the CDN would not compress itself (it compresses by content
+//     type: text and JSON, not .bin or .csv);
 //
-// and index.html pointing at the bundles. A file in assets/ never changes --
-// new content gets a new name -- so _headers has it cached forever, and a
-// return visit asks the server for index.html and nothing else.
+// and index.html pointing at all of it: its scripts at the bundles, and every
+// other URL in it that names a file under js/ or data/ (its preloads, its CSS)
+// at the hashed copy. A file in assets/ never changes -- new content gets a
+// new name -- so _headers has it cached forever, and a return visit asks the
+// server for index.html and nothing else.
 //
 // js/asset_url.js is how the running code finds those copies: each bundle
 // starts by setting the table (__SITE_ASSETS__), and everything that fetches a
@@ -34,13 +38,21 @@ import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statS
 import { createRequire } from 'node:module';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { gzipSync } from 'node:zlib';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 // Not part of the site. A deploy builds a `git archive`, which has none of
 // these; a build of a working directory would otherwise pick them up.
 const SKIP = new Set(['.git', '.github', '.wrangler', '.claude', '.serena', 'node_modules', 'spikes', 'scripts', 'groundtruth']);
 const SKIP_DATA = new Set(['dumps', 'verify_out']);
-const MANIFEST = 'assets/manifest.json';
+// What the build was made of, for a person or a test to read; and how a later
+// build knows the directory is one it may empty. Not under assets/: its name
+// does not change with its content.
+const MANIFEST = 'build.json';
+// Sent as they are by the CDN, and worth compressing.
+const GZIP = /\.(bin|csv)$/;
+// A folder of data/ with no more files than this is hashed file by file.
+const SMALL_FOLDER = 16;
 
 function parseArgs(argv) {
 	const args = { src: resolve(HERE, '..'), out: null };
@@ -135,13 +147,27 @@ export async function buildSite({ src, out }) {
 		});
 	}
 
-	// --- data/, each entry under a hash of its content
-	const data = {};
-	for (const name of readdirSync(join(src, 'data')).sort()) {
-		if (SKIP_DATA.has(name)) continue;
+	// --- data/, each entry under a hash of its content. An entry is a file or
+	// a folder of data/; the files of a small folder are entries by themselves,
+	// so that rebuilding one asset pack does not rename the other three.
+	const data = {}, gzip = [];
+	const entries = readdirSync(join(src, 'data')).filter(name => !SKIP_DATA.has(name)).flatMap((name) => {
+		const inside = filesUnder(join(src, 'data', name));
+		return inside[0] !== '' && inside.length <= SMALL_FOLDER ? inside.map(f => `${name}/${f}`) : [name];
+	}).sort();
+	for (const name of entries) {
 		const hash = data[name] = hashEntry(join(src, 'data', name));
-		cpSync(join(src, 'data', name), join(out, 'assets/data', hash, name), { recursive: true });
+		const copy = join(out, 'assets/data', hash, name);
+		cpSync(join(src, 'data', name), copy, { recursive: true });
+		for (const f of filesUnder(copy)) {
+			if (!GZIP.test(f || name)) continue;
+			const file = f ? join(copy, f) : copy;
+			writeFileSync(`${file}.gz`, gzipSync(readFileSync(file), { level: 9 }));
+			gzip.push(`data/${name}${f ? `/${f}` : ''}`);
+		}
 	}
+	// The hash a path under data/ is filed under: its own, or its top folder's.
+	const dataHash = (path) => data[path] ?? data[path.split('/')[0]];
 
 	const bundle = (assets, toRoot, more) => esbuild.build({
 		absWorkingDir: src,
@@ -177,10 +203,10 @@ export async function buildSite({ src, out }) {
 	// worker's graph includes the module that starts scene workers). None of
 	// them starts another, and one that did would get it from js/.
 	const workers = readdirSync(join(src, 'js')).filter(f => f.endsWith('_worker.js')).sort().map(f => `js/${f}`);
-	const files = written(await bundle({ files: {}, data }, '../', { ...toAssets, entryPoints: workers }));
+	const files = written(await bundle({ files: {}, data, gzip }, '../', { ...toAssets, entryPoints: workers }));
 
 	// --- the page: index.html's module scripts, the inline one bundled in place
-	const assets = { files, data };
+	const assets = { files, data, gzip };
 	let html = readFileSync(join(src, 'index.html'), 'utf8');
 	const scripts = [...html.matchAll(/<script type="module"(?: src="([^"]+)")?>([\s\S]*?)<\/script>/g)];
 	if (!scripts.length) throw new Error('index.html has no module scripts to bundle');
@@ -201,13 +227,19 @@ export async function buildSite({ src, out }) {
 		}
 		html = html.replace(tag, () => replacement);
 	}
-	// What index.html itself names under data/ (CSS backgrounds).
-	html = html.replace(/(url\(\s*['"]?|\s(?:src|href)=")(?:\.\/)?data\/([^/'")\s]+)\//g,
-		(all, lead, entry) => (data[entry] ? `${lead}assets/data/${data[entry]}/${entry}/` : all));
+	// Whatever else index.html names under js/ or data/ (its preloads, its CSS
+	// backgrounds): the copy js/asset_url.js will ask for.
+	html = html.replace(/(url\(\s*['"]?|\s(?:src|href)=")(?:\.\/)?((?:js|data)\/[^'")\s]+)/g, (all, lead, path) => {
+		if (files[path]) return lead + files[path];
+		const under = path.startsWith('data/') ? path.slice('data/'.length) : null;
+		if (!under || !dataHash(under)) return all;
+		return `${lead}assets/data/${dataHash(under)}/${under}${gzip.includes(path) ? '.gz' : ''}`;
+	});
 	writeFileSync(join(out, 'index.html'), html);
 
-	writeFileSync(join(out, MANIFEST), JSON.stringify({ files: { ...pageFiles, ...files }, data }, null, '\t') + '\n');
-	return { files: { ...pageFiles, ...files }, data };
+	const built = { files: { ...pageFiles, ...files }, data, gzip };
+	writeFileSync(join(out, MANIFEST), JSON.stringify(built, null, '\t') + '\n');
+	return built;
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

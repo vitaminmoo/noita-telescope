@@ -43,7 +43,7 @@ import {
 import { BIOME_ENGINE, MATERIAL_NAMES_BY_ID } from './engine_resolve/engine_data.js';
 import { resolveCellFull } from './engine_resolve/chunk_wobble.js';
 import { SKIP_SEAM_EDGE_BIOMES } from './pixel_scene_edge_flags.js';
-import { assetUrl } from './asset_url.js';
+import { fetchAsset } from './asset_url.js';
 
 export const EDGE_TYPE_COLOR_EDGE_PIXELS = 0;
 export const EDGE_TYPE_EVERYWHERE = 1;
@@ -146,7 +146,7 @@ export function setEdgeDecalAtlas(bytes) {
 /** Kicks off (or returns) the one-time fetch of the sprite atlas. */
 export function initEdgeDecalAtlas() {
     return _loadPromise ??= (async () => {
-        const resp = await fetch(assetUrl(new URL('../data/edge_atlas.bin', import.meta.url)));
+        const resp = await fetchAsset(new URL('../data/edge_atlas.bin', import.meta.url));
         if (!resp.ok) throw new Error('edge atlas fetch failed');
         return setEdgeDecalAtlas(new Uint8Array(await resp.arrayBuffer()));
     })();

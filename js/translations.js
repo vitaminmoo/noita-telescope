@@ -1,4 +1,4 @@
-import { assetUrl } from './asset_url.js';
+import { fetchAsset } from './asset_url.js';
 
 // Used for additional common names
 // Note that the first alias is used as the display name
@@ -246,7 +246,7 @@ export function injectTranslations(cachedData) {
 export async function loadTranslations() {
 	try {
 		const dataUrl = new URL('../data/translations.csv', import.meta.url);
-		const response = await fetch(assetUrl(dataUrl));
+		const response = await fetchAsset(dataUrl);
 		const text = await response.text();
 		const lines = text.split('\n');
 

@@ -23,7 +23,7 @@
 // touch the bytes — byte-exactness against the game is the point.
 
 import { FILL_LAYER_MATERIALS } from '../generator_config.js';
-import { assetUrl } from '../asset_url.js';
+import { fetchAsset } from '../asset_url.js';
 import { MATERIAL_COLOR_LOOKUP, MATERIAL_DATA } from '../potion_config.js';
 import { BIOME_MAP_HEIGHT } from './indirection.js';
 import { PALETTE_SIZE, FIRST_COLOR_INDEX } from './palette.js';
@@ -37,8 +37,8 @@ export function initMaterialAtlas() {
         const [metaResp, binResp] = await Promise.all([
             // Module relative, not document relative: a host page that is not
             // telescope's own index.html (js/terrain_view.js) loads the same files.
-            fetch(assetUrl(new URL('../../data/material_atlas.json', import.meta.url))),
-            fetch(assetUrl(new URL('../../data/material_atlas.bin', import.meta.url))),
+            fetchAsset(new URL('../../data/material_atlas.json', import.meta.url)),
+            fetchAsset(new URL('../../data/material_atlas.bin', import.meta.url)),
         ]);
         if (!metaResp.ok || !binResp.ok) throw new Error('material atlas fetch failed');
         const layout = await metaResp.json();

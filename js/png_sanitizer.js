@@ -1,5 +1,5 @@
 import { loadPackedImage } from "./asset_pack.js";
-import { assetUrl } from "./asset_url.js";
+import { fetchAsset } from "./asset_url.js";
 
 // Detect Node so the rest of this file can pick the npm package instead of the
 // browser build. `process` is injected by Node; browsers leave it undefined.
@@ -18,7 +18,7 @@ const loadUpng = () => _upngPromise ??= (
 // reads are in the asset packs (js/asset_pack.js), already decoded; this is
 // for one that is not, or a browser that cannot read the packs.
 async function fetchPng(url) {
-    const response = await fetch(assetUrl(new URL(url, import.meta.url)));
+    const response = await fetchAsset(new URL(url, import.meta.url));
     if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
     return response.arrayBuffer();
 }

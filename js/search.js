@@ -1,5 +1,5 @@
 // @deprecated. Search manager and search worker are used now
-import { assetUrl } from './asset_url.js';
+import { fetchAsset } from './asset_url.js';
 import { isMatch, getDisplayName } from './translations.js';
 import { scanSpawnFunctions, getSpecialPoIs } from './poi_scanner.js';
 import { addStaticPixelScenes } from './static_spawns.js';
@@ -598,19 +598,19 @@ async function findNextLocalMatch(mode) {
 	if (mode === 'eoe' && filters.queryList.length === 1 && isMatch('true_orb', filters.queryList[0])) {
 		quickSearch = 'true_orb';
 		if (ORB_SEEDS === null) {
-			ORB_SEEDS = new Set(await fetch(assetUrl('./data/rng/orb_seeds.json')).then(async res => await res.json()));
+			ORB_SEEDS = new Set(await fetchAsset('./data/rng/orb_seeds.json').then(async res => await res.json()));
 		}
 	}
 	else if (mode === 'eoe' && filters.queryList.length === 1 && isMatch('sampo', filters.queryList[0])) {
 		quickSearch = 'sampo';
 		if (SAMPO_SEEDS === null) {
-			SAMPO_SEEDS = new Set(await fetch(assetUrl('./data/rng/sampo_seeds.json')).then(async res => await res.json()));
+			SAMPO_SEEDS = new Set(await fetchAsset('./data/rng/sampo_seeds.json').then(async res => await res.json()));
 		}
 	}
 	else if (mode === 'eoe' && filters.minCap >= 27) {
 		quickSearch = 'highcap';
 		if (HIGH_CAP_EOE_SEEDS === null) {
-			HIGH_CAP_EOE_SEEDS = new Set(await fetch(assetUrl('./data/rng/eoe_high_capacity_seeds.json')).then(async res => await res.json()));
+			HIGH_CAP_EOE_SEEDS = new Set(await fetchAsset('./data/rng/eoe_high_capacity_seeds.json').then(async res => await res.json()));
 		}
 		// No T10NS, instead Nolla duplicated T6 in the drop table because they hate us
 	}
@@ -621,10 +621,10 @@ async function findNextLocalMatch(mode) {
 	else if (mode === 'tiny' && filters.minCap >= 27) {
 		quickSearch = 'highcap';
 		if (HIGH_CAP_T6NS_SEEDS === null) {
-			HIGH_CAP_T6NS_SEEDS = new Set(await fetch(assetUrl('./data/rng/t6ns_high_capacity_seeds.json')).then(async res => await res.json()));
+			HIGH_CAP_T6NS_SEEDS = new Set(await fetchAsset('./data/rng/t6ns_high_capacity_seeds.json').then(async res => await res.json()));
 		}
 		if (HIGH_CAP_T10NS_SEEDS === null) {
-			HIGH_CAP_T10NS_SEEDS = new Set(await fetch(assetUrl('./data/rng/t10ns_high_capacity_seeds.json')).then(async res => await res.json()));
+			HIGH_CAP_T10NS_SEEDS = new Set(await fetchAsset('./data/rng/t10ns_high_capacity_seeds.json').then(async res => await res.json()));
 		}
 	}
 	else if (mode === 'dragon' && filters.minSpells >= 27) {
@@ -634,13 +634,13 @@ async function findNextLocalMatch(mode) {
 	else if (mode === 'dragon' && filters.minCap >= 27) {
 		quickSearch = 'highcap';
 		if (HIGH_CAP_T6NS_SEEDS === null) {
-			HIGH_CAP_T6NS_SEEDS = new Set(await fetch(assetUrl('./data/rng/t6ns_high_capacity_seeds.json')).then(async res => await res.json()));
+			HIGH_CAP_T6NS_SEEDS = new Set(await fetchAsset('./data/rng/t6ns_high_capacity_seeds.json').then(async res => await res.json()));
 		}
 	}
 	else if (mode === 'taikasauva' && filters.minCap >= 27) {
 		quickSearch = 'highcap';
 		if (HIGH_CAP_T3_SEEDS === null) {
-			HIGH_CAP_T3_SEEDS = new Set(await fetch(assetUrl('./data/rng/t3_high_capacity_seeds.json')).then(async res => await res.json()));
+			HIGH_CAP_T3_SEEDS = new Set(await fetchAsset('./data/rng/t3_high_capacity_seeds.json').then(async res => await res.json()));
 		}
 	}
 	const prng = new NollaPrng(0); // To avoid reinstantiating it over and over
@@ -789,16 +789,16 @@ async function findNextLocalMatch(mode) {
 // Get some limiting values for the distributions of certain tiers
 /*
 if (HIGH_CAP_T6NS_SEEDS === null) {
-	HIGH_CAP_T6NS_SEEDS = new Set(await fetch(assetUrl('./data/rng/t6ns_high_capacity_seeds.json')).then(async res => await res.json()));
+	HIGH_CAP_T6NS_SEEDS = new Set(await fetchAsset('./data/rng/t6ns_high_capacity_seeds.json').then(async res => await res.json()));
 }
 if (HIGH_CAP_T10NS_SEEDS === null) {
-	HIGH_CAP_T10NS_SEEDS = new Set(await fetch(assetUrl('./data/rng/t10ns_high_capacity_seeds.json')).then(async res => await res.json()));
+	HIGH_CAP_T10NS_SEEDS = new Set(await fetchAsset('./data/rng/t10ns_high_capacity_seeds.json').then(async res => await res.json()));
 }
 if (HIGH_CAP_T3_SEEDS === null) {
-	HIGH_CAP_T3_SEEDS = new Set(await fetch(assetUrl('./data/rng/t3_high_capacity_seeds.json')).then(async res => await res.json()));
+	HIGH_CAP_T3_SEEDS = new Set(await fetchAsset('./data/rng/t3_high_capacity_seeds.json').then(async res => await res.json()));
 }
 if (HIGH_CAP_EOE_SEEDS === null) {
-	HIGH_CAP_EOE_SEEDS = new Set(await fetch(assetUrl('./data/rng/eoe_high_capacity_seeds.json')).then(async res => await res.json()));
+	HIGH_CAP_EOE_SEEDS = new Set(await fetchAsset('./data/rng/eoe_high_capacity_seeds.json').then(async res => await res.json()));
 }
 
 let max_cap = 27;

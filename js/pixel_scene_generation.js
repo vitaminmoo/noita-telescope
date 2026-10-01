@@ -1,4 +1,4 @@
-import { assetUrl } from './asset_url.js';
+import { fetchAsset } from './asset_url.js';
 import { NollaPrng } from './nolla_prng.js';
 import { BLOCKED_COLORS, GENERAL_SCENES, PIXEL_SCENE_BIOME_MAP } from './pixel_scene_config.js';
 import { MATERIAL_COLOR_CONVERSION, MATERIAL_COLOR_LOOKUP, MATERIAL_DATA, MATERIAL_WANG_COLORS } from './potion_config.js';
@@ -948,7 +948,7 @@ function loadSceneMeta() {
 			const fs = await import('node:fs/promises');
 			return JSON.parse(await fs.readFile(PIXEL_SCENE_META_URL, 'utf8'));
 		}
-		const response = await fetch(assetUrl(PIXEL_SCENE_META_URL));
+		const response = await fetchAsset(PIXEL_SCENE_META_URL);
 		if (!response.ok) throw new Error(`HTTP ${response.status}`);
 		return response.json();
 	})().catch((err) => {
