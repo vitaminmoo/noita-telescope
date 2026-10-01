@@ -1,11 +1,12 @@
 import { app } from "./app.js";
+import { assetUrl } from "./asset_url.js";
 import { NollaPrng } from "./nolla_prng.js";
 import { getDateAndTime } from "./utils.js";
 
 const datetime = getDateAndTime();
 const isLeapYear = (datetime.year % 4 === 0 && datetime.year % 100 !== 0) || (datetime.year % 400 === 0);
 const cauldronDataUrl = new URL(`../data/secret_messages/cauldron_data${isLeapYear ? '_leap' : ''}.json`, import.meta.url);
-const CAULDRON_CALENDAR = await fetch(cauldronDataUrl).then(res => res.json());
+const CAULDRON_CALENDAR = await fetch(assetUrl(cauldronDataUrl)).then(res => res.json());
 
 export async function getCauldronState() {
     const datetime = getDateAndTime();

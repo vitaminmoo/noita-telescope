@@ -11,6 +11,7 @@
 //
 // Without workers (or if the worker fails) the files load on this thread, as before.
 import { loadTimeline } from './load_timeline.js';
+import { assetUrl } from './asset_url.js';
 
 let worker = null, ready = false, failed = false;
 const queue = [];
@@ -30,7 +31,7 @@ async function loadHere(paths) {
 function start() {
 	if (worker || failed) return;
 	try {
-		worker = new Worker(new URL('./bitmap_loader_worker.js', import.meta.url), { type: 'module', name: 'art' });
+		worker = new Worker(assetUrl(new URL('./bitmap_loader_worker.js', import.meta.url)), { type: 'module', name: 'art' });
 	} catch {
 		failed = true;
 		return;

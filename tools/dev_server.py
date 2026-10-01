@@ -12,8 +12,11 @@ POST /__frame_log appends the request body to data/dumps/frame_log.ndjson:
 the page's frame log (js/frame_slo.js) sends every missed frame there, so a
 session in a live browser can be read back from disk.
 
-Usage: python tools/dev_server.py [port] [--cache=MODE] [--latency-ms=N]
+Usage: python tools/dev_server.py [port] [--cache=MODE] [--latency-ms=N] [--root=DIR]
   port            default 8000; serves the repo root
+  --root=DIR      serve DIR instead: a build of the site (tools/build_site.mjs).
+                  Whatever is under /assets/ is content-hashed there and gets
+                  a year, immutable, in every cache mode, as _headers deploys it
   --cache=MODE    which Cache-Control the files get. The load-time benchmark
                   uses it to stand in for a deployment:
                     no-cache   (default) revalidate everything, as _headers
@@ -24,8 +27,9 @@ Usage: python tools/dev_server.py [port] [--cache=MODE] [--latency-ms=N]
                   to an edge would cost. Over HTTP/1 the browser runs six of
                   these at a time, so it overstates a multiplexed connection.
 
-GET /__stats returns {"requests", "notModified", "bytes"} since the last
-GET /__stats?reset=1 -- page and worker requests alike.
+GET /__stats returns {"requests", "notModified", "bytes", "paths"} since the
+last GET /__stats?reset=1 -- page and worker requests alike; "paths" is how
+often each path was asked for.
 """
 import http.server
 import json
@@ -43,7 +47,7 @@ CACHE_CONTROL = {
 }
 cache_mode = 'no-cache'
 latency_s = 0.0
-stats = {'requests': 0, 'notModified': 0, 'bytes': 0}
+stats = {'requests': 0, 'notModified': 0, 'bytes': 0, 'paths': {}}
 stats_lock = threading.Lock()
 
 
@@ -53,13 +57,18 @@ class DevHandler(http.server.SimpleHTTPRequestHandler):
         return getattr(self, 'path', '').startswith('/__')
 
     def end_headers(self):
-        self.send_header('Cache-Control', 'no-cache' if self.internal() else CACHE_CONTROL[cache_mode])
+        path = getattr(self, 'path', '')
+        self.send_header('Cache-Control', 'no-cache' if self.internal()
+                         else CACHE_CONTROL['immutable'] if path.startswith('/assets/')
+                         else CACHE_CONTROL[cache_mode])
         super().end_headers()
 
     def send_response(self, code, message=None):
         if not self.internal():
             with stats_lock:
                 stats['requests'] += 1
+                path = self.path.split('?', 1)[0]
+                stats['paths'][path] = stats['paths'].get(path, 0) + 1
                 if code == 304:
                     stats['notModified'] += 1
         super().send_response(code, message)
@@ -75,7 +84,7 @@ class DevHandler(http.server.SimpleHTTPRequestHandler):
             body = json.dumps(stats).encode()
             if 'reset=1' in self.path:
                 for k in stats:
-                    stats[k] = 0
+                    stats[k] = {} if k == 'paths' else 0
         self.send_response(200)
         self.send_header('Content-Type', 'application/json')
         self.send_header('Content-Length', str(len(body)))
@@ -116,6 +125,7 @@ class DevHandler(http.server.SimpleHTTPRequestHandler):
 
 if __name__ == '__main__':
     port = 8000
+    root = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
     for arg in sys.argv[1:]:
         if arg.startswith('--cache='):
             cache_mode = arg.split('=', 1)[1]
@@ -123,7 +133,9 @@ if __name__ == '__main__':
                 sys.exit(f'unknown --cache mode {cache_mode!r}; one of {", ".join(CACHE_CONTROL)}')
         elif arg.startswith('--latency-ms='):
             latency_s = float(arg.split('=', 1)[1]) / 1000
+        elif arg.startswith('--root='):
+            root = os.path.abspath(arg.split('=', 1)[1])
         else:
             port = int(arg)
-    os.chdir(os.path.join(os.path.dirname(__file__), '..'))
+    os.chdir(root)
     http.server.ThreadingHTTPServer(('127.0.0.1', port), DevHandler).serve_forever()

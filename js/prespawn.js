@@ -12,7 +12,9 @@
 // fetched. The pools (terrain_workers.js, overlay_worker_pool.js) take their
 // workers from here, and create them themselves when the page did not prespawn.
 //
-// No imports, on purpose: this module has to run before anything else has loaded.
+// Next to no imports, on purpose: this module has to run before anything else
+// has loaded.
+import { assetUrl } from './asset_url.js';
 
 const cores = () => globalThis.navigator?.hardwareConcurrency || 4;
 
@@ -42,11 +44,14 @@ const KINDS = {
 	terrain: { file: './terrain_worker.js', name: (i) => `terrain-${i}` },
 	overlay: { file: './overlay_worker.js', name: (i) => `overlay-pool-${i}` },
 };
-const spawned = new Map();   // kind -> [{ worker, messages }] not taken yet
+// kind -> [{ worker, messages }] not taken yet. Kept on globalThis, not in the
+// module: a deployed build (tools/build_site.mjs) bundles the page's inline
+// script apart from its main one, and both have to see the same workers.
+const spawned = (globalThis.__prespawnedWorkers ??= new Map());
 
 function spawn(kind, index) {
 	const k = KINDS[kind];
-	const worker = new Worker(new URL(k.file, import.meta.url), { type: 'module', name: k.name(index) });
+	const worker = new Worker(assetUrl(new URL(k.file, import.meta.url)), { type: 'module', name: k.name(index) });
 	// What the worker says before a pool takes it (its READY) is kept for the pool.
 	const entry = { worker, messages: [] };
 	worker.onmessage = (e) => entry.messages.push(e.data);

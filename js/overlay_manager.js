@@ -1,5 +1,6 @@
 // world_manager.js
 import { app } from './app.js';
+import { assetUrl } from './asset_url.js';
 import { holdUntilReady } from './worker_ready.js';
 import { loadTimeline } from './load_timeline.js';
 import { onEdgeDecalTile } from './edge_decal_layer.js';
@@ -10,7 +11,7 @@ import { PIXEL_SCENE_DATA, putPixelSceneBitmaps } from './pixel_scene_generation
 import { appSettings, updateSettingsFromUI } from './settings.js';
 import { renderTrace } from './render_hud.js';
 
-export const overlayWorker = holdUntilReady(new Worker(new URL('./overlay_worker.js', import.meta.url), { type: 'module', name: 'overlay' }));
+export const overlayWorker = holdUntilReady(new Worker(assetUrl(new URL('./overlay_worker.js', import.meta.url)), { type: 'module', name: 'overlay' }));
 // A worker whose script fails to load/parse (stale cache, syntax error) dies
 // without ever answering, and everything it serves — overlays, pixel scenes,
 // edge decals — silently stops. Make that failure loud.

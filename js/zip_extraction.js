@@ -1,3 +1,5 @@
+import { assetUrl } from "./asset_url.js";
+
 // Lazy, so Node (which never unzips) does not load it. Vendored: js/vendor/README.md.
 let _zipPromise = null;
 const loadZipLib = () => _zipPromise ??= import("./vendor/zip.js");
@@ -17,7 +19,7 @@ function loadZipBundle(zipUrl) {
 	return loadedZipBundles[zipUrl] ??= (async () => {
 		const zip = await loadZipLib();
 		const dataUrl = new URL(zipUrl, import.meta.url);
-		const response = await fetch(dataUrl);
+		const response = await fetch(assetUrl(dataUrl));
 		const blob = await response.blob();
 		const reader = new zip.ZipReader(new zip.BlobReader(blob));
 		return (await reader.getEntries()).filter(entry => !entry.directory);
@@ -46,5 +48,5 @@ export async function getFromZipFirst(url) {
     }
 
 	const dataUrl = new URL(url, import.meta.url);
-	return fetch(dataUrl).then(response => response.blob());
+	return fetch(assetUrl(dataUrl)).then(response => response.blob());
 }

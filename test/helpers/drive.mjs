@@ -29,12 +29,12 @@ async function freePort() {
 
 /**
  * Starts tools/dev_server.py on a free port; returns {port, stop, stats}.
- * `cache` and `latencyMs` are the server's --cache / --latency-ms (see its
- * header); `stats(reset)` reads its request counters.
+ * `cache`, `latencyMs` and `root` are the server's --cache / --latency-ms /
+ * --root (see its header); `stats(reset)` reads its request counters.
  */
-export async function startServer({ cache = 'no-cache', latencyMs = 0 } = {}) {
+export async function startServer({ cache = 'no-cache', latencyMs = 0, root = REPO } = {}) {
 	const port = await freePort();
-	const proc = spawn('python3', [`${REPO}/tools/dev_server.py`, String(port), `--cache=${cache}`, `--latency-ms=${latencyMs}`],
+	const proc = spawn('python3', [`${REPO}/tools/dev_server.py`, String(port), `--cache=${cache}`, `--latency-ms=${latencyMs}`, `--root=${root}`],
 		{ stdio: ['ignore', 'ignore', 'ignore'] });
 	for (let i = 0; i < 100; i++) {
 		await sleep(100);
@@ -117,6 +117,7 @@ export async function drive({ port, seed = 786433191, ng = 0, settleMs = 8000, q
  * @param {object} o
  *   port    the dev server's (startServer)
  *   path    page path + query, e.g. '/test/terrain_view_host/index.html?seed=1'
+ *   url     instead of port and path: any page, e.g. the deployed site's
  *   angle   ANGLE backend: 'swiftshader' (software; deterministic, what the
  *           correctness runs use) or a real one ('vulkan', 'gl') for timing
  *   width, height  window and device metrics
@@ -126,7 +127,7 @@ export async function drive({ port, seed = 786433191, ng = 0, settleMs = 8000, q
  *          browser the way a user would, so its caches reach the disk; `close()`
  *          just kills it
  */
-export async function openPage({ port, path, angle = 'swiftshader', width = 1280, height = 800, profile = null } = {}) {
+export async function openPage({ port, path, url = null, angle = 'swiftshader', width = 1280, height = 800, profile = null } = {}) {
 	profile ??= `/tmp/telescope-page-${process.pid}-${Math.random().toString(36).slice(2)}`;
 	const gpuArgs = angle === 'swiftshader'
 		? ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader']
@@ -177,7 +178,7 @@ export async function openPage({ port, path, angle = 'swiftshader', width = 1280
 	await send('Runtime.enable', {}, sessionId);
 	await send('Page.enable', {}, sessionId);
 	await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false }, sessionId);
-	await send('Page.navigate', { url: `http://127.0.0.1:${port}${path}` }, sessionId);
+	await send('Page.navigate', { url: url ?? `http://127.0.0.1:${port}${path}` }, sessionId);
 	const quit = async () => {
 		const exited = new Promise((r) => chrome.once('exit', r));
 		await send('Browser.close').catch(() => {});

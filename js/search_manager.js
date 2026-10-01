@@ -1,3 +1,4 @@
+import { assetUrl } from './asset_url.js';
 import { holdUntilReady } from './worker_ready.js';
 import { app } from './app.js';
 import { TIME_UNTIL_LOADING } from './constants.js';
@@ -129,7 +130,7 @@ function getSearchFilters() {
 	};
 }
 
-const searchWorker = holdUntilReady(new Worker(new URL('./search_worker.js', import.meta.url), { type: 'module', name: 'search' }));
+const searchWorker = holdUntilReady(new Worker(assetUrl(new URL('./search_worker.js', import.meta.url)), { type: 'module', name: 'search' }));
 
 searchWorker.onmessage = async (e) => {
     const msg = e.data;

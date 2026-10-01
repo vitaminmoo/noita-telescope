@@ -4,6 +4,7 @@
 // is its background, scaled so one 16px cell fills the element. An icon the
 // sheet lacks leaves the <img> blank, keeping its layout and its title.
 import { ICON_SHEETS } from './icon_sheet_index.js';
+import { assetUrl } from './asset_url.js';
 
 const BLANK = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
 
@@ -13,7 +14,7 @@ const indexByName = {};
 const sheetUrl = {};
 for (const [folder, sheet] of Object.entries(ICON_SHEETS)) {
 	indexByName[folder] = new Map(sheet.names.map((name, i) => [name, i]));
-	sheetUrl[folder] = new URL(`../${sheet.url}`, import.meta.url).href;
+	sheetUrl[folder] = assetUrl(new URL(`../${sheet.url}`, import.meta.url));
 }
 
 export function hasSheet(folder) {
@@ -42,7 +43,7 @@ export function iconImgHtml(folder, name, attrs = '') {
 // For an <img> element that already exists; also handles folders without a sheet.
 export function setIconImg(img, folder, name) {
 	if (!hasSheet(folder)) {
-		img.src = `data/${folder}/${name}.png`;
+		img.src = assetUrl(`data/${folder}/${name}.png`);
 		return;
 	}
 	img.src = BLANK;

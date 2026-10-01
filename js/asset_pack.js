@@ -19,6 +19,7 @@
 //
 // The packs are generated files: test/asset_packs.test.mjs fails when one no
 // longer matches its PNGs.
+import { assetUrl } from './asset_url.js';
 
 const DATA_URL = new URL('../data/', import.meta.url).href;
 
@@ -43,7 +44,7 @@ function loadPack(file) {
 	let p = loaded.get(file);
 	if (!p) {
 		p = (async () => {
-			const response = await fetch(new URL(file, DATA_URL));
+			const response = await fetch(assetUrl(new URL(file, DATA_URL)));
 			if (!response.ok) throw new Error(`HTTP ${response.status}`);
 			const blob = await response.blob();
 			const head = new DataView(await blob.slice(0, 8).arrayBuffer());

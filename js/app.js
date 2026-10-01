@@ -27,6 +27,7 @@ import { appSettings, updateSettings, updateSettingsFromUI, updateSpellFlags, up
 import { syncWorldWorkerData, getOrGenerateWorld, syncSettingsToWorldWorker } from './world_manager.js';
 import { TerrainWorkers } from './terrain_workers.js';
 import { loadTimeline } from './load_timeline.js';
+import { assetUrl } from './asset_url.js';
 import { holdUntilReady } from './worker_ready.js';
 import { syncOverlayWorkerData, getOrGenerateOverlay, syncSettingsToOverlayWorker, recolorPixelScenes, invalidatePendingOverlays, overlayQueueStats } from './overlay_manager.js';
 import { edgeDecalAt, invalidateEdgeDecals, pendingEdgeDecalTiles } from './edge_decal_layer.js';
@@ -182,7 +183,7 @@ let poiBakeSeq = 0;
 let poiBakeWorkerInstance = null;
 function poiBakeWorker() {
 	if (!poiBakeWorkerInstance) {
-		poiBakeWorkerInstance = holdUntilReady(new Worker(new URL('./poi_bake_worker.js', import.meta.url), { type: 'module', name: 'poi-bake' }));
+		poiBakeWorkerInstance = holdUntilReady(new Worker(assetUrl(new URL('./poi_bake_worker.js', import.meta.url)), { type: 'module', name: 'poi-bake' }));
 		poiBakeWorkerInstance.onmessage = (e) => { if (e.data.type !== 'READY') app.putPoiBake(e.data); };
 		poiBakeWorkerInstance.addEventListener('error', (e) => console.error('poi bake worker failed:', e.message ?? '(no message)'));
 	}

@@ -1,4 +1,5 @@
 import { getWorldCenter, getWorldSize } from "./utils.js";
+import { assetUrl } from "./asset_url.js";
 
 const SECRET_MESSAGES = [
 	{ img: './data/secret_messages/boss_arena.png', x: 3425, y: 12650 },
@@ -19,7 +20,7 @@ const SECRET_MESSAGES = [
 // Preload these images so they show up instantly when rendering the biome
 SECRET_MESSAGES.forEach(msg => {
 	const img = new Image();
-	img.src = msg.img;
+	img.src = assetUrl(msg.img);
 	msg.imgElement = img; // Store the loaded image element for later use
 });
 

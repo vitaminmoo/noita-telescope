@@ -1,6 +1,7 @@
 import { getWorldSize, CONTAINER_TYPES, MATERIAL_CONTAINER_TYPES } from "./utils.js";
 import { getDisplayName } from "./translations.js";
 import { hasSheet, iconImgHtml } from "./icon_sheets.js";
+import { assetUrl } from "./asset_url.js";
 import { app } from "./app.js"; // Hacky workaround for orbs and PW display...
 import { POTION_COLORS } from "./potion_config.js";
 import { SPRITE_RARITY } from "./wand_config.js";
@@ -10,7 +11,7 @@ function headerSpriteHtml(sprite) {
 	const slash = sprite.indexOf('/');
 	const folder = sprite.slice(0, slash);
 	if (hasSheet(folder)) return iconImgHtml(folder, sprite.slice(slash + 1), 'class="item-sprite-header"');
-	return `<img class="item-sprite-header" src="./data/${sprite}.png" onerror="this.style.display='none'">`;
+	return `<img class="item-sprite-header" src="${assetUrl(`data/${sprite}.png`)}" onerror="this.style.display='none'">`;
 }
 
 function generateHeaderHtml(name, sprite, extra, material=null) {
@@ -21,7 +22,7 @@ function generateHeaderHtml(name, sprite, extra, material=null) {
 		// TODO: Look up colors from the material
 		if (POTION_COLORS[material]) {
 			const color = POTION_COLORS[material].substring(2); // Transparency ends up looking bad here anyway
-			extraSprite = `<img class="item-sprite-header" src="./data/${sprite}_mask.png" style="filter: drop-shadow(0px 2000px 0 #${color}); mix-blend-mode: multiply; transform: translateY(-2000px);" onerror="this.style.display='none'">`;
+			extraSprite = `<img class="item-sprite-header" src="${assetUrl(`data/${sprite}_mask.png`)}" style="filter: drop-shadow(0px 2000px 0 #${color}); mix-blend-mode: multiply; transform: translateY(-2000px);" onerror="this.style.display='none'">`;
 		}
 		else {
 			console.log("No color found for material", material, POTION_COLORS[material]);

@@ -10,6 +10,7 @@
 // App-free: a host hands over the world's biome data and prescanned spawns and
 // gets placement lists back.
 import { loadTimeline } from './load_timeline.js';
+import { assetUrl } from './asset_url.js';
 import { PIXEL_SCENE_DATA, PIXEL_SCENE_SPAWN_DATA } from './pixel_scene_generation.js';
 import { appSettings } from './settings.js';
 import { TRANSLATIONS } from './translations.js';
@@ -68,7 +69,7 @@ export class WorldScanPool {
 	constructor({ count = defaultWorldWorkerCount() } = {}) {
 		this.pending = new Map();   // `${seed}|${ng}|${pw},${pwVertical}` -> { resolve, reject, worker, t0 }
 		this.workers = Array.from({ length: Math.max(1, count) }, (_, i) => {
-			const w = new Worker(new URL('./world_worker.js', import.meta.url), { type: 'module', name: `world-${i}` });
+			const w = new Worker(assetUrl(new URL('./world_worker.js', import.meta.url)), { type: 'module', name: `world-${i}` });
 			w.inflight = 0;
 			// Held until the worker says its module has loaded (world_worker.js READY).
 			w.ready = false;
