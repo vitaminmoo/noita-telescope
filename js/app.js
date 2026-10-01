@@ -15,7 +15,6 @@ import { camZFromLogZoom, cameraFromWorld, formatViewParams, logZoomFromCamZ, pa
 import { renderWallMessages } from './wall_messages.js';
 import { findEyeMessages, renderEyeMessages } from './eye_messages.js';
 import { BIOME_COLOR_LOOKUP, createBiomeMapAlphaMask, createTileOverlays, createTileOverlaysCheap, createTileOverlaysExpanded, terrainFillColor } from './image_processing.js';
-import { COALMINE_ALT_SCENES } from './pixel_scene_config.js';
 import { debugBiomeEdgeNoise } from './edge_noise.js';
 import { drawBiomeBoundaryContour } from './biome_boundary.js';
 import { GLBackdropRenderer } from './gl/backdrop_renderer.js';
@@ -767,14 +766,8 @@ export const app = {
 			this.draw();
 		};
 		document.getElementById('visited-coalmine-alt-shrine').onchange = () => {
-			// TODO: Need to sync this in search settings
-			const value = document.getElementById('visited-coalmine-alt-shrine').checked;
-			if (value) {
-				COALMINE_ALT_SCENES["g_pixel_scene_02"][0].prob = 0.0;
-			}
-			else {
-				COALMINE_ALT_SCENES["g_pixel_scene_02"][0].prob = 0.5;
-			}
+			// The scene picker reads the setting itself (loadRandomPixelScene), on
+			// this thread and in the workers saveSettings() syncs.
 			this.saveSettings();
 			// Do full regen just in case?
 			this.generate(true, true);
@@ -4891,7 +4884,7 @@ export const app = {
 				document.getElementById('extra-shop-items').value = parseInt(settings.extraItemsInHolyMountain) || 0;
 				document.getElementById('skip-cosmetic-scenes').checked = settings.skipCosmeticScenes || false;
 				document.getElementById('show-wand-sprite-rarity').checked = settings.showWandSpriteRarity || false; 
-				document.getElementById('visited-coalmine-alt-shrine').checked = settings.visitedCoalmineAltShrine || false;
+				document.getElementById('visited-coalmine-alt-shrine').checked = settings.visitedCoalmineAltShrine ?? true;
 				document.getElementById('exclude-taikasauva').checked = settings.excludeTaikasauva || false;
 				document.getElementById('recolor-materials').checked = settings.recolorMaterials || false;
 				// `?? true` so a settings blob saved before this option existed
@@ -4927,8 +4920,8 @@ export const app = {
 				settings.checkerboardUnpainted = document.getElementById('debug-unpainted-checkerboard').checked;
 				document.getElementById('debug-biome-boundary-contour').checked = settings.biomeBoundaryContour ?? false;
 				settings.biomeBoundaryContour = document.getElementById('debug-biome-boundary-contour').checked;
-				document.getElementById('debug-pixel-scene-budget').value = settings.pixelSceneBitmapBudgetMB || 512;
-				document.getElementById('enable-edge-noise').checked = settings.enableEdgeNoise || false;
+				document.getElementById('debug-pixel-scene-budget').value = settings.pixelSceneBitmapBudgetMB || 1024;
+				document.getElementById('enable-edge-noise').checked = settings.enableEdgeNoise ?? true;
 				document.getElementById('debug-block-edge-spawns').checked = settings.blockEdgeSpawns || false;
 				document.getElementById('debug-edge-noise').checked = settings.edgeNoiseDebug || false;
 				document.getElementById('debug-biome-overlay-mode').value = settings.overlayMode || 'normal';

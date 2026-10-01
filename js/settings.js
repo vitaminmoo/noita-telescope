@@ -49,7 +49,7 @@ export const appSettings = {
 	engineTerrain: true,
 	edgeDecals: true,
 	clearSpawnPixels: false,
-	visitedCoalmineAltShrine: false,
+	visitedCoalmineAltShrine: true,
 	excludeTaikasauva: false,
 	excludeEdgeCases: false, // Not yet implemented
 	biomeOverlayMode: 'normal',
@@ -85,7 +85,7 @@ export const appSettings = {
 	checkerboardUnpainted: true,
 	biomeBoundaryContour: false,
 	// Byte budget for the pixel scene ImageBitmap + mip cache, least-recently-drawn first
-	pixelSceneBitmapBudgetMB: 512,
+	pixelSceneBitmapBudgetMB: 1024,
 	// UI related options are not included here, this is mainly for settings which the web workers will need
 }
 
@@ -119,7 +119,8 @@ export function updateSettingsFromUI() {
 		enableStaticPixelScenes: document.getElementById('enable-static-pixel-scenes')?.value || 'all',
 		skipCosmeticScenes: document.getElementById('skip-cosmetic-scenes')?.checked || false,
 		customArt: document.getElementById('custom-art')?.checked || false,
-		enableEdgeNoise: document.getElementById('enable-edge-noise')?.checked || false,
+		// `?? true`, not `|| false`: a missing checkbox must not switch the wobble off.
+		enableEdgeNoise: document.getElementById('enable-edge-noise')?.checked ?? true,
 		blockEdgeSpawns: document.getElementById('debug-block-edge-spawns')?.checked || false,
 		fixHolyMountainEdgeNoise: document.getElementById('fix-holy-mountain-edge-noise')?.checked || true,
 		rngInfo: document.getElementById('rng-info')?.checked || false,
@@ -132,7 +133,7 @@ export function updateSettingsFromUI() {
 		engineTerrain: document.getElementById('engine-terrain')?.checked ?? true,
 		edgeDecals: document.getElementById('edge-decals')?.checked ?? true,
 		clearSpawnPixels: document.getElementById('clear-spawn-pixels')?.checked || false,
-		visitedCoalmineAltShrine: document.getElementById('visited-coalmine-alt-shrine')?.checked || false,
+		visitedCoalmineAltShrine: document.getElementById('visited-coalmine-alt-shrine')?.checked ?? true,
 		excludeTaikasauva: document.getElementById('exclude-taikasauva')?.checked || true,
 		excludeEdgeCases: document.getElementById('exclude-edge-cases')?.checked || false,
 		biomeOverlayMode: document.getElementById('debug-biome-overlay-mode')?.value || 'normal',
@@ -156,7 +157,7 @@ export function updateSettingsFromUI() {
 		renderEverything: document.getElementById('debug-render-everything')?.checked || false,
 		checkerboardUnpainted: document.getElementById('debug-unpainted-checkerboard')?.checked ?? true,
 		biomeBoundaryContour: document.getElementById('debug-biome-boundary-contour')?.checked ?? false,
-		pixelSceneBitmapBudgetMB: parseInt(document.getElementById('debug-pixel-scene-budget')?.value) || 512,
+		pixelSceneBitmapBudgetMB: parseInt(document.getElementById('debug-pixel-scene-budget')?.value) || 1024,
 	};
 	updateSettings(newSettings);
 }

@@ -423,6 +423,6 @@ export class TerrainView {
 // do not fit the default budget (pixel_scene_generation.js sceneBitmapBudgetBytes).
 function defaultSceneBudgetBytes() {
 	const budgetMB = appSettings.renderEverything
-		? Math.max(appSettings.pixelSceneBitmapBudgetMB || 512, 2048) : (appSettings.pixelSceneBitmapBudgetMB || 512);
+		? Math.max(appSettings.pixelSceneBitmapBudgetMB || 1024, 2048) : (appSettings.pixelSceneBitmapBudgetMB || 1024);
 	return budgetMB * 1024 * 1024;
 }

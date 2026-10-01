@@ -356,7 +356,7 @@ export function clearPixelSceneBitmapCache() {
 // Give the debug mode room instead.
 function sceneBitmapBudgetBytes() {
 	const budgetMB = appSettings.renderEverything
-		? Math.max(appSettings.pixelSceneBitmapBudgetMB || 512, 2048) : (appSettings.pixelSceneBitmapBudgetMB || 512);
+		? Math.max(appSettings.pixelSceneBitmapBudgetMB || 1024, 2048) : (appSettings.pixelSceneBitmapBudgetMB || 1024);
 	return budgetMB * 1024 * 1024;
 }
 
@@ -1204,14 +1204,21 @@ export function loadPixelScene(biomeData, biomeName, sceneName, ws, ng, x, y, sk
 export function loadRandomPixelScene(biomeData, biomeName, scene_list, ws, ng, x, y, skipCosmeticScenes = true, gameMode = 'normal') {
 	if (!scene_list || scene_list.length === 0) return null;
 	const prng = new NollaPrng(0);
+	// A unique scene (the Collapsed Mines shrine) is placed once per run: after
+	// the player has loaded it, it is out of the pool. The setting is read here
+	// rather than patched into the scene table, so every thread that scans --
+	// the page and the world workers, which get the settings but have their own
+	// copy of the table -- answers the same.
+	const probOf = (scene) => (scene.unique && appSettings.visitedCoalmineAltShrine ? 0 : scene.prob);
 	let total_prob = 0;
 	for (const scene of scene_list) {
-		total_prob += scene.prob;
+		total_prob += probOf(scene);
 	}
 	let r = prng.ProceduralRandom(ws + ng, x, y) * total_prob;
 	for (const scene of scene_list) {
-		if (scene.prob <= 0) continue;
-		if (r <= scene.prob) {
+		const prob = probOf(scene);
+		if (prob <= 0) continue;
+		if (r <= prob) {
 			if (scene.name === "") return null; // Rolled for no scene
 			const pixelSceneKey = getPixelSceneKey(biomeName, scene.name);
 			if (!PIXEL_SCENE_DATA[pixelSceneKey]) {
@@ -1303,7 +1310,7 @@ export function loadRandomPixelScene(biomeData, biomeName, scene_list, ws, ng, x
 			//console.log(`Loaded pixel scene ${scene.name} at (${x}, ${y}) in biome ${biomeName}.`);
 			return outputScene;
 		}
-		r -= scene.prob;
+		r -= prob;
 	}
 	console.log(`Impossible zero probability outcome for pixel scene at (${x}, ${y}), total prob ${total_prob}, r ${r}: ${JSON.stringify(scene_list)}`);
 	return null;
