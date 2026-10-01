@@ -109,7 +109,7 @@ export class TerrainView {
 				},
 				poolWorkers: overlayPoolStats().inflight,
 				decals: this.decals.stats(),
-				sceneAtlas: { pages: g.pages, mb: Math.round(g.bytes / 1048576), images: g.slots },
+				sceneAtlas: { pages: g.pages, mb: Math.round(g.bytes / 1048576), images: g.slots, maps: g.maps, warmRemaining: g.warmRemaining },
 				gpuMs: this.timings.gpu,
 				failed: this.failed,
 			};
@@ -162,8 +162,9 @@ export class TerrainView {
 	 * (the first three steps need no world) takes them off the first frame, and
 	 * a benchmark gets each step on its own.
 	 *
-	 * Steps: context, shaderLink, materialAtlas (fetch), sceneTextures (the scene
-	 * builds' atlas + band tables), then with a world: regionAtlas, chunkTextures,
+	 * Steps: context, shaderLink, sceneShaderLink, materialAtlas (fetch),
+	 * sceneTextures (the scene builds' atlas + band tables), then with a world:
+	 * regionAtlas, chunkTextures,
 	 * engineLattice, engineTable, sinHashGrids, materialTables, noiseTable, upload.
 	 *
 	 * @param {object} [opts]
@@ -187,6 +188,10 @@ export class TerrainView {
 		const linked = !!terrain.program;
 		await step('shaderLink', () => terrain.ensureProgram());
 		if (linked) t.shaderLink = 0;
+		// The pixel scenes' material-map program: the same library, linked again.
+		const sceneLinked = !!this.scenes.matProgram;
+		await step('sceneShaderLink', () => this.scenes.initMaterials(terrain));
+		if (sceneLinked) t.sceneShaderLink = 0;
 		await step('materialAtlas', () => initMaterialAtlas().catch(() => null));
 		await step('sceneTextures', () => initPixelSceneTextures());
 		if (this.world && this.ensureResources(opts)) {
@@ -331,6 +336,7 @@ export class TerrainView {
 		const worlds = view.worlds ? [...view.worlds] : this.worldsInView(view);
 		let scenes = false;
 		this.redrawInMs = null;
+		this.sceneUploadsPending = false;
 		this.missingSceneWorlds = 0;
 		if (view.scenes !== false && w.scenes) {
 			scenes = this.drawScenes(view, worlds, pw, pwVertical, detailZoom);
@@ -398,7 +404,10 @@ export class TerrainView {
 			air: view.sceneAir,
 			color: view.sceneColor,
 		});
-		if (drawn) this.redrawInMs = this.scenes.redrawInMs;
+		if (drawn) {
+			this.redrawInMs = this.scenes.redrawInMs;
+			this.sceneUploadsPending = this.scenes.uploadsPending;
+		}
 		return drawn;
 	}
 
@@ -409,7 +418,9 @@ export class TerrainView {
 	 */
 	pending() {
 		const sceneBitmaps = pendingPixelSceneBitmaps();
-		const sceneUploads = this.redrawInMs != null ? 1 : 0;
+		// Not `redrawInMs`: that also asks for the idle frames that bring in the
+		// material maps of scenes out of view, which no frame is waiting for.
+		const sceneUploads = this.sceneUploadsPending ? 1 : 0;
 		const sceneWorlds = this.missingSceneWorlds || 0;
 		const edgeDecalTiles = pendingEdgeDecalTiles();
 		return {

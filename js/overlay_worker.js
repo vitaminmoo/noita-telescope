@@ -1,6 +1,6 @@
 // overlay_worker.js
 import {
-	buildTexturedScenePixels, ensureScenePixels, eraseFlatScenePixels, halveWithoutHoles, initPixelSceneTextures, injectPixelSceneData,
+	buildSceneMaterialMap, buildTexturedScenePixels, ensureScenePixels, eraseFlatScenePixels, halveWithoutHoles, initPixelSceneTextures, injectPixelSceneData,
 	overlayVisualArt, PIXEL_SCENE_DATA, pixelSceneMaterialGrid, recolorPixelScene, recolorPixelSceneForBiome, SCENE_SHARED_SAMPLE_LEVEL,
 } from './pixel_scene_generation.js';
 import * as bandSelect from './engine_resolve/band_select.js';
@@ -55,6 +55,9 @@ self.onmessage = async function(e) {
 	}
 	else if (data.cmd === 'BUILD_SCENE_BITMAPS') {
 		await buildSceneBitmapsWorker(data);
+	}
+	else if (data.cmd === 'BUILD_SCENE_MATERIALS') {
+		await buildSceneMaterialsWorker(data);
 	}
 	jobBusyStep();
 	runningJobs.delete(job);
@@ -207,6 +210,31 @@ async function buildSceneBitmapsWorker(req) {
 	} catch (err) {
 		fail(`threw ${err?.message ?? err}`, err);
 	}
+}
+
+// One scene variant as a material map for the GL scene pass
+// (pixel_scene_generation.js buildSceneMaterialMap), its bytes transferred back.
+// Always answered, like a bitmap request: the main thread counts it in flight.
+async function buildSceneMaterialsWorker(req) {
+	const { epoch, cacheKey, key, variantKey, texturedAlphas } = req;
+	const t0 = performance.now();
+	let map = null, failReason = null;
+	try {
+		const data = PIXEL_SCENE_DATA[key];
+		if (!data) failReason = `no PIXEL_SCENE_DATA entry for "${key}" in the worker`;
+		else {
+			await ensureScenePixels(data);
+			map = buildSceneMaterialMap(data, variantKey, bandSelect, texturedAlphas ?? []);
+			if (!map) failReason = 'the scene pixels did not decode';
+		}
+	} catch (err) {
+		failReason = `threw ${err?.message ?? err}`;
+	}
+	if (!map) console.error(`[scene materials] no map for ${cacheKey}: ${failReason}`);
+	self.postMessage({
+		type: 'SCENE_MATERIALS', epoch, cacheKey, key, variantKey, failReason,
+		...(map ?? { data: null }), buildMs: performance.now() - t0,
+	}, map ? [map.data.buffer] : []);
 }
 
 // ---------------------------------------------------------------------------

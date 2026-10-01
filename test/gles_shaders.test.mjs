@@ -16,7 +16,7 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { TERRAIN_FS, TERRAIN_VS } from '../js/gl/shaders.js';
+import { SCENE_MATERIAL_FS, SCENE_MATERIAL_VS, TERRAIN_FS, TERRAIN_VS } from '../js/gl/shaders.js';
 
 const REPO = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
 
@@ -189,6 +189,29 @@ test('TERRAIN_FS compiles', { skip }, () => {
 
 test('the terrain program links', { skip }, () => {
 	assert.ok(terrainProgram() > 0);
+});
+
+// The pixel-scene material pass is the terrain library with its own main().
+// What it needs from the library is the tables its fragments read -- the band
+// table, the noise tables, the material atlas and its color table -- and the
+// camera, all set by GLTerrainRenderer.applyLibraryState; a library edit that
+// drops one of them from this program would draw scenes from zeros.
+test('the scene material program links and keeps the inputs it reads', { skip }, () => {
+	const vs = compile(gl.VERTEX_SHADER, SCENE_MATERIAL_VS, 'SCENE_MATERIAL_VS');
+	const fs = compile(gl.FRAGMENT_SHADER, SCENE_MATERIAL_FS, 'SCENE_MATERIAL_FS');
+	const p = gl.createProgram();
+	gl.attachShader(p, vs);
+	gl.attachShader(p, fs);
+	gl.linkProgram(p);
+	assert.ok(gl.getProgramParameter(p, gl.LINK_STATUS),
+		`the scene material program failed to link:\n${gl.getProgramInfoLog(p)}`);
+	gl.deleteShader(vs);
+	gl.deleteShader(fs);
+	const needed = ['u_sceneTex', 'u_air', 'u_originInt', 'u_originFrac', 'u_invZoom', 'u_screenSize', 'u_matDetail',
+		'u_noiseTex', 'u_engTableTex', 'u_matAtlasTex', 'u_matMetaTex'];
+	const missing = needed.filter(n => gl.getUniformLocation(p, n) === null);
+	assert.deepEqual(missing, [], `the scene material program does not read ${missing.join(', ')}`);
+	gl.deleteProgram(p);
 });
 
 test('every uniform the renderer looks up exists in the linked program', { skip }, (t) => {

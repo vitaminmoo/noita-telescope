@@ -21,6 +21,7 @@ import { VISUAL_OVERLAY_SCENES } from './pixel_scene_visuals.js';
 // tools/gen_scene_backgrounds.mjs; keys are `${getBiomeAlias(biome)}/${sceneName}`.
 import { SCENE_BACKGROUNDS, SCENE_BACKGROUNDS_BY_BIOME } from './pixel_scene_backgrounds.js';
 import { SKIP_EDGE_TEXTURE_SCENES } from './pixel_scene_edge_flags.js';
+import { SCENE_CELL_AIR, SCENE_CELL_COLOR, SCENE_CELL_DENSITY, SCENE_CELL_MATERIAL } from './scene_cells.js';
 
 // Scenes the game paints with ANOTHER scene's colors file. VISUAL_OVERLAY_SCENES
 // is derived from the "<name>_visual.png sits beside <name>.png" convention, but
@@ -188,7 +189,7 @@ export function setPixelSceneBitmapRequester(fn) {
 
 /** Scene bitmaps asked of the worker and not back yet (the harness waits on it). */
 export function pendingPixelSceneBitmaps() {
-	return pendingSceneBitmaps.size;
+	return pendingSceneBitmaps.size + neededSceneMaterials;
 }
 
 // `level` 0 with `textured` is the full-res textured build; level > 0 is the
@@ -325,6 +326,7 @@ export function getPixelSceneCacheStats() {
 		entries: PIXEL_SCENE_BITMAP_CACHE.size, bytes: pixelSceneCacheBytes, budgetBytes: sceneBitmapBudgetBytes(),
 		pending: pendingSceneBitmaps.size, pendingTextured, ...sceneBitmapCounters,
 		buildTime: structuredClone(sceneBuildTime),
+		materialMaps: SCENE_MATERIAL_MAPS.size, pendingMaterialMaps: pendingSceneMaterials.size,
 	};
 }
 
@@ -346,8 +348,132 @@ export function clearPixelSceneBitmapCache() {
 	pendingSceneWeight.clear();
 	inflightWeight.flat = inflightWeight.resolved = inflightWeight.textured = 0;
 	deliveredSceneBitmaps.clear();
+	SCENE_MATERIAL_MAPS.clear();
+	pendingSceneMaterials.clear();
+	failedSceneMaterials.clear();
+	inflightMaterialWeight = 0;
+	neededSceneMaterials = 0;
 	sceneBitmapEpoch++;
 	sceneBitmapVersion++;
+}
+
+// ---------------------------------------------------------------------------
+// Scene material maps (the GL scene pass, gl/scene_renderer.js)
+//
+// With material textures on, the GL pass does not draw a scene from a bitmap
+// built for the place it landed. It uploads the scene ONCE per variant as what
+// each pixel IS -- untouched, air, the biome's density class, a material, a
+// plain color -- plus its colors-file art (buildSceneMaterialMap), and the
+// fragment shader gives every cell its color from the cell's own world
+// position, with the code the terrain under it runs. So a variant is built
+// once however many times it is placed, the build is a single pass over the
+// PNG with no band chooser in it, and nothing is rebuilt per zoom level:
+// there is no coarser picture to show first and swap out later.
+//
+// A map is asked of the overlay worker like a bitmap, lands here as bytes, and
+// is handed to the renderer, which releases the bytes once they are on the GPU.
+// Requests made ahead of need (`warm`) are not counted as pending work: a
+// frame that does not draw the scene is not waiting for it.
+// ---------------------------------------------------------------------------
+const SCENE_MATERIAL_MAPS = new Map();     // flat key -> { cacheKey, width, height, layers, data, erase }
+const pendingSceneMaterials = new Map();   // flat key -> { warm, weight }
+// Keys the worker could not build (the PNG did not decode): not asked again,
+// or every frame that wants the scene would ask.
+const failedSceneMaterials = new Set();
+let inflightMaterialWeight = 0;
+let neededSceneMaterials = 0;              // pending requests that a frame is waiting for
+// A map build is a decode and one classifying pass, a fraction of a bitmap
+// build, so many can be in flight; weighted like the bitmap caps (SLOT_AREA).
+const MAX_INFLIGHT_MATERIALS = 32;
+
+/** The key a scene's material map is cached under: its variant, no position. */
+export function sceneMaterialKey(pixelScene) {
+	return sceneKeys(pixelScene).flat;
+}
+
+/** The landed map for a key, or undefined. `data` is null once a renderer took the bytes. */
+export function landedSceneMaterialMap(cacheKey) {
+	return SCENE_MATERIAL_MAPS.get(cacheKey);
+}
+
+/** True when the worker has answered that it cannot build this map. */
+export function sceneMaterialMapFailed(cacheKey) {
+	return failedSceneMaterials.has(cacheKey);
+}
+
+/**
+ * Asks the worker for a scene's material map.
+ * @param {boolean} warm  asked ahead of need; a later call without it marks
+ *        the request in flight as needed
+ * @returns {'landed'|'pending'|'refused'|'failed'}  refused: too many in
+ *          flight, ask again
+ */
+export function requestSceneMaterialMap(pixelScene, warm = false) {
+	const cacheKey = sceneKeys(pixelScene).flat;
+	if (SCENE_MATERIAL_MAPS.has(cacheKey)) return 'landed';
+	if (failedSceneMaterials.has(cacheKey)) return 'failed';
+	const pending = pendingSceneMaterials.get(cacheKey);
+	if (pending) {
+		if (pending.warm && !warm) { pending.warm = false; neededSceneMaterials++; }
+		return 'pending';
+	}
+	const data = PIXEL_SCENE_DATA[pixelScene.key];
+	if (!sceneBitmapRequester || !data) return 'refused';
+	if (pendingSceneMaterials.size >= MAX_INFLIGHT_COUNT) return 'refused';
+	const weight = sceneBuildWeight(data);
+	if (inflightMaterialWeight + weight > MAX_INFLIGHT_MATERIALS && inflightMaterialWeight > 0) return 'refused';
+	pendingSceneMaterials.set(cacheKey, { warm, weight });
+	inflightMaterialWeight += weight;
+	if (!warm) neededSceneMaterials++;
+	sceneBitmapCounters.requests++;
+	sceneBitmapRequester({
+		cmd: 'BUILD_SCENE_MATERIALS',
+		epoch: sceneBitmapEpoch,
+		cacheKey,
+		key: pixelScene.key,
+		variantKey: pixelScene.variantKey || '',
+		texturedAlphas: texturedFlatAlphas(),
+	}, data);
+	return 'pending';
+}
+
+/** Accepts a SCENE_MATERIALS reply. Returns true when a map became available. */
+export function putSceneMaterialMap(msg) {
+	const pending = pendingSceneMaterials.get(msg.cacheKey);
+	if (pending) {
+		inflightMaterialWeight = Math.max(0, inflightMaterialWeight - pending.weight);
+		if (!pending.warm) neededSceneMaterials--;
+		pendingSceneMaterials.delete(msg.cacheKey);
+		if (msg.buildMs != null) {
+			const t = sceneBuildTime.materials ??= { n: 0, ms: 0 };
+			t.n++; t.ms += msg.buildMs;
+		}
+	}
+	if (!pendingSceneMaterials.size) inflightMaterialWeight = 0;
+	// A map nobody is drawing yet changes no frame: only one a frame asked for
+	// makes the scene pass look again.
+	if (!pending || !pending.warm) sceneBitmapVersion++;
+	if (msg.epoch !== sceneBitmapEpoch) return false;
+	if (!msg.data) {
+		failedSceneMaterials.add(msg.cacheKey);
+		logSceneBitmapFailure(msg);
+		return false;
+	}
+	SCENE_MATERIAL_MAPS.set(msg.cacheKey, {
+		cacheKey: msg.cacheKey, width: msg.width, height: msg.height, layers: msg.layers, data: msg.data, erase: msg.erase,
+	});
+	return true;
+}
+
+/** The renderer has the map on the GPU: drop this thread's copy of the bytes. */
+export function releaseSceneMaterialBytes(cacheKey) {
+	const entry = SCENE_MATERIAL_MAPS.get(cacheKey);
+	if (entry) entry.data = null;
+}
+
+/** The renderer no longer holds the map (evicted, context lost): the next ask rebuilds it. */
+export function forgetSceneMaterialMap(cacheKey) {
+	SCENE_MATERIAL_MAPS.delete(cacheKey);
 }
 
 // Under Render Everything the full-res textured instances of a whole overview
@@ -575,10 +701,14 @@ function sceneKeys(pixelScene) {
 	let m = sceneKeyMemo.get(pixelScene);
 	if (!m) {
 		const flat = `${pixelScene.key}/${pixelScene.variantKey || ''}`;
-		m = { flat, flatErase: flat + FLAT_ERASE_SUFFIX, inst: [`${flat}@${pixelScene.x},${pixelScene.y}`] };
+		m = { flat, flatErase: flat + FLAT_ERASE_SUFFIX, inst: [`${flat}@${pixelScene.x},${pixelScene.y}`], mat: flat + '#mat' };
 		sceneKeyMemo.set(pixelScene, m);
 	}
 	return m;
+}
+/** The GL scene pass' slot key for a scene's material map. */
+export function sceneMaterialSlotKey(pixelScene) {
+	return sceneKeys(pixelScene).mat;
 }
 function flatCacheKey(pixelScene) {
 	const m = sceneKeys(pixelScene);
@@ -2057,4 +2187,115 @@ export function pixelSceneMaterialGrid(scene, bands) {
 		// it alongside the materials.
 		artMask: data.artMask || null,
 	};
+}
+
+// ---------------------------------------------------------------------------
+// The material map of one scene variant, for the GL scene pass (see "Scene
+// material maps" above). Runs in the overlay worker.
+//
+// The classification is texturePixelSceneForBiome's, with everything that
+// depends on WHERE the scene lands left for the shader:
+// The cell kinds are js/scene_cells.js. The kind is the texel's alpha byte. A
+// second layer, when the scene has colors-file art, is that art padded to the
+// scene's size (straight alpha).
+// ---------------------------------------------------------------------------
+
+/**
+ * @param {object} data         the scene's PIXEL_SCENE_DATA record, its pixels
+ *        (and art) decoded. The record, not its key: a metadata re-sync swaps
+ *        the table's records, and one that lands while this scene is being
+ *        decoded leaves the pixels on the record the caller holds.
+ * @param {string} variantKey   material substitutions and the `biome=` part
+ * @param {object} bands        engine_resolve/band_select.js
+ * @param {Array<[number, number]>} texturedAlphas  texturedFlatAlphas(): the
+ *        textured materials that are not opaque, which this thread cannot know
+ * @returns {{width, height, layers, data: Uint8Array, erase: boolean}|null}
+ *          `erase`: some cell can remove the world cell under it without
+ *          covering it (air, a translucent material), so the scene needs the
+ *          erase pass
+ */
+export function buildSceneMaterialMap(data, variantKey, bands, texturedAlphas = []) {
+	if (!data || !ArrayBuffer.isView(data.imgElement)) return null;
+	let pixels = data.imgElement;
+	let biome = 'general';
+	for (const part of (variantKey || '').split('&')) {
+		const eq = part.indexOf('=');
+		if (eq < 0) continue;
+		if (part.slice(0, eq) === 'biome') biome = part.slice(eq + 1);
+		else pixels = recolorPixelScene(pixels, parseInt(part.slice(0, eq), 16), parseInt(part.slice(eq + 1), 16));
+	}
+	const paint = sceneBiomePaint(data.name, biome);
+	const texAlpha = new Map(texturedAlphas);
+	const translucent = (rgb) => texAlpha.has(rgb) || flatMaterialAlpha(rgb) < 255;
+	const pack = (kind, r, g, b) => ((kind << 24) | (b << 16) | (g << 8) | r) >>> 0;   // little-endian RGBA
+	const packColor = (kind, rgb) => pack(kind, (rgb >> 16) & 0xff, (rgb >> 8) & 0xff, rgb & 0xff);
+	let erase = false;
+
+	// FORCE AIR: removed from the world, unless this scene paints its air solid.
+	const airCode = paint.texturedAirAlpha === 0x00 ? pack(SCENE_CELL_AIR, 0, 0, 0) : packColor(SCENE_CELL_COLOR, paint.bgColor);
+	// The density class: the biome's band table where it has one, else its fill
+	// material, else the flat fill color.
+	const densityBiome = densityBiomeFor(bands, paint.targetBiome, paint.underlyingBiome);
+	let densityCode, densityErases = false;
+	if (densityBiome) {
+		// The chooser can answer air, or a translucent band material.
+		densityCode = pack(SCENE_CELL_DENSITY, bands.engineBiomeSlot(densityBiome.entry), 0, 0);
+		densityErases = true;
+	} else {
+		const fill = densityFillMaterialFor(paint.targetBiome, paint.underlyingBiome);
+		const id = fill ? bands.materialIdForName(fill.material) : -1;
+		if (id > 0) {
+			densityCode = pack(SCENE_CELL_MATERIAL, id & 0xff, id >> 8, 0);
+			const wang = MATERIAL_WANG_COLORS[fill.material];
+			densityErases = wang !== undefined && translucent(parseInt(wang, 16) & 0xffffff);
+		} else {
+			densityCode = packColor(SCENE_CELL_COLOR, paint.targetColor);
+		}
+	}
+
+	const w = data.width, h = data.height, n = w * h;
+	const art = data.visualArt;
+	const layers = art ? 2 : 1;
+	const out = new Uint8Array(n * 4 * layers);
+	const cells = new Uint32Array(out.buffer, 0, n);
+	// A scene is long runs of a few colors: the last one answers most pixels.
+	let lastRgb = -1, lastCode = 0, lastErases = false;
+	for (let p = 0, i = 0; p < n; p++, i += 4) {
+		if (pixels[i + 3] === 0) continue;
+		const r = pixels[i], g = pixels[i + 1], b = pixels[i + 2];
+		const rgb = (r << 16) | (g << 8) | b;
+		if (rgb !== lastRgb) {
+			lastRgb = rgb;
+			if (rgb === 0x000042) {
+				lastCode = airCode;
+				lastErases = paint.texturedAirAlpha === 0x00;
+			} else if (r === g && g === b && r > 0) {
+				lastCode = densityCode;
+				lastErases = densityErases;
+			} else {
+				const name = materialForWangColor(rgb);
+				const id = name ? bands.materialIdForName(name) : -1;
+				if (id > 0) {
+					lastCode = pack(SCENE_CELL_MATERIAL, id & 0xff, id >> 8, 0);
+					lastErases = translucent(rgb);
+				} else if (id === 0) {
+					lastCode = pack(SCENE_CELL_AIR, 0, 0, 0);
+					lastErases = true;
+				} else {
+					lastCode = packColor(SCENE_CELL_COLOR, MATERIAL_COLOR_CONVERSION[rgb] ?? rgb);
+					lastErases = false;
+				}
+			}
+		}
+		cells[p] = lastCode;
+		if (lastErases) erase = true;
+	}
+	if (art) {
+		// Anchored top-left; the art may be smaller than the scene (hall_b).
+		const aw = Math.min(w, art.width), ah = Math.min(h, art.height);
+		for (let y = 0; y < ah; y++) {
+			out.set(art.data.subarray(y * art.width * 4, (y * art.width + aw) * 4), (n + y * w) * 4);
+		}
+	}
+	return { width: w, height: h, layers, data: out, erase };
 }

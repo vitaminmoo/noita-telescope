@@ -20,13 +20,31 @@
 // path's destination-out mask plus the destination-over background refill.
 // Unlike the 2D path, all masks of a copy erase before any scene paints, so a
 // scene's air no longer erases an EARLIER overlapping scene's pixels.
+//
+// MATERIAL MAPS. With material textures on, the levels close enough to show
+// them (pixelScenesTexturedAt) are not drawn from bitmaps at all. A scene's
+// cells get their colors from where they are in the world -- the material's
+// texture is sampled at the cell's world position, the density class runs the
+// biome's band chooser there -- so a bitmap of it is only good for one
+// placement and one zoom band, and building those on demand is what made
+// scenes arrive flat and sharpen a few frames later. Instead each scene
+// VARIANT is uploaded once as a material map (pixel_scene_generation.js
+// buildSceneMaterialMap: what every pixel is, plus the colors-file art) and a
+// second program, the terrain shader's own library with a scene main(), shades
+// each fragment from its world cell. One upload serves every placement and
+// every zoom of those levels, and survives a new seed. Maps of the scenes not
+// in view are brought in during idle frames (prewarm), so a pan, a zoom or a
+// jump finds them already there.
 
 import {
-    getPixelSceneDrawable, PIXEL_SCENE_DATA, PIXEL_SCENE_MAX_MIP, pixelSceneBitmapVersion,
-    pixelSceneCacheEpoch, pixelSceneCacheKeys, pixelScenesTexturedAt, warmPixelScene,
+    forgetSceneMaterialMap, getPixelSceneDrawable, landedSceneMaterialMap, pendingPixelSceneBitmaps,
+    PIXEL_SCENE_DATA, PIXEL_SCENE_MAX_MIP, pixelSceneBitmapVersion, pixelSceneCacheEpoch, pixelSceneCacheKeys,
+    pixelScenesTexturedAt, releaseSceneMaterialBytes, requestSceneMaterialMap, sceneMaterialKey,
+    sceneMaterialMapFailed, sceneMaterialSlotKey, warmPixelScene,
 } from '../pixel_scene_generation.js';
 import { frameSlo } from '../frame_slo.js';
-import { pixelFilterGLSL } from './shaders.js';
+import { pixelFilterGLSL, SCENE_MATERIAL_FS, SCENE_MATERIAL_VS } from './shaders.js';
+import { GLTerrainRenderer } from './terrain_renderer.js';
 
 const VS = `#version 300 es
 layout(location = 0) in ivec4 a_rect;   // scene rect in list space: x, y, w, h (world px)
@@ -87,9 +105,17 @@ void main() {
 
 const UNIFORMS = ['u_copyInt', 'u_copyFrac', 'u_zoom', 'u_screen', 'u_air', 'u_atlas'];
 
-const STRIDE_INTS = 12;             // rect(4) src(4) mask(2) pad(2)
+const STRIDE_INTS = 12;             // rect(4) src(4) mask(2) world(2)
 const GRID_CELL = 2048;             // list-space bucket for the visibility query
 const UPLOAD_BYTES_PER_FRAME = 16 * 1024 * 1024;   // at least one upload always goes through
+// Material maps upload in row strips, so one large scene (the lava lake's map
+// is 24 MB) spreads over frames instead of landing in one.
+const MAP_STRIP_BYTES = 4 * 1024 * 1024;
+// Maps brought in ahead of need (prewarm) get a smaller share of a frame, and
+// stop short of the budget: they never evict what is being drawn.
+const WARM_BYTES_PER_FRAME = 4 * 1024 * 1024;
+const WARM_BUDGET_SHARE = 0.75;
+const WARM_RETRY_MS = 50;
 const LIST_STATES_MAX = 32;
 // Bitmaps landing re-run a copy's query at most this often. While a build burst
 // streams in (Render Everything's warm-up: thousands of textured instances) a
@@ -108,6 +134,22 @@ function compile(gl, type, src) {
     return sh;
 }
 
+function link(gl, vsSrc, fsSrc) {
+    const prog = gl.createProgram();
+    const vs = compile(gl, gl.VERTEX_SHADER, vsSrc), fs = compile(gl, gl.FRAGMENT_SHADER, fsSrc);
+    gl.attachShader(prog, vs);
+    gl.attachShader(prog, fs);
+    gl.linkProgram(prog);
+    gl.deleteShader(vs);
+    gl.deleteShader(fs);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+        const log = gl.getProgramInfoLog(prog);
+        gl.deleteProgram(prog);
+        throw new Error(`GL scene program link failed: ${log}`);
+    }
+    return prog;
+}
+
 const cellKey = (cx, cy) => (cx + 0x100000) * 0x200000 + (cy + 0x100000);
 const NOT_SHOWN = -1;
 
@@ -124,13 +166,25 @@ export class GLSceneRenderer {
         /** Scenes of the last frame's view drawn from a stand-in, and not drawn. */
         this.standIns = 0;
         this.missing = 0;
+        /** The material-map program (null until linked; see initMaterials). */
+        this.matProgram = null;
+        this.matUniforms = null;
+        this.matFailed = null;
+        this.matLinkMs = 0;
+        /** True when the last frame left needed bitmaps or maps for a later one. */
+        this.uploadsPending = false;
+        /** Maps brought in ahead of need: scenes still to do, as of the last frame. */
+        this.warmRemaining = 0;
         this.resetResidency();
     }
 
     resetResidency() {
         this.pages = [];
         this.openPage = null;
-        this.slots = new Map();       // `${cacheKey}#${level}` -> { page, x, y, w, h, mask }
+        // `${cacheKey}#${level}` -> { page, x, y, w, h, mask, level } for a bitmap;
+        // `${cacheKey}#mat` -> { page, x, y, w, h, art, erase, mat: true, level: 0 } for a material map
+        this.slots = new Map();
+        this.uploading = new Map();   // slot key -> a material map's slot while its strips go up
         this.bytes = 0;
         this.residency = 0;           // bumped on eviction: list instances may point at dead pages
         this.lists = new Map();       // placement list -> per-copy state, LRU order
@@ -143,6 +197,8 @@ export class GLSceneRenderer {
             for (const p of this.pages) gl.deleteTexture(p.tex);
             for (const s of this.lists.values()) if (s.buffer) gl.deleteBuffer(s.buffer);
         }
+        // The maps' bytes were released when they went up: have them rebuilt.
+        for (const p of this.pages) for (const k of p.maps) forgetSceneMaterialMap(k);
         this.resetResidency();
     }
 
@@ -150,18 +206,10 @@ export class GLSceneRenderer {
         if (this.failed) return false;
         if (this.gl === gl && this.program) return true;
         this.gl = gl;
+        this.matProgram = null;   // a new context: linked again on first use
+        this.matFailed = null;
         try {
-            const prog = gl.createProgram();
-            const vs = compile(gl, gl.VERTEX_SHADER, VS), fs = compile(gl, gl.FRAGMENT_SHADER, FS);
-            gl.attachShader(prog, vs);
-            gl.attachShader(prog, fs);
-            gl.linkProgram(prog);
-            gl.deleteShader(vs);
-            gl.deleteShader(fs);
-            if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
-                throw new Error(`GL scene program link failed: ${gl.getProgramInfoLog(prog)}`);
-            }
-            this.program = prog;
+            this.program = link(gl, VS, FS);
         } catch (err) {
             console.warn('[GL scenes]', err);
             this.failed = String(err);
@@ -174,16 +222,47 @@ export class GLSceneRenderer {
         return true;
     }
 
+    /**
+     * Links the material-map program: the terrain shader's library with a
+     * scene main(). Seed independent, so a host can do it while the world is
+     * still generating (TerrainView.prepare); draw() calls it too.
+     */
+    initMaterials(terrain) {
+        if (this.matFailed || !this.init(terrain.gl)) return false;
+        if (this.matProgram) return true;
+        const gl = this.gl;
+        const t0 = performance.now();
+        try {
+            this.matProgram = link(gl, SCENE_MATERIAL_VS, SCENE_MATERIAL_FS);
+        } catch (err) {
+            // The per-instance bitmaps still draw (query falls back to them).
+            console.warn('[GL scenes] material-map program unavailable:', err);
+            this.matFailed = String(err);
+            return false;
+        }
+        this.matUniforms = terrain.libraryUniforms(this.matProgram);
+        this.matUniforms.u_sceneTex = gl.getUniformLocation(this.matProgram, 'u_sceneTex');
+        this.matUniforms.u_air = gl.getUniformLocation(this.matProgram, 'u_air');
+        this.matLinkMs = performance.now() - t0;
+        return true;
+    }
+
     /** For the render HUD's bakes line. */
     stats() {
-        return { pages: this.pages.length, bytes: this.bytes, slots: this.slots.size, detailDrops: this.detailDrops };
+        let maps = 0;
+        for (const p of this.pages) maps += p.maps.length;
+        return {
+            pages: this.pages.length, bytes: this.bytes, slots: this.slots.size, detailDrops: this.detailDrops,
+            maps, warmRemaining: this.warmRemaining,
+        };
     }
 
     // --- atlas pages ------------------------------------------------------
 
-    newPage(w, h) {
+    newPage(w, h, noEvict = false) {
         const gl = this.gl;
         const bytes = w * h * 4;
+        if (noEvict && this.bytes + bytes > this.budget * WARM_BUDGET_SHARE) return null;
         while (this.bytes + bytes > this.budget) {
             // Least recently drawn, never one this frame or the last touched.
             let victim = null;
@@ -201,7 +280,7 @@ export class GLSceneRenderer {
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
         gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, w, h);
-        const page = { tex, w, h, bytes, x: 0, y: 0, shelfH: 0, frame: this.frame, keys: [], dead: false };
+        const page = { tex, w, h, bytes, x: 0, y: 0, shelfH: 0, frame: this.frame, keys: [], maps: [], dead: false };
         this.pages.push(page);
         this.bytes += bytes;
         return page;
@@ -211,18 +290,21 @@ export class GLSceneRenderer {
         this.gl.deleteTexture(page.tex);
         page.dead = true;
         for (const key of page.keys) this.slots.delete(key);
+        for (const [key, slot] of this.uploading) if (slot.page === page) this.uploading.delete(key);
+        for (const key of page.maps) forgetSceneMaterialMap(key);
         this.pages.splice(this.pages.indexOf(page), 1);
         if (this.openPage === page) this.openPage = null;
         this.bytes -= page.bytes;
         this.residency++;
     }
 
-    /** Space for a w x h image: shelf-packed into the open page, or a page of its own if oversize. */
-    allocate(w, h) {
+    /** Space for a w x h image: shelf-packed into the open page, or a page of its own if oversize.
+     *  `noEvict`: only if it fits without evicting anything (prewarm). */
+    allocate(w, h, noEvict = false) {
         const P = this.pageSize;
         if (w > P || h > P) {
             if (w > this.maxTex || h > this.maxTex) return null;
-            const page = this.newPage(w, h);
+            const page = this.newPage(w, h, noEvict);
             return page && { page, x: 0, y: 0 };
         }
         let page = this.openPage;
@@ -231,7 +313,7 @@ export class GLSceneRenderer {
             if (page.y + h > P) page = null;
         }
         if (!page) {
-            page = this.newPage(P, P);
+            page = this.newPage(P, P, noEvict);
             if (!page) return null;
             this.openPage = page;
         }
@@ -245,6 +327,7 @@ export class GLSceneRenderer {
         const gl = this.gl;
         const at = this.allocate(bitmap.width, bitmap.height);
         if (!at) return null;
+        gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
         gl.bindTexture(gl.TEXTURE_2D, at.page.tex);
         gl.texSubImage2D(gl.TEXTURE_2D, 0, at.x, at.y, gl.RGBA, gl.UNSIGNED_BYTE, bitmap);
         at.page.keys.push(slotKey);
@@ -276,6 +359,95 @@ export class GLSceneRenderer {
         slot = { page: img.page, x: img.x, y: img.y, w: bmp.width, h: bmp.height, mask, level };
         this.slots.set(key, slot);
         return slot;
+    }
+
+    /**
+     * The resident slot of a scene's material map, moving it along if it is
+     * not there yet: asks the worker for the map, and once it has landed
+     * uploads it a strip at a time within the frame's allowance.
+     * @param {boolean} warm  ahead of need: uses the prewarm allowance, never
+     *        evicts, and is not counted as work the frame is waiting for
+     * @returns the slot once the whole map is on the GPU, else null
+     */
+    materialSlot(scene, slotKey, state, warm) {
+        let slot = this.uploading.get(slotKey);
+        if (!slot) {
+            const cacheKey = sceneMaterialKey(scene);
+            let map = landedSceneMaterialMap(cacheKey);
+            if (map && !map.data) {
+                // Landed, but its bytes went to a slot that is gone.
+                forgetSceneMaterialMap(cacheKey);
+                map = null;
+            }
+            if (!map) {
+                if (requestSceneMaterialMap(scene, warm) === 'refused' && warm) this.warmBlocked = true;
+                return null;
+            }
+            // The art layer sits directly under the material layer.
+            const at = this.allocate(map.width, map.height * map.layers, warm);
+            if (!at) {
+                if (warm) this.warmBlocked = true;
+                return null;
+            }
+            slot = {
+                page: at.page, x: at.x, y: at.y, w: map.width, h: map.height,
+                art: map.layers > 1 ? { x: at.x, y: at.y + map.height } : null,
+                erase: map.erase, mat: true, level: 0, mask: null,
+                cacheKey, map, rows: 0,
+            };
+            this.uploading.set(slotKey, slot);
+        }
+        const gl = this.gl;
+        const map = slot.map;
+        const total = map.height * map.layers, rowBytes = map.width * 4;
+        slot.page.frame = this.frame;   // not evicted half uploaded
+        // Raw bytes: a texel's alpha is its cell kind, not coverage.
+        gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+        while (slot.rows < total) {
+            const used = warm ? this.warmUploadedBytes : this.uploadedBytes;
+            const cap = warm ? WARM_BYTES_PER_FRAME : UPLOAD_BYTES_PER_FRAME;
+            const rows = Math.min(total - slot.rows, Math.max(1, Math.floor(MAP_STRIP_BYTES / rowBytes)));
+            if (used > 0 && used + rows * rowBytes > cap) {
+                if (warm) this.warmMore = true;
+                else state.incomplete = true;
+                return null;
+            }
+            gl.bindTexture(gl.TEXTURE_2D, slot.page.tex);
+            gl.texSubImage2D(gl.TEXTURE_2D, 0, slot.x, slot.y + slot.rows, map.width, rows,
+                gl.RGBA, gl.UNSIGNED_BYTE, map.data, slot.rows * rowBytes);
+            slot.rows += rows;
+            if (warm) this.warmUploadedBytes += rows * rowBytes;
+            else this.uploadedBytes += rows * rowBytes;
+            frameSlo.count('sceneUploadKb', rows * rowBytes / 1024);
+        }
+        frameSlo.count('sceneUploads');
+        this.uploading.delete(slotKey);
+        slot.map = null;
+        releaseSceneMaterialBytes(slot.cacheKey);
+        slot.page.keys.push(slotKey);
+        slot.page.maps.push(slot.cacheKey);
+        this.slots.set(slotKey, slot);
+        return slot;
+    }
+
+    /**
+     * Brings in the material maps of a placement list's scenes that no frame
+     * has needed yet, in list order, as far as the request cap, the prewarm
+     * upload allowance and the budget allow. Called on frames with nothing
+     * else to do; picks up where it left off.
+     */
+    prewarm(list, s) {
+        let firstUndone = -1;
+        let i = s.warmFrom;
+        for (; i < list.length && !this.warmBlocked && !this.warmMore; i++) {
+            const scene = list[i];
+            if (!PIXEL_SCENE_DATA[scene.key]) continue;
+            const slotKey = sceneMaterialSlotKey(scene);
+            if (this.slots.has(slotKey) || this.materialSlot(scene, slotKey, s, true)) continue;
+            if (sceneMaterialMapFailed(sceneMaterialKey(scene))) continue;
+            if (firstUndone < 0) firstUndone = i;
+        }
+        s.warmFrom = firstUndone < 0 ? i : firstUndone;
     }
 
     residentSlot(keys, level) {
@@ -322,8 +494,10 @@ export class GLSceneRenderer {
             relOffX, relOffY, grid, stamp: new Uint32Array(list.length), stampN: 0,
             // The mip level each scene was last drawn from (NOT_SHOWN: never).
             shownLevel: new Int8Array(list.length).fill(NOT_SHOWN),
-            buffer: null, colorGroups: [], airGroups: [],
+            buffer: null, colorGroups: [], airGroups: [], matColorGroups: [], matAirGroups: [],
             queryKey: null, version: -1, residency: -1, queriedAt: 0, incomplete: false, frame: this.frame,
+            // prewarm: the first scene whose map is not resident yet, and when it last ran
+            warmFrom: 0, warmResidency: -1, warmedAt: 0,
         };
         this.lists.set(list, s);
         for (const [oldList, old] of this.lists) {
@@ -352,7 +526,10 @@ export class GLSceneRenderer {
         // Each scene's best slot key at this level, built once per list and level:
         // string building was most of a query.
         const textured = pixelScenesTexturedAt(level);
-        const keyId = `${level}|${textured}`;
+        // Textured levels draw from material maps; from per-instance bitmaps
+        // only where the material program is unavailable.
+        const useMaps = textured && this.materials;
+        const keyId = `${level}|${textured}|${useMaps}`;
         if (s.keyId !== keyId) {
             s.keyId = keyId;
             s.primaryKeys = new Array(list.length);
@@ -373,13 +550,18 @@ export class GLSceneRenderer {
                     const x = scene.x + s.relOffX, y = scene.y + s.relOffY;
                     if (x + data.width < warm.left || x > warm.right || y + data.height < warm.top || y > warm.bottom) continue;
                     let pk = primaryKeys[i];
-                    if (pk === undefined) pk = primaryKeys[i] = `${pixelSceneCacheKeys(scene, level)[0]}#${level}`;
+                    if (pk === undefined) {
+                        pk = primaryKeys[i] = useMaps ? sceneMaterialSlotKey(scene) : `${pixelSceneCacheKeys(scene, level)[0]}#${level}`;
+                    }
                     let slot = this.slots.get(pk) || null;
                     let primary = !!slot;
                     const inView = !(x + data.width < view.left || x > view.right || y + data.height < view.top || y > view.bottom);
                     if (!slot) {
                         const isNear = !(x + data.width < near.left || x > near.right || y + data.height < near.top || y > near.bottom);
-                        if (isNear) {
+                        if (useMaps) {
+                            slot = this.materialSlot(scene, pk, s, !isNear);
+                            primary = !!slot;
+                        } else if (isNear) {
                             const d = getPixelSceneDrawable(scene, level);
                             // A stand-in (the shared flat build, while this
                             // instance's textured one is being made) is not
@@ -436,40 +618,28 @@ export class GLSceneRenderer {
             }
         }
 
-        // Pages in use get a small id; instances are counting-sorted by page.
-        const pageIds = new Map();
-        const pages = [];
-        const pageId = (p) => {
-            let id = pageIds.get(p);
-            if (id === undefined) { p.frame = this.frame; pageIds.set(p, id = pages.length); pages.push(p); }
-            return id;
+        // Four draw lists, each grouped by atlas page (one instanced draw per
+        // page): the erase and the color pass, for bitmaps and for material maps.
+        const AIR = 0, MAT_AIR = 1, COLOR = 2, MAT_COLOR = 3;
+        const byPage = [new Map(), new Map(), new Map(), new Map()];
+        let total = 0;
+        const add = (pass, page, k) => {
+            let hits = byPage[pass].get(page);
+            if (!hits) { byPage[pass].set(page, hits = []); page.frame = this.frame; }
+            hits.push(k);
+            total++;
         };
-        const colorCount = [], airCount = [];
-        let airTotal = 0;
-        const n = hitI.length;
-        const colorPid = new Int32Array(n), airPid = new Int32Array(n).fill(-1);
-        for (let k = 0; k < n; k++) {
+        for (let k = 0; k < hitI.length; k++) {
             const slot = hitSlot[k];
-            const c = colorPid[k] = pageId(slot.page);
-            colorCount[c] = (colorCount[c] || 0) + 1;
-            if (slot.mask && !slot.mask.page.dead) {
-                const a = airPid[k] = pageId(slot.mask.page);
-                airCount[a] = (airCount[a] || 0) + 1;
-                airTotal++;
+            if (slot.mat) {
+                add(MAT_COLOR, slot.page, k);
+                if (slot.erase) add(MAT_AIR, slot.page, k);
+            } else {
+                add(COLOR, slot.page, k);
+                if (slot.mask && !slot.mask.page.dead) add(AIR, slot.mask.page, k);
             }
         }
-        const out = new Int32Array(Math.max(1, n + airTotal) * STRIDE_INTS);
-        const groups = (counts, base) => {
-            const gs = [], next = [];
-            let at = base;
-            for (let id = 0; id < pages.length; id++) {
-                next[id] = at;
-                if (counts[id]) { gs.push({ page: pages[id], first: at, count: counts[id] }); at += counts[id]; }
-            }
-            return { gs, next };
-        };
-        const air = groups(airCount, 0);
-        const color = groups(colorCount, airTotal);
+        const out = new Int32Array(Math.max(1, total) * STRIDE_INTS);
         const write = (at, i, slot) => {
             const scene = list[i];
             const data = PIXEL_SCENE_DATA[scene.key];
@@ -477,14 +647,26 @@ export class GLSceneRenderer {
             out[o] = scene.x + s.relOffX; out[o + 1] = scene.y + s.relOffY;
             out[o + 2] = data.width; out[o + 3] = data.height;
             out[o + 4] = slot.x; out[o + 5] = slot.y; out[o + 6] = slot.w; out[o + 7] = slot.h;
-            if (slot.mask) { out[o + 8] = slot.mask.x; out[o + 9] = slot.mask.y; }
+            if (slot.mat) {
+                out[o + 8] = slot.art ? slot.art.x : -1; out[o + 9] = slot.art ? slot.art.y : 0;
+                out[o + 10] = scene.x; out[o + 11] = scene.y;
+            } else if (slot.mask) {
+                out[o + 8] = slot.mask.x; out[o + 9] = slot.mask.y;
+            }
         };
-        for (let k = 0; k < n; k++) {
-            write(color.next[colorPid[k]]++, hitI[k], hitSlot[k]);
-            if (airPid[k] >= 0) write(air.next[airPid[k]]++, hitI[k], hitSlot[k]);
-        }
-        s.airGroups = air.gs;
-        s.colorGroups = color.gs;
+        let at = 0;
+        const groups = byPage.map((pages) => {
+            const gs = [];
+            for (const [page, hits] of pages) {
+                gs.push({ page, first: at, count: hits.length });
+                for (const k of hits) write(at++, hitI[k], hitSlot[k]);
+            }
+            return gs;
+        });
+        s.airGroups = groups[AIR];
+        s.matAirGroups = groups[MAT_AIR];
+        s.colorGroups = groups[COLOR];
+        s.matColorGroups = groups[MAT_COLOR];
         s.standIns = standIns;
         s.missing = missing;
         if (!s.buffer) s.buffer = gl.createBuffer();
@@ -492,10 +674,12 @@ export class GLSceneRenderer {
         gl.bufferData(gl.ARRAY_BUFFER, out, gl.DYNAMIC_DRAW);
     }
 
-    drawGroups(s, groups, air) {
+    /** One instanced draw per page of `groups`, with the program in use and
+     *  the atlas sampler's unit active. `airUniform`: that program's u_air. */
+    drawGroups(s, groups, airUniform, air) {
         const gl = this.gl;
         if (!groups.length) return;
-        gl.uniform1i(this.uniforms.u_air, air ? 1 : 0);
+        gl.uniform1i(airUniform, air ? 1 : 0);
         gl.bindBuffer(gl.ARRAY_BUFFER, s.buffer);
         const B = STRIDE_INTS * 4;
         for (const g of groups) {
@@ -506,6 +690,7 @@ export class GLSceneRenderer {
             gl.vertexAttribIPointer(0, 4, gl.INT, B, off);
             gl.vertexAttribIPointer(1, 4, gl.INT, B, off + 16);
             gl.vertexAttribIPointer(2, 2, gl.INT, B, off + 32);
+            gl.vertexAttribIPointer(3, 2, gl.INT, B, off + 40);
             gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, g.count);
         }
     }
@@ -538,6 +723,10 @@ export class GLSceneRenderer {
         this.frame = view.frame;
         this.budget = view.budgetBytes;
         this.uploadedBytes = 0;
+        this.warmUploadedBytes = 0;
+        this.warmMore = this.warmBlocked = false;
+        // Material maps need the terrain's tables and the frame's camera.
+        this.materials = terrain.sceneMaterialsReady && !!terrain.frameState && this.initMaterials(terrain);
 
         const { width, height, zoom, level, viewRect } = view;
         const vw = viewRect.right - viewRect.left, vh = viewRect.bottom - viewRect.top;
@@ -546,14 +735,15 @@ export class GLSceneRenderer {
         const version = pixelSceneBitmapVersion();
         const now = performance.now();
         this.redrawInMs = null;
+        this.uploadsPending = false;
 
         gl.bindBuffer(gl.PIXEL_UNPACK_BUFFER, null);
         gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
-        gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+        gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
         gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
         gl.activeTexture(gl.TEXTURE0);
         gl.bindVertexArray(this.vao);
-        for (let i = 0; i < 3; i++) {
+        for (let i = 0; i < 4; i++) {
             gl.enableVertexAttribArray(i);
             gl.vertexAttribDivisor(i, 1);
         }
@@ -575,6 +765,7 @@ export class GLSceneRenderer {
                 // stays a stand-in until the next pan.
                 const wait = VERSION_REQUERY_MS - (now - s.queriedAt);
                 this.redrawInMs = this.redrawInMs == null ? wait : Math.min(this.redrawInMs, wait);
+                this.uploadsPending = true;
             }
             if (stale) {
                 // Near covers every position the view can reach before the key changes.
@@ -589,7 +780,10 @@ export class GLSceneRenderer {
                 // An eviction during this query leaves the copies before it pointing
                 // at a dead page for one frame (skipped in drawGroups), then requeried.
                 s.residency = this.residency;
-                if (s.incomplete) this.redrawInMs = 0;   // upload cap hit: finish next frame
+                if (s.incomplete) {   // upload cap hit: finish next frame
+                    this.redrawInMs = 0;
+                    this.uploadsPending = true;
+                }
             }
             copies.push({ w, s });
         }
@@ -600,14 +794,28 @@ export class GLSceneRenderer {
             this.standIns += c.s.standIns || 0;
             this.missing += c.s.missing || 0;
         }
+        // With the frame itself final, bring in the maps of the scenes it does
+        // not show, so the next pan, zoom or jump finds them resident.
+        this.warmRemaining = 0;
+        if (this.materials && pixelScenesTexturedAt(0)) {
+            const idle = !this.uploadsPending && !this.standIns && !this.missing && pendingPixelSceneBitmaps() === 0;
+            for (const { w, s } of copies) {
+                if (s.warmResidency !== this.residency) { s.warmFrom = 0; s.warmResidency = this.residency; }
+                if (idle && s.warmFrom < w.list.length && now - s.warmedAt >= WARM_RETRY_MS) {
+                    this.prewarm(w.list, s);
+                    // Waiting on the worker: look again when a map lands (a
+                    // redraw), not every frame. Waiting on the upload
+                    // allowance: next frame.
+                    if (!this.warmMore) s.warmedAt = now;
+                }
+                this.warmRemaining += w.list.length - s.warmFrom;
+            }
+            if (this.warmMore && this.redrawInMs == null) this.redrawInMs = 0;
+        }
 
         const q = terrain.gpuTimerBegin();
         const u = this.uniforms;
         gl.viewport(0, 0, width, height);
-        gl.useProgram(this.program);
-        gl.uniform1i(u.u_atlas, 0);
-        gl.uniform1f(u.u_zoom, zoom);
-        gl.uniform2f(u.u_screen, width, height);
         gl.enable(gl.BLEND);
         const setCopy = ({ w }) => {
             const ox = w.shiftX - view.originX, oy = w.shiftY - view.originY;
@@ -615,21 +823,46 @@ export class GLSceneRenderer {
             gl.uniform2i(u.u_copyInt, ix, iy);
             gl.uniform2f(u.u_copyFrac, ox - ix, oy - iy);
         };
+        // Bitmaps: this file's program, the atlas page on unit 0.
+        const drawBitmaps = (air) => {
+            if (!copies.some(c => (air ? c.s.airGroups : c.s.colorGroups).length)) return;
+            gl.useProgram(this.program);
+            gl.uniform1i(u.u_atlas, 0);
+            gl.uniform1f(u.u_zoom, zoom);
+            gl.uniform2f(u.u_screen, width, height);
+            gl.activeTexture(gl.TEXTURE0);
+            for (const c of copies) {
+                setCopy(c);
+                this.drawGroups(c.s, air ? c.s.airGroups : c.s.colorGroups, u.u_air, air);
+            }
+        };
+        // Material maps: the terrain library's program. Its tables take the
+        // units below LIBRARY_UNITS, the atlas page the one above; the camera
+        // is the terrain pass', and instances carry absolute world positions,
+        // so there is nothing to set per copy.
+        const drawMaps = (air) => {
+            if (!this.materials || !copies.some(c => (air ? c.s.matAirGroups : c.s.matColorGroups).length)) return;
+            const mu = this.matUniforms;
+            gl.useProgram(this.matProgram);
+            if (!terrain.applyLibraryState(mu)) return;
+            gl.uniform1i(mu.u_sceneTex, GLTerrainRenderer.LIBRARY_UNITS);
+            gl.activeTexture(gl.TEXTURE0 + GLTerrainRenderer.LIBRARY_UNITS);
+            for (const c of copies) this.drawGroups(c.s, air ? c.s.matAirGroups : c.s.matColorGroups, mu.u_air, air);
+        };
         // Air first: erase the terrain (premultiplied dst * (1 - 1)).
-        gl.blendFunc(gl.ZERO, gl.ONE_MINUS_SRC_ALPHA);
-        for (const c of copies) {
-            if (view.air === false || !c.s.airGroups.length) continue;
-            setCopy(c);
-            this.drawGroups(c.s, c.s.airGroups, true);
+        if (view.air !== false) {
+            gl.blendFunc(gl.ZERO, gl.ONE_MINUS_SRC_ALPHA);
+            drawBitmaps(true);
+            drawMaps(true);
         }
-        gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-        for (const c of copies) {
-            if (view.color === false) continue;
-            setCopy(c);
-            this.drawGroups(c.s, c.s.colorGroups, false);
+        if (view.color !== false) {
+            gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+            drawBitmaps(false);
+            drawMaps(false);
         }
         gl.disable(gl.BLEND);
-        for (let i = 0; i < 3; i++) gl.vertexAttribDivisor(i, 0);
+        gl.activeTexture(gl.TEXTURE0);
+        for (let i = 0; i < 4; i++) gl.vertexAttribDivisor(i, 0);
         gl.bindVertexArray(null);
         gl.bindBuffer(gl.ARRAY_BUFFER, null);
         terrain.gpuTimerEnd(q, (ms) => terrain.gpuSample('scenesGL', ms));

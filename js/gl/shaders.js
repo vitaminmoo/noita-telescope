@@ -33,6 +33,7 @@ import { EDGE_SIGNS } from '../edge_noise.js';
 import { CHUNK_FLAG_EDGE_NOISE_EXCEPTION, CHUNK_FLAG_FG_DEFINED, CHUNK_FLAG_FILL, CHUNK_FLAG_HAS_TILES, CHUNK_FLAG_NOISE_INELIGIBLE } from './chunk_textures.js';
 import { NO_REGION } from './indirection.js';
 import { PALETTE_ALPHA_CHUNK_FG, PALETTE_ALPHA_SKIP } from './palette.js';
+import { SCENE_CELL_AIR, SCENE_CELL_COLOR, SCENE_CELL_DENSITY, SCENE_CELL_UNTOUCHED } from '../scene_cells.js';
 
 const SIGNS_GLSL = `const int SIGNS[48] = int[48](${EDGE_SIGNS.join(', ')});`;
 
@@ -97,7 +98,11 @@ void main() {
 }
 `;
 
-export const TERRAIN_FS = `#version 300 es
+// Everything of the terrain fragment shader but main(): the uniforms and the
+// resolve functions. The pixel-scene material pass (scene_renderer.js) is this
+// plus its own main(), so a scene's cells get their colors from the very code
+// the terrain under them does.
+export const TERRAIN_FS_LIB = `#version 300 es
 precision highp float;
 precision highp int;
 
@@ -977,7 +982,9 @@ void engMaterialColor(int mat, ivec2 w) {
     float a = float(mc.x >> 8) / 255.0;
     outColor = vec4(vec3(mc.yzw) / 255.0 * a, a);
 }
+`;
 
+export const TERRAIN_FS = TERRAIN_FS_LIB + `
 void main() {
     // Screen pixel center -> world. gl_FragCoord.y counts from the bottom.
     // u_vpOrigin is (0,0) for the screen pass; the material-id tile pass draws
@@ -1155,3 +1162,135 @@ void main() {
     outColor = vec4(pal.rgb * a, a);
 }
 `;
+
+// --- pixel-scene material pass (scene_renderer.js) --------------------------
+// Draws scenes from their material maps (pixel_scene_generation.js
+// buildSceneMaterialMap): one instanced quad per placed scene.
+// The quad is placed from the scene's ABSOLUTE world position against the
+// terrain pass' own camera uniforms, and carries no texture coordinate: each
+// fragment works out its world cell exactly as the terrain shader does, so a
+// scene's cells sit on the terrain's cell grid at every zoom and in every
+// parallel world.
+export const SCENE_MATERIAL_VS = `#version 300 es
+layout(location = 0) in ivec4 a_rect;   // .zw: scene size (world px)
+layout(location = 1) in ivec4 a_src;    // .xy: atlas origin of the material layer
+layout(location = 2) in ivec2 a_mask;   // atlas origin of the art layer; x < 0: none
+layout(location = 3) in ivec2 a_world;  // world position of the scene's top-left cell
+uniform ivec2 u_originInt;
+uniform vec2 u_originFrac;
+uniform float u_invZoom;
+uniform vec2 u_screenSize;
+flat out ivec2 v_cells;
+flat out ivec2 v_art;
+flat out ivec2 v_size;
+flat out ivec2 v_world;
+void main() {
+    int c = gl_VertexID;
+    vec2 corner = vec2((c == 1 || c == 2 || c == 4) ? 1.0 : 0.0, (c == 2 || c == 4 || c == 5) ? 1.0 : 0.0);
+    // Integer subtract first: world positions carry the parallel-world offset.
+    vec2 world = vec2(a_world - u_originInt) - u_originFrac + corner * vec2(a_rect.zw);
+    // A screen pixel of slack all round: the fragment shader decides coverage
+    // from the fragment's own world cell, not from where this edge rounds to.
+    vec2 s = world / u_invZoom + (corner * 2.0 - 1.0);
+    gl_Position = vec4(s.x / u_screenSize.x * 2.0 - 1.0, 1.0 - s.y / u_screenSize.y * 2.0, 0.0, 1.0);
+    v_cells = a_src.xy;
+    v_art = a_mask;
+    v_size = a_rect.zw;
+    v_world = a_world;
+}`;
+
+export const SCENE_MATERIAL_FS = TERRAIN_FS_LIB + `
+uniform sampler2D u_sceneTex;   // atlas page: material maps (and bitmaps, unused here)
+uniform bool u_air;
+flat in ivec2 v_cells;
+flat in ivec2 v_art;
+flat in ivec2 v_size;
+flat in ivec2 v_world;
+
+// The fragment's own world cell, and the density class' answer there. Zoomed
+// out, a fragment covers several cells and the taps below share that one
+// answer -- the terrain shader resolves one material per fragment too -- so
+// the band chooser runs once per fragment, not once per tap.
+ivec2 g_w;
+bool g_shareDensity;
+int g_density;      // -1: not asked yet
+
+// engMaterialColor without the texel filter: the cell's own texel. The scene
+// filter below blends whole cells, which are the texels' grid.
+vec4 sceneMaterialColor(int mat, ivec2 w) {
+    uvec4 mc = texelFetch(u_matMetaTex, ivec2(mat, 1), 0);
+    uint entry = mc.x & 0xffu;
+    if (u_matDetail && entry > 0u) return matTexelAt(texelFetch(u_matMetaTex, ivec2(int(entry) - 1, 0), 0), w);
+    float a = float(mc.x >> 8) / 255.0;
+    return vec4(vec3(mc.yzw) / 255.0 * a, a);
+}
+
+// One scene cell, premultiplied; alpha 0 where the scene paints nothing. In
+// the erase pass: alpha 1 where the scene removes the world cell under it
+// without covering it (air, the density class answering air, a translucent
+// material), else 0.
+vec4 sceneCell(ivec2 q) {
+    q = clamp(q, ivec2(0), v_size - 1);
+    vec4 m = texelFetch(u_sceneTex, v_cells + q, 0);
+    int kind = int(m.a * 255.0 + 0.5);
+    if (kind == ${SCENE_CELL_UNTOUCHED}) return vec4(0.0);
+    vec4 erased = u_air ? vec4(0.0, 0.0, 0.0, 1.0) : vec4(0.0);
+    if (kind == ${SCENE_CELL_AIR}) return erased;
+    ivec2 w = v_world + q;
+    vec4 c;
+    if (kind == ${SCENE_CELL_COLOR}) {
+        c = vec4(m.rgb, 1.0);
+    } else {
+        int mat;
+        if (kind == ${SCENE_CELL_DENSITY}) {
+            // Full coverage through the biome's bands, as topology 2 ends.
+            int slot = int(m.r * 255.0 + 0.5);
+            if (g_shareDensity) {
+                if (g_density < 0) g_density = max(engBandSelect(slot, g_w, engMatNoiseDensity(g_w, 1.0)), 0);
+                mat = g_density;
+            } else {
+                mat = engBandSelect(slot, w, engMatNoiseDensity(w, 1.0));
+            }
+            if (mat <= 0) return erased;
+        } else {
+            mat = int(m.r * 255.0 + 0.5) | (int(m.g * 255.0 + 0.5) << 8);
+        }
+        c = sceneMaterialColor(mat, w);
+        // A transparent texel places no cell: the world cell stays.
+        if (c.a == 0.0) return vec4(0.0);
+    }
+    if (u_air) return c.a < 1.0 ? erased : vec4(0.0);
+    if (v_art.x >= 0) {
+        // The colors file paints the cell's color where there is a cell.
+        vec4 art = texelFetch(u_sceneTex, v_art + q, 0);
+        if (art.a == 1.0) c = vec4(art.rgb, 1.0);
+        else if (art.a > 0.0) c.rgb = mix(c.rgb / c.a, art.rgb, art.a) * c.a;
+    }
+    return c;
+}
+${pixelFilterGLSL('sceneFiltered', '', 'sceneCell(q)')}
+void main() {
+    vec2 pix = vec2(gl_FragCoord.x, u_screenSize.y - gl_FragCoord.y);
+    vec2 off = u_originFrac + pix * u_invZoom;
+    vec2 base = floor(off);
+    g_w = u_originInt + ivec2(base);
+    ivec2 cell = g_w - v_world;
+    if (cell.x < 0 || cell.y < 0 || cell.x >= v_size.x || cell.y >= v_size.y) discard;
+    g_shareDensity = u_invZoom > 1.0;
+    g_density = -1;
+    if (u_air) {
+        // The erase stays nearest and binary: it removes, it does not blend.
+        if (sceneCell(cell).a == 0.0) discard;
+        outColor = vec4(0.0, 0.0, 0.0, 1.0);
+        return;
+    }
+    vec4 c = sceneFiltered(cell, off - base, vec2(u_invZoom));
+    // Coverage never drops below the nearest cell's: a one-pixel seam between a
+    // scene and the terrain must not turn translucent.
+    if (c.a < 1.0) {
+        vec4 n = sceneCell(cell);
+        if (c.a < n.a) c = c.a > 0.0 ? c * (n.a / c.a) : n;
+    }
+    if (c.a == 0.0) discard;
+    outColor = c;
+}`;

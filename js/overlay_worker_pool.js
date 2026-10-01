@@ -14,7 +14,7 @@
 // module state (pixel_scene_generation.js, edge_decal_layer.js), so there is
 // one pool per realm; starting it twice returns the same workers.
 import { frameSlo } from './frame_slo.js';
-import { PIXEL_SCENE_DATA, putPixelSceneBitmaps, setPixelSceneBitmapRequester } from './pixel_scene_generation.js';
+import { PIXEL_SCENE_DATA, putPixelSceneBitmaps, putSceneMaterialMap, setPixelSceneBitmapRequester } from './pixel_scene_generation.js';
 import { renderTrace } from './render_hud.js';
 
 /** Telescope's default: leave two cores for the page and the overlay worker. */
@@ -64,6 +64,10 @@ export function startOverlayWorkerPool({ count = defaultOverlayWorkerCount() } =
 				if (putPixelSceneBitmaps(msg)) for (const fn of sceneListeners) fn(msg);
 				frameSlo.work('sceneBitmapsLanded', performance.now() - t0);
 			}
+			else if (msg.type === 'SCENE_MATERIALS') {
+				w.inflight = Math.max(0, w.inflight - 1);
+				if (putSceneMaterialMap(msg)) for (const fn of sceneListeners) fn(msg);
+			}
 			else if (replyHandlers.has(msg.type)) {
 				w.inflight = Math.max(0, w.inflight - 1);
 				replyHandlers.get(msg.type)(msg);
@@ -72,7 +76,8 @@ export function startOverlayWorkerPool({ count = defaultOverlayWorkerCount() } =
 		return w;
 	});
 	setPixelSceneBitmapRequester((request) => {
-		request.traceId = renderTrace.begin('scene', `${request.key}${request.textured ? ' (tex)' : ''}`, 'pixelScenes');
+		const kind = request.cmd === 'BUILD_SCENE_MATERIALS' ? ' (mat)' : request.textured ? ' (tex)' : '';
+		request.traceId = renderTrace.begin('scene', `${request.key}${kind}`, 'pixelScenes');
 		postOverlayPoolJob(request);
 	});
 	return workers;

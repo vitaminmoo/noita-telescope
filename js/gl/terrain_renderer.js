@@ -327,10 +327,12 @@ export class GLTerrainRenderer {
         // Engine resolve mode: the game's own 1/10 lattices + per-biome tables,
         // built from the same layers (lattice_builder.js, bit-exact vs COVDUMP).
         let engine = null, engTable = null, sinHash = null;
+        // The per-biome band table also serves the pixel-scene material pass
+        // (scene_renderer.js), whatever the terrain mode.
+        if (opts.engineTerrain || matAtlas) engTable = timed('engineTable', () => buildEngineTable(opts.seed ?? 0));
         if (opts.engineTerrain) {
             const { GENERATOR_CONFIG } = opts;
             engine = timed('engineLattice', () => buildEngineResources(layers, biomeData, GENERATOR_CONFIG ?? {}, mapWidth));
-            engTable = timed('engineTable', () => buildEngineTable(opts.seed ?? 0));
             // sin-hash rows + the seed's BitmapCaves modifier grids (one texture)
             sinHash = timed('sinHashGrids', () => buildSinHashAndGrids(opts.seed ?? 0));
             this.surfacePhase = surfaceNoisePhase(opts.seed ?? 0);
@@ -365,7 +367,7 @@ export class GLTerrainRenderer {
                 cov: engine && createCoverageLatticeTexture(gl, engine.lattice),
                 latMat: engine && createMaterialLatticeTexture(gl, engine.lattice),
                 engChunk: engine && createEngineChunkTexture(gl, engine),
-                engTable: engine && createFloatTableTexture(gl, engTable),
+                engTable: engTable && createFloatTableTexture(gl, engTable),
                 sinHash: engine && createR32FTexture(gl, sinHash),
             };
         });
@@ -434,6 +436,14 @@ export class GLTerrainRenderer {
         const intX = Math.floor(originX);
         const intY = Math.floor(originY);
 
+        // The four material textures are one all-or-nothing set: without them
+        // u_matDetail is false and the shader never reaches their texelFetches.
+        const matDetail = !!(view.materialTextures && this.textures.matAtlas && this.textures.matMeta
+            && this.textures.palMat && this.textures.fgMat);
+        // The frame's camera, for the passes that shade world cells with this
+        // shader's library in a program of their own (applyLibraryState).
+        this.frameState = { intX, intY, fracX: originX - intX, fracY: originY - intY, invZoom: 1 / camZ, width, height, matDetail };
+
         const u = this.uniforms;
         gl.viewport(0, 0, width, height);
         gl.clearColor(0, 0, 0, 0);
@@ -441,10 +451,6 @@ export class GLTerrainRenderer {
         if (view.draw === false) return this.canvas;
         gl.useProgram(this.program);
 
-        // The four material textures are one all-or-nothing set: without them
-        // u_matDetail is false and the shader never reaches their texelFetches.
-        const matDetail = !!(view.materialTextures && this.textures.matAtlas && this.textures.matMeta
-            && this.textures.palMat && this.textures.fgMat);
         // Engine resolve needs its own four textures plus the material atlas set
         // (engMaterialColor reads u_matMetaTex row 1 / u_matAtlasTex).
         const engineOn = !!(view.engineTerrain && this.engineReady);
@@ -479,9 +485,10 @@ export class GLTerrainRenderer {
         return this.canvas;
     }
 
-    /** Binds every sampler to its unit (shared by the screen and tile passes). */
-    bindTextures() {
-        const gl = this.gl, u = this.uniforms;
+    /** Binds every sampler to its unit (shared by the screen and tile passes).
+     *  `u`: the uniform locations of the program in use. */
+    bindTextures(u = this.uniforms) {
+        const gl = this.gl;
         const intPh = this.textures.chunk, floatPh = this.textures.palette;
         const units = [
             ['u_chunkTex', this.textures.chunk], ['u_fgTex', this.textures.fg], ['u_noiseTex', this.textures.noise],
@@ -498,6 +505,41 @@ export class GLTerrainRenderer {
             gl.bindTexture(gl.TEXTURE_2D, tex);
             gl.uniform1i(u[name], i);
         });
+    }
+
+    /** Units 0..LIBRARY_UNITS-1 belong to bindTextures; a program built on the
+     *  shader library puts its own samplers above them. */
+    static LIBRARY_UNITS = 16;
+
+    /** The library's uniform locations in another program linked from TERRAIN_FS_LIB. */
+    libraryUniforms(program) {
+        const u = {};
+        for (const name of UNIFORM_NAMES) u[name] = this.gl.getUniformLocation(program, name);
+        return u;
+    }
+
+    /**
+     * Gives such a program (in use) this frame's camera and the world's tables,
+     * so its fragments resolve world cells exactly as the terrain pass did.
+     * Returns false before the first render().
+     */
+    applyLibraryState(u) {
+        const f = this.frameState;
+        if (!f || !this.ready) return false;
+        const gl = this.gl;
+        this.bindTextures(u);
+        gl.uniform2i(u.u_originInt, f.intX, f.intY);
+        gl.uniform2f(u.u_originFrac, f.fracX, f.fracY);
+        gl.uniform1f(u.u_invZoom, f.invZoom);
+        gl.uniform2f(u.u_screenSize, f.width, f.height);
+        gl.uniform1i(u.u_matDetail, f.matDetail ? 1 : 0);
+        return true;
+    }
+
+    /** True when the tables the pixel-scene material pass reads are uploaded:
+     *  the band table and the material atlas with its color table. */
+    get sceneMaterialsReady() {
+        return !!(this.ready && this.textures.engTable && this.textures.matAtlas && this.textures.matMeta);
     }
 
     /** True when the engine-resolve textures are uploaded, i.e. the shader can

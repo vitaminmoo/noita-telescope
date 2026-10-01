@@ -110,13 +110,15 @@ async function artMaskFor(d, f) {
 			const x0 = Math.max(${x}, s.x), x1 = Math.min(${x + w}, s.x + s.width);
 			const y0 = Math.max(${y}, s.y), y1 = Math.min(${y + h}, s.y + s.height);
 			if (x0 >= x1 || y0 >= y1) continue;
-			// The instance as drawn, so the opacity test is the drawn one.
-			const bmp = g.getPixelSceneCanvas(s, 0);
-			if (!bmp) continue;
-			const c = new OffscreenCanvas(s.width, s.height);
-			const ctx = c.getContext('2d', { willReadFrequently: true });
-			ctx.drawImage(bmp, 0, 0);
-			const px = ctx.getImageData(0, 0, s.width, s.height).data;
+			// The instance as drawn, so the opacity test is the drawn one: the
+			// build the GL pass' material map is checked against
+			// (test/scene_material_check.mjs), made here rather than read out of
+			// a bitmap cache the GL pass no longer fills.
+			await g.initPixelSceneTextures();
+			await g.ensureScenePixels(data);
+			const built = g.buildTexturedScenePixels(s, data, true, 0);
+			if (!built) continue;
+			const px = data.visualArt ? g.overlayVisualArt(built.pixels, data.width, data.height, data.visualArt) : built.pixels;
 			for (let wy = y0; wy < y1; wy++) {
 				for (let wx = x0; wx < x1; wx++) {
 					const p = (wy - s.y) * data.width + (wx - s.x);

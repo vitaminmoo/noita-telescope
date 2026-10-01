@@ -102,6 +102,12 @@ export function engineBiomeForColor(color) {
 	return ENGINE_BY_COLOR.get(color & 0xffffff) ?? null;
 }
 
+/** A BIOME_ENGINE entry's row in the GL band table (gl/engine_resources.js
+ *  buildEngineTable lays the biomes out in table order), or -1. */
+export function engineBiomeSlot(biome) {
+	return BIOME_ENGINE.indexOf(biome);
+}
+
 /**
  * The material id this biome paints at (worldX, worldY) for the given density,
  * or -1 for AIR / no matching band.
