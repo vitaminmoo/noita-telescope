@@ -2,7 +2,10 @@
 import { app } from './app.js';
 import { EDGE_DECAL_TILE, putEdgeDecalTile } from './edge_decal_layer.js';
 import { EDGE_DECAL_HALO } from './edge_decals.js';
-import { PIXEL_SCENE_DATA, putPixelSceneBitmaps, setPixelSceneBitmapRequester } from './pixel_scene_generation.js';
+import { PIXEL_SCENE_DATA, putPixelSceneBitmaps } from './pixel_scene_generation.js';
+import {
+	onSceneBitmaps, sceneMetadataForWorkers, startSceneBitmapPool, syncSceneBitmapPoolMetadata, syncSceneBitmapPoolSettings,
+} from './scene_bitmap_pool.js';
 import { appSettings, updateSettingsFromUI } from './settings.js';
 import { CHUNK_SIZE } from './constants.js';
 import { getWorldCenter, getWorldStride } from './utils.js';
@@ -142,10 +145,7 @@ overlayWorker.onmessage = async (e) => {
 };
 
 export function syncOverlayWorkerData() {
-	// The worker decodes each scene's pixels and art itself the first time it
-	// needs them (ensureScenePixels), so never clone any the main thread holds.
-	const pixelSceneCache = Object.fromEntries(Object.entries(PIXEL_SCENE_DATA)
-		.map(([k, v]) => [k, (v.imgElement || v.visualArt) ? { ...v, imgElement: null, visualArt: null } : v]));
+	const pixelSceneCache = sceneMetadataForWorkers();
 	overlayWorker.postMessage({
 		cmd: 'SYNC_METADATA',
 		pixelSceneCache,
@@ -159,7 +159,7 @@ export function syncOverlayWorkerData() {
 			hell: app.recolorOffscreenHellBuffer
 		}
 	});
-	for (const w of sceneWorkers) w.postMessage({ cmd: 'SYNC_METADATA', pixelSceneCache });
+	syncSceneBitmapPoolMetadata(pixelSceneCache);
 	pendingOverlayRequests.clear();
 	overlayQueue = [];
 	overlaysInFlight = 0;
@@ -167,12 +167,11 @@ export function syncOverlayWorkerData() {
 
 export function syncSettingsToOverlayWorker() {
 	updateSettingsFromUI();
-	for (const w of [overlayWorker, ...sceneWorkers]) {
-		w.postMessage({
-			cmd: 'SYNC_SETTINGS',
-			settings: appSettings
-		});
-	}
+	overlayWorker.postMessage({
+		cmd: 'SYNC_SETTINGS',
+		settings: appSettings
+	});
+	syncSceneBitmapPoolSettings(appSettings);
 	//console.log(appSettings);
 }
 
@@ -211,37 +210,10 @@ export function recolorPixelScenes(pixelSceneList) {
 	}
 }
 
-// Scene bitmaps are built by a pool of scene-only instances of the overlay
-// worker (pixel_scene_generation.js), each decoding the scenes it is asked for
-// on its own. On the shared FIFO worker they queued behind overlay builds and
-// the recolor job (seconds at load) and filled the view in one at a time. A
-// scene build needs only the scene metadata and the settings, so the pool
-// workers never get the biome data or tile layers.
-const SCENE_WORKER_COUNT = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 4) - 2));
-const sceneWorkers = Array.from({ length: SCENE_WORKER_COUNT }, (_, i) => {
-	const w = new Worker(new URL('./overlay_worker.js', import.meta.url), { type: 'module', name: `scene-${i}` });
-	w.addEventListener('error', (e) =>
-		console.error(`scene worker ${i} failed:`, e.message ?? '(no message)', e.filename ?? '', e.lineno ?? ''));
-	w.inflight = 0;
-	w.onmessage = (e) => {
-		const msg = e.data;
-		if (msg.type === 'JOB_START') renderTrace.stage(msg.traceId, 'running');
-		else if (msg.type === 'JOB_DONE') renderTrace.end(msg.traceId, { workerMs: msg.ms });
-		else if (msg.type === 'SCENE_BITMAPS') {
-			w.inflight = Math.max(0, w.inflight - 1);
-			if (putPixelSceneBitmaps(msg)) app.draw();
-		}
-	};
-	return w;
-});
-
-setPixelSceneBitmapRequester((request) => {
-	request.traceId = renderTrace.begin('scene', `${request.key}${request.textured ? ' (tex)' : ''}`, 'pixelScenes');
-	let w = sceneWorkers[0];
-	for (const s of sceneWorkers) if (s.inflight < w.inflight) w = s;
-	w.inflight++;
-	w.postMessage(request);
-});
+// Scene bitmaps are built by the scene worker pool (scene_bitmap_pool.js),
+// which telescope shares with every other host of js/terrain_view.js.
+startSceneBitmapPool();
+onSceneBitmaps(() => app.draw());
 
 export function getOrGenerateOverlay(pw, pwVertical) {
 	const pwKey = `${pw},${pwVertical}`;

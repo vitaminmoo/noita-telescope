@@ -18,9 +18,8 @@ import { BIOME_COLOR_LOOKUP, createBiomeMapAlphaMask, createTileOverlays, create
 import { COALMINE_ALT_SCENES } from './pixel_scene_config.js';
 import { debugBiomeEdgeNoise } from './edge_noise.js';
 import { drawBiomeBoundaryContour } from './biome_boundary.js';
-import { GLTerrainRenderer } from './gl/terrain_renderer.js';
 import { GLBackdropRenderer } from './gl/backdrop_renderer.js';
-import { GLSceneRenderer } from './gl/scene_renderer.js';
+import { MATERIAL_DETAIL_MIN_ZOOM, TerrainView } from './terrain_view.js';
 import { getPixelSceneAirMask, getPixelSceneCacheStats, getPixelSceneCanvas, pendingPixelSceneBitmaps, PIXEL_SCENE_MAX_MIP, pixelSceneBitmapVersion, pixelSceneMipLevel, loadPixelSceneData, reloadPixelSceneCache, PIXEL_SCENE_DATA, setScenePixelsListener, warmPixelScene } from './pixel_scene_generation.js';
 import { addStaticPixelScenes } from './static_spawns.js';
 import { NollaPrng } from './nolla_prng.js';
@@ -66,11 +65,6 @@ const STATIC_TILE_COLORS = biomeColorsOf(Object.keys(STATIC_TILE_BACKGROUNDS));
 // Width of a background boundary strip in world pixels, matching the engine art.
 const STRIP_WORLD_PX = 64;
 
-// Below this zoom the per-cell material texels are smaller than half a screen
-// pixel: point-sampling them just shimmers, and the flat material colors are
-// what the eye averages the texture to anyway. The material-texture detail pass
-// auto-disables below it (edge decals have their own gate, EDGE_DECAL_MIN_ZOOM).
-const MATERIAL_DETAIL_MIN_ZOOM = 0.5;
 // Zoomed out, the backdrop tile runs are drawn from one whole-map bake at this
 // reduction instead of thousands of per-run drawImage calls (8-13 ms a frame at
 // the overview zoom, plus the GPU backpressure that dumped onto the steps after
@@ -2995,8 +2989,15 @@ export const app = {
 	// the CPU bake then draws everything, unchanged.
 	// With `scenes` (layer 5 enabled), the pixel scenes are drawn into the terrain
 	// canvas before the blit (js/gl/scene_renderer.js); this.scenesOnGL says so.
-	drawTerrainGL(worldOffsets, viewRect, scenes, prof) {
-		if (!this.glTerrain) this.glTerrain = new GLTerrainRenderer();
+	drawTerrainGL(scenes, prof) {
+		// The terrain view (js/terrain_view.js) owns both GL passes; glTerrain and
+		// glScenes stay as names for the code that asks the passes directly.
+		if (!this.terrainView) {
+			this.terrainView = new TerrainView();
+			this.glTerrain = this.terrainView.terrain;
+			this.glScenes = this.terrainView.scenes;
+		}
+		const view = this.terrainView;
 		const terrain = this.glTerrain;
 		// Nothing to do if every world in view is one the GL pass does not cover.
 		let anyCovered = false;
@@ -3005,28 +3006,16 @@ export const app = {
 		}
 		if (!anyCovered) return null;
 
-		const ok = terrain.ensureResources(this.tileLayers, this.biomeData, {
+		view.setWorld({
+			seed: this.seed,
 			isNGP: this.isNGP,
 			gameMode: this.gameMode,
-			// Color-only settings: a 1 KiB LUT re-upload, never an atlas rebuild.
-			lut: {
-				recolorMaterials: appSettings.recolorMaterials,
-				clearSpawnPixels: appSettings.clearSpawnPixels,
-			},
-			// Engine resolve mode builds the 1/10 lattices + parameter tables.
-			engineTerrain: appSettings.engineTerrain,
-			seed: this.seed,
+			tileLayers: this.tileLayers,
+			biomeData: this.biomeData,
 			generatorConfig: GENERATOR_CONFIG,
+			scenes: this.pixelScenesByPW,
 		});
-		if (!ok) return null;
-
-		// The engine chunk table lands here (lazily, on the first GL draw); the
-		// unpainted mask built before it existed must fold it in once.
-		if (!this.unpaintedMaskUsedEngine && terrain.engineChunkModes && this.unpaintedMask) {
-			this.buildUnpaintedMask();
-		}
-
-		const glCanvas = terrain.render({
+		const frame = view.render({
 			width: this.canvas.width,
 			height: this.canvas.height,
 			camX: this.cam.x,
@@ -3034,59 +3023,33 @@ export const app = {
 			camZ: this.cam.z,
 			pw: this.pw,
 			pwVertical: this.pwVertical,
-			edgeNoise: appSettings.enableEdgeNoise,
-			// Per-cell material textures only mean anything once wang colors
-			// resolve to their material, which is what recolorMaterials does.
-			// Auto-off when zoomed out: sub-pixel texels only alias.
-			materialTextures: appSettings.materialTextures && appSettings.recolorMaterials
-				&& this.detailZoom() >= MATERIAL_DETAIL_MIN_ZOOM,
-			engineTerrain: appSettings.engineTerrain,
+			worlds: this.worldsInView,
+			frame: this.frameSerial,
+			detailZoom: this.detailZoom(),
+			scenes: !!scenes,
+			onPass: prof ? (name) => markLayer(prof, name) : null,
 		});
-		if (!glCanvas) return null;
-		if (prof) markLayer(prof, 'terrainGL');
+
+		// The engine chunk table lands here (lazily, on the first GL draw); the
+		// unpainted mask built before it existed must fold it in once.
+		if (!this.unpaintedMaskUsedEngine && terrain.engineChunkModes && this.unpaintedMask) {
+			this.buildUnpaintedMask();
+		}
+		if (!frame) return null;
+
 		if (scenes) {
-			this.scenesOnGL = this.drawScenesGL(terrain, worldOffsets, viewRect);
-			if (prof) markLayer(prof, 'scenesGL');
+			this.scenesOnGL = frame.scenes;
+			const wait = frame.redrawInMs;
+			if (frame.scenes && wait != null && !this.sceneRedrawTimer) {
+				this.sceneRedrawTimer = setTimeout(() => { this.sceneRedrawTimer = null; this.draw(); }, Math.max(0, wait));
+			}
 		}
 
 		this.ctx.save();
 		this.ctx.setTransform(1, 0, 0, 1, 0, 0);
-		this.ctx.drawImage(glCanvas, 0, 0);
+		this.ctx.drawImage(frame.canvas, 0, 0);
 		this.ctx.restore();
 		return (pwY) => terrain.rendersWorld(pwY);
-	},
-
-	drawScenesGL(terrain, worldOffsets, viewRect) {
-		if (!this.pixelScenesByPW) return false;
-		if (!this.glScenes) this.glScenes = new GLSceneRenderer();
-		const worldCenter = getWorldCenter(this.isNGP, this.gameMode) * 512;
-		const worldSize = getWorldSize(this.isNGP, this.gameMode) * 512;
-		const worlds = [];
-		for (const worldKey of this.worldsInView) {
-			const { pwX, pwY, shiftX, shiftY } = worldOffsets[worldKey];
-			const list = this.pixelScenesByPW[`${pwX},${pwY}`];
-			if (!list) continue;
-			worlds.push({ list, relOffX: worldCenter - pwX * worldSize, relOffY: 14 * 512 - pwY * 24576, shiftX, shiftY });
-		}
-		const budgetMB = appSettings.renderEverything
-			? Math.max(appSettings.pixelSceneBitmapBudgetMB || 512, 2048) : (appSettings.pixelSceneBitmapBudgetMB || 512);
-		const drawn = this.glScenes.draw(terrain, {
-			width: this.canvas.width,
-			height: this.canvas.height,
-			originX: this.cam.x - (this.canvas.width / 2) / this.cam.z,
-			originY: this.cam.y - (this.canvas.height / 2) / this.cam.z,
-			zoom: this.cam.z,
-			level: pixelSceneMipLevel(this.detailZoom()),
-			frame: this.frameSerial,
-			budgetBytes: budgetMB * 1024 * 1024,
-			viewRect,
-			worlds,
-		});
-		const wait = this.glScenes.redrawInMs;
-		if (drawn && wait != null && !this.sceneRedrawTimer) {
-			this.sceneRedrawTimer = setTimeout(() => { this.sceneRedrawTimer = null; this.draw(); }, Math.max(0, wait));
-		}
-		return drawn;
 	},
 
 	// Stamps the checkerboard over every uncovered chunk of every horizontal parallel
@@ -4030,7 +3993,7 @@ export const app = {
 			// GLTerrainRenderer.rendersWorld). Returns null when GL is off or
 			// unavailable, in which case the CPU bake below draws everything.
 			const glCovers = (biomeOverlayMode !== 'none' && appSettings.terrainRenderer === 'gl')
-				? this.drawTerrainGL(worldOffsets, viewRect, L.pixelScenes, prof)
+				? this.drawTerrainGL(L.pixelScenes, prof)
 				: null;
 			if (prof) markLayer(prof, 'terrainGL');
 

@@ -34,8 +34,10 @@ let _loadPromise = null;
 export function initMaterialAtlas() {
     return _loadPromise ??= (async () => {
         const [metaResp, binResp] = await Promise.all([
-            fetch('../data/material_atlas.json'),
-            fetch('../data/material_atlas.bin'),
+            // Module relative, not document relative: a host page that is not
+            // telescope's own index.html (js/terrain_view.js) loads the same files.
+            fetch(new URL('../../data/material_atlas.json', import.meta.url)),
+            fetch(new URL('../../data/material_atlas.bin', import.meta.url)),
         ]);
         if (!metaResp.ok || !binResp.ok) throw new Error('material atlas fetch failed');
         const layout = await metaResp.json();

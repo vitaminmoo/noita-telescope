@@ -88,7 +88,16 @@ function link(gl, vsSrc, fsSrc) {
 }
 
 export class GLTerrainRenderer {
-    constructor() {
+    /**
+     * @param {object} [opts]
+     * @param {HTMLCanvasElement|OffscreenCanvas} [opts.canvas]  canvas to own the
+     *        WebGL2 context. Omitted, the renderer creates a hidden one and the
+     *        caller blits it (telescope's own page). A host that composites the
+     *        terrain as its own layer (js/terrain_view.js) passes the canvas it
+     *        shows; an OffscreenCanvas makes the renderer usable in a worker.
+     */
+    constructor(opts = {}) {
+        this.hostCanvas = opts.canvas ?? null;
         this.canvas = null;
         this.gl = null;
         this.program = null;
@@ -103,13 +112,34 @@ export class GLTerrainRenderer {
         this.buildMs = 0;
         this.timerExt = undefined; // EXT_disjoint_timer_query_webgl2, looked up once
         this.gpuQueries = [];
-        renderHud.addPoller(() => this.pollGpuTimers());
+        // Per-step wall time of the last resource build (buildAndUpload) and of
+        // the program link, for hosts that time the load step by step.
+        this.buildTimings = null;
+        this.linkMs = 0;
+        this.poller = () => this.pollGpuTimers();
+        renderHud.addPoller(this.poller);
+    }
+
+    /** Frees every GPU resource and detaches from the render HUD. The renderer
+     *  is unusable afterwards; a host that swaps renderers must call this or the
+     *  HUD's poller list keeps the context and its lattices alive. */
+    dispose() {
+        this.invalidate();
+        renderHud.removePoller(this.poller);
+        if (this.gl && this.program) this.gl.deleteProgram(this.program);
+        for (const e of this.gpuQueries) this.gl?.deleteQuery(e.q);
+        this.gpuQueries = [];
+        this.program = null;
+        this.uniforms = null;
+        this.gl = null;
+        this.canvas = null;
+        this.failed = 'disposed';
     }
 
     // --- GPU timing for the render HUD (render_hud.js). Only while the HUD is
     // on; one TIME_ELAPSED query may be open at a time, so callers never nest.
     gpuTimerBegin() {
-        if (!renderHud.on || !this.gl || this.contextLost) return null;
+        if (!(renderHud.on || this.onGpuSample) || !this.gl || this.contextLost) return null;
         const gl = this.gl;
         if (this.timerExt === undefined) {
             this.timerExt = gl.getExtension('EXT_disjoint_timer_query_webgl2');
@@ -127,6 +157,23 @@ export class GLTerrainRenderer {
         this.gpuQueries.push({ q, onMs });
         // Results that never land (driver quirk) must not pile up.
         if (this.gpuQueries.length > 64) this.gl.deleteQuery(this.gpuQueries.shift().q);
+    }
+
+    /** A finished GPU pass's time: to the render HUD, and to whoever set
+     *  `onGpuSample(sys, ms)` (js/terrain_view.js, for the benchmarks). */
+    gpuSample(sys, ms) {
+        renderHud.sample(sys, 'gpu', ms);
+        this.onGpuSample?.(sys, ms);
+    }
+
+    /** Blocks until the GPU has executed everything submitted so far, so a
+     *  benchmark's wall clock around a step includes the GPU's share of it.
+     *  finish() alone may return early in a browser; the readback cannot. */
+    finish() {
+        const gl = this.gl;
+        if (!gl || this.contextLost) return;
+        gl.finish();
+        gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, this.finishPixel ??= new Uint8Array(4));
     }
 
     pollGpuTimers() {
@@ -158,8 +205,8 @@ export class GLTerrainRenderer {
 
     initContext() {
         if (this.gl || this.failed) return !!this.gl;
-        if (typeof document === 'undefined') { this.failed = 'no DOM'; return false; }
-        const canvas = document.createElement('canvas');
+        if (!this.hostCanvas && typeof document === 'undefined') { this.failed = 'no DOM'; return false; }
+        const canvas = this.hostCanvas ?? document.createElement('canvas');
         const gl = canvas.getContext('webgl2', {
             alpha: true, antialias: false, depth: false, stencil: false,
             premultipliedAlpha: true, preserveDrawingBuffer: false,
@@ -184,6 +231,28 @@ export class GLTerrainRenderer {
         initMaterialAtlas().catch(err => console.warn('[GL terrain] material atlas unavailable:', err));
         gl.disable(gl.BLEND);
         gl.disable(gl.DEPTH_TEST);
+        return true;
+    }
+
+    /**
+     * Compiles and links the terrain program. Seed independent, so a host can
+     * do it while the world is still generating; buildAndUpload calls it too.
+     */
+    ensureProgram() {
+        if (this.program) return true;
+        if (this.failed || this.contextLost || !this.initContext()) return false;
+        const gl = this.gl;
+        const t0 = performance.now();
+        try {
+            this.program = link(gl, TERRAIN_VS, TERRAIN_FS);
+        } catch (err) {
+            this.failed = String(err && err.message ? err.message : err);
+            console.error('[GL terrain] program link failed, staying on the CPU bake:', err);
+            return false;
+        }
+        this.uniforms = {};
+        for (const name of UNIFORM_NAMES) this.uniforms[name] = gl.getUniformLocation(this.program, name);
+        this.linkMs = performance.now() - t0;
         return true;
     }
 
@@ -235,23 +304,35 @@ export class GLTerrainRenderer {
     buildAndUpload(layers, biomeData, opts) {
         const gl = this.gl;
         const t0 = performance.now();
+        // Wall time per step, CPU builds apart from the uploads, so a load-time
+        // benchmark can say which one a change moved.
+        const timings = {};
+        const timed = (name, fn) => {
+            const s = performance.now();
+            const r = fn();
+            timings[name] = (timings[name] || 0) + (performance.now() - s);
+            return r;
+        };
         const mapWidth = getWorldSize(opts.isNGP, opts.gameMode);
-        const resources = buildTerrainResources(layers, biomeData, {
+        const resources = timed('regionAtlas', () => buildTerrainResources(layers, biomeData, {
             isNGP: opts.isNGP,
             gameMode: opts.gameMode,
             maxTextureSize: maxTextureSize(gl),
             lut: opts.lut,
-        });
-        const chunkTextures = buildChunkTextures(biomeData, mapWidth);
+        }));
+        const chunkTextures = timed('chunkTextures', () => buildChunkTextures(biomeData, mapWidth));
         // Null until the atlas fetch lands; the sourceKey then forces a rebuild.
         const matAtlas = getMaterialAtlas();
 
         // Engine resolve mode: the game's own 1/10 lattices + per-biome tables,
         // built from the same layers (lattice_builder.js, bit-exact vs COVDUMP).
-        let engine = null;
+        let engine = null, engTable = null, sinHash = null;
         if (opts.engineTerrain) {
             const { GENERATOR_CONFIG } = opts;
-            engine = buildEngineResources(layers, biomeData, GENERATOR_CONFIG ?? {}, mapWidth);
+            engine = timed('engineLattice', () => buildEngineResources(layers, biomeData, GENERATOR_CONFIG ?? {}, mapWidth));
+            engTable = timed('engineTable', () => buildEngineTable(opts.seed ?? 0));
+            // sin-hash rows + the seed's BitmapCaves modifier grids (one texture)
+            sinHash = timed('sinHashGrids', () => buildSinHashAndGrids(opts.seed ?? 0));
             this.surfacePhase = surfaceNoisePhase(opts.seed ?? 0);
         }
         // Kept for the unpainted-checkerboard mask: chunks the engine pass
@@ -260,36 +341,42 @@ export class GLTerrainRenderer {
         this.engineChunkModes = engine ? engine.chunk : null;
         this.engineChunkWidth = engine ? engine.width : 0;
 
-        deleteTerrainTextures(gl, this.textures);
-        this.textures = {
-            atlas: createRegionAtlasTexture(gl, resources.atlas),
-            indirection: createIndirectionTexture(gl, resources.indirection),
-            regionMeta: createRegionMetaTexture(gl, resources.regions),
-            palette: createPaletteTexture(gl, resources.paletteLUT),
-            chunk: createChunkTexture(gl, chunkTextures),
-            fg: createForegroundTexture(gl, chunkTextures),
-            noise: createNoiseTexture(gl, buildNoiseTable512()),
-            matAtlas: matAtlas && createMaterialAtlasTexture(gl, matAtlas),
-            matMeta: matAtlas && createMaterialMetaTexture(gl, matAtlas, buildMatColorTable(matAtlas)),
-            palMat: matAtlas && createPaletteMaterialTexture(gl,
-                buildPaletteMaterialTable(matAtlas, resources.palette)),
-            fgMat: matAtlas && createFillMaterialTexture(gl,
-                buildFillMaterialTable(matAtlas, biomeData, mapWidth), mapWidth),
-            cov: engine && createCoverageLatticeTexture(gl, engine.lattice),
-            latMat: engine && createMaterialLatticeTexture(gl, engine.lattice),
-            engChunk: engine && createEngineChunkTexture(gl, engine),
-            engTable: engine && createFloatTableTexture(gl, buildEngineTable(opts.seed ?? 0)),
-            // sin-hash rows + the seed's BitmapCaves modifier grids (one texture)
-            sinHash: engine && createR32FTexture(gl, buildSinHashAndGrids(opts.seed ?? 0)),
-        };
+        const matTables = matAtlas && timed('materialTables', () => ({
+            color: buildMatColorTable(matAtlas),
+            palette: buildPaletteMaterialTable(matAtlas, resources.palette),
+            fill: buildFillMaterialTable(matAtlas, biomeData, mapWidth),
+        }));
+        const noiseTable = timed('noiseTable', () => buildNoiseTable512());
+
+        timed('upload', () => {
+            deleteTerrainTextures(gl, this.textures);
+            this.textures = {
+                atlas: createRegionAtlasTexture(gl, resources.atlas),
+                indirection: createIndirectionTexture(gl, resources.indirection),
+                regionMeta: createRegionMetaTexture(gl, resources.regions),
+                palette: createPaletteTexture(gl, resources.paletteLUT),
+                chunk: createChunkTexture(gl, chunkTextures),
+                fg: createForegroundTexture(gl, chunkTextures),
+                noise: createNoiseTexture(gl, noiseTable),
+                matAtlas: matAtlas && createMaterialAtlasTexture(gl, matAtlas),
+                matMeta: matAtlas && createMaterialMetaTexture(gl, matAtlas, matTables.color),
+                palMat: matAtlas && createPaletteMaterialTexture(gl, matTables.palette),
+                fgMat: matAtlas && createFillMaterialTexture(gl, matTables.fill, mapWidth),
+                cov: engine && createCoverageLatticeTexture(gl, engine.lattice),
+                latMat: engine && createMaterialLatticeTexture(gl, engine.lattice),
+                engChunk: engine && createEngineChunkTexture(gl, engine),
+                engTable: engine && createFloatTableTexture(gl, engTable),
+                sinHash: engine && createR32FTexture(gl, sinHash),
+            };
+        });
         this.resources = resources;
 
         if (!this.program) {
-            this.program = link(gl, TERRAIN_VS, TERRAIN_FS);
-            this.uniforms = {};
-            for (const name of UNIFORM_NAMES) this.uniforms[name] = gl.getUniformLocation(this.program, name);
+            if (!this.ensureProgram()) throw new Error(this.failed);
+            timings.shaderLink = this.linkMs;
         }
         this.buildMs = performance.now() - t0;
+        this.buildTimings = timings;
         this.stats = resources.stats;
         console.log(`[GL terrain] resources built in ${this.buildMs.toFixed(1)} ms`, resources.stats);
     }
@@ -325,7 +412,9 @@ export class GLTerrainRenderer {
     /**
      * Renders the terrain for one frame.
      * @param {object} view { width, height, camX, camY, camZ, pw, pwVertical, edgeNoise,
-     *                        materialTextures }
+     *                        materialTextures, engineTerrain, draw }
+     *        `draw: false` sizes and clears the canvas but skips the terrain
+     *        pass, so a later pass (the scenes) can be timed on its own.
      * @returns {HTMLCanvasElement|null} the canvas to blit, or null when unavailable
      */
     render(view) {
@@ -349,6 +438,7 @@ export class GLTerrainRenderer {
         gl.viewport(0, 0, width, height);
         gl.clearColor(0, 0, 0, 0);
         gl.clear(gl.COLOR_BUFFER_BIT);
+        if (view.draw === false) return this.canvas;
         gl.useProgram(this.program);
 
         // The four material textures are one all-or-nothing set: without them
@@ -385,7 +475,7 @@ export class GLTerrainRenderer {
 
         const q = this.gpuTimerBegin();
         gl.drawArrays(gl.TRIANGLES, 0, 3);
-        this.gpuTimerEnd(q, (ms) => renderHud.sample('terrainGL', 'gpu', ms));
+        this.gpuTimerEnd(q, (ms) => this.gpuSample('terrainGL', ms));
         return this.canvas;
     }
 
@@ -482,7 +572,7 @@ export class GLTerrainRenderer {
             gl.drawArrays(gl.TRIANGLES, 0, 3);
         }
         this.gpuTimerEnd(q, (ms) => {
-            renderHud.sample('edgeDecals', 'gpu', ms);
+            this.gpuSample('edgeDecals', ms);
             onGpuMs?.(ms);
         });
         gl.uniform1i(u.u_materialIdOut, 0);

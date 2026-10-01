@@ -81,6 +81,12 @@ export const renderHud = {
 	/** Called each tick; the GL renderer resolves its timer queries here. */
 	addPoller(fn) { pollers.push(fn); },
 
+	/** Drops a poller added by addPoller (a disposed renderer's). */
+	removePoller(fn) {
+		const i = pollers.indexOf(fn);
+		if (i >= 0) pollers.splice(i, 1);
+	},
+
 	/** 'yes' | 'unavailable' -- whether the WebGL timer query extension exists. */
 	setGpuTimerState(state) { gpuTimerState = state; },
 

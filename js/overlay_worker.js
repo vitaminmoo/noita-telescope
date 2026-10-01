@@ -423,3 +423,10 @@ if (!this.tileOverlaysByPW[`${pwX},${pwY}`]) {
 	}
 }
 */
+
+// A module worker's message port can start delivering before this module has
+// finished evaluating (its imports await their data), and a message that lands
+// before `onmessage` is assigned is dropped without a trace. A pool that posts
+// to a worker it has only just created (scene_bitmap_pool.js,
+// world_scan_pool.js) holds its messages until this arrives.
+self.postMessage({ type: 'READY' });

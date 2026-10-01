@@ -25,7 +25,6 @@ import {
     getPixelSceneDrawable, PIXEL_SCENE_DATA, PIXEL_SCENE_MAX_MIP, pixelSceneBitmapVersion,
     pixelSceneCacheEpoch, pixelSceneCacheKeys, pixelScenesTexturedAt, warmPixelScene,
 } from '../pixel_scene_generation.js';
-import { renderHud } from '../render_hud.js';
 import { pixelFilterGLSL } from './shaders.js';
 
 const VS = `#version 300 es
@@ -461,7 +460,10 @@ export class GLSceneRenderer {
      * @param terrain the GLTerrainRenderer whose context and canvas are drawn into
      * @param view { width, height, originX, originY (draw space of screen 0,0), zoom,
      *               level, frame, budgetBytes, viewRect (draw space),
-     *               worlds: [{ list, relOffX, relOffY, shiftX, shiftY }] }
+     *               worlds: [{ list, relOffX, relOffY, shiftX, shiftY }],
+     *               air, color }  -- `air: false` / `color: false` skip that
+     *               sub-pass (the bitmaps are still requested and uploaded), so
+     *               each can be timed on its own
      * @returns true when drawn (the 2D scene draw is then skipped). Afterwards
      *          `redrawInMs` is non-null when newly landed bitmaps were left for a
      *          later frame: redraw after that long.
@@ -555,12 +557,13 @@ export class GLSceneRenderer {
         // Air first: erase the terrain (premultiplied dst * (1 - 1)).
         gl.blendFunc(gl.ZERO, gl.ONE_MINUS_SRC_ALPHA);
         for (const c of copies) {
-            if (!c.s.airGroups.length) continue;
+            if (view.air === false || !c.s.airGroups.length) continue;
             setCopy(c);
             this.drawGroups(c.s, c.s.airGroups, true);
         }
         gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
         for (const c of copies) {
+            if (view.color === false) continue;
             setCopy(c);
             this.drawGroups(c.s, c.s.colorGroups, false);
         }
@@ -568,7 +571,7 @@ export class GLSceneRenderer {
         for (let i = 0; i < 3; i++) gl.vertexAttribDivisor(i, 0);
         gl.bindVertexArray(null);
         gl.bindBuffer(gl.ARRAY_BUFFER, null);
-        terrain.gpuTimerEnd(q, (ms) => renderHud.sample('scenesGL', 'gpu', ms));
+        terrain.gpuTimerEnd(q, (ms) => terrain.gpuSample('scenesGL', ms));
         return true;
     }
 }
