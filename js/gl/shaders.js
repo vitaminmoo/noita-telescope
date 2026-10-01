@@ -610,11 +610,15 @@ float engMatNoiseDensity(ivec2 w, float cov) {
 }
 
 // BiomeMaterials_RarePolkaTest @0x00872140 + PolkaCellHash @0x0086fd40/0x0086fe30.
-const float PK_INV71 = 0.014084507152438164;
-const float PK_SCALAR = 0.0010132591396197677;
-const float PK_V0 = 0.0010514580644667149;
-const float PK_V1 = 0.0015553091652691364;
-const float PK_V2 = 0.0012450951617211103;
+// The constants are the binary's float32 bits, not decimals: base reaches ~5e8,
+// so a constant a few hundred ulps off moves whole rare-material patches. Same
+// values as the CPU twin (engine_resolve/band_select.js): INV71 .rdata 01053470,
+// SCALAR 0105342c, V0 01053430, V1 / V2 immediates at 0086fe8f / 0086fe99.
+const float PK_INV71 = uintBitsToFloat(0x3c66c2b4u);
+const float PK_SCALAR = uintBitsToFloat(0x3a84cd4eu);
+const float PK_V0 = uintBitsToFloat(0x3a89ce48u);
+const float PK_V1 = uintBitsToFloat(0x3acbdc41u);
+const float PK_V2 = uintBitsToFloat(0x3aa32fcfu);
 int engFfloor(float v) { int i = int(v); if (v < float(i)) i -= 1; return i; }
 float engFfrac(float v) { return v - float(engFfloor(v)); }
 float polkaBase(int cx, int cy) {
