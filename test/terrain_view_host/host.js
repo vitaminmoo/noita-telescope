@@ -23,6 +23,7 @@
 //      &auto=0               do not load on arrival; a driver calls terrainHost.load()
 //      &framelog=1           log every frame over the 60 fps budget (js/frame_slo.js)
 import { frameSlo } from '../../js/frame_slo.js';
+import { loadTimeline } from '../../js/load_timeline.js';
 import { onEdgeDecalTile } from '../../js/edge_decal_layer.js';
 import { onSceneBitmaps, overlayPoolStats, startOverlayWorkerPool } from '../../js/overlay_worker_pool.js';
 import { applyTerrainSettings, drawSpace, TerrainView } from '../../js/terrain_view.js';
@@ -467,6 +468,7 @@ frameSlo.addState('view', () => ({
 
 resize();
 mark('hostReady');
+loadTimeline.started('modules');
 
 if (flag('auto') && params.has('seed')) {
 	host.loaded = host.load({

@@ -9,6 +9,7 @@
 //
 // App-free: a host hands over the world's biome data and prescanned spawns and
 // gets placement lists back.
+import { loadTimeline } from './load_timeline.js';
 import { PIXEL_SCENE_DATA, PIXEL_SCENE_SPAWN_DATA } from './pixel_scene_generation.js';
 import { appSettings } from './settings.js';
 import { TRANSLATIONS } from './translations.js';
@@ -82,6 +83,7 @@ export class WorldScanPool {
 			});
 			w.onmessage = (e) => {
 				const msg = e.data;
+				loadTimeline.add(msg.spans);
 				if (msg.type === 'READY') {
 					w.ready = true;
 					for (const m of w.queue) w.postMessage(m);

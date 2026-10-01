@@ -37,6 +37,7 @@
 import { CHUNK_SIZE, WORLD_CHUNK_CENTER_Y } from './constants.js';
 import { drawEdgeDecals, EDGE_DECAL_MAX_TILES, EDGE_DECAL_TILE, pendingEdgeDecalTiles } from './edge_decal_layer.js';
 import { frameSlo } from './frame_slo.js';
+import { loadTimeline } from './load_timeline.js';
 import { GENERATOR_CONFIG } from './generator_config.js';
 import { GLDecalRenderer } from './gl/decal_renderer.js';
 import { initMaterialAtlas } from './gl/material_atlas.js';
@@ -199,7 +200,7 @@ export class TerrainView {
 		const t = {};
 		const step = async (name, fn) => {
 			const s = performance.now();
-			const r = await fn();
+			const r = await loadTimeline.time(name, fn);
 			t[name] = performance.now() - s;
 			return r;
 		};

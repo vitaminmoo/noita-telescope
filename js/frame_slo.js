@@ -35,7 +35,10 @@
 // on a page that is already up, each divided into phases with a budget of
 // their own (LOAD_PHASES_MS). A host reports each load it finishes with
 // frameSlo.load(); it is logged with its phases whether or not the frame log
-// is on.
+// is on, together with its timeline: what the page and each worker were doing
+// during it (js/load_timeline.js). js/load_gantt.js draws that as a chart:
+// frameSlo.showTimeline('page load'), a click on the load's line in the Render
+// HUD, or ?timeline=1 to have it open by itself after every load.
 //
 // Three ways out, all carrying the same records:
 //   * the console: one line per miss ("[frame] #12 +33 ms ...");
@@ -48,6 +51,8 @@
 // Off by default and free while off. On with the Render HUD or the Frame Log
 // option on telescope's page, with ?framelog=1 on any page, or
 // frameSlo.setEnabled(true).
+import { hideLoadGantt, showLoadGantt } from './load_gantt.js';
+import { epochNow, loadTimeline, timelineText } from './load_timeline.js';
 import { renderHud, renderTrace } from './render_hud.js';
 
 const BUDGET_MS = 1000 / 60;
@@ -100,6 +105,38 @@ function newInterval() {
 }
 
 const r1 = (v) => Math.round(v * 10) / 10;
+
+// Main-thread time the load timeline would not otherwise see: tasks over 50 ms
+// (module evaluation, a parse, anything that does not report itself), and the
+// fetches that took long enough to matter. Chrome reports the first; both are
+// read when a load is captured, so nothing runs for them in between.
+// Whether a finished load opens its chart by itself: ?timeline=1, or the
+// host's option (frameSlo.setTimelineOnLoad).
+let timelineOnLoad = typeof location !== 'undefined' && new URLSearchParams(location.search).get('timeline') === '1';
+const FETCH_SPAN_MS = 30;
+let longTasks = null;
+let resourcesSeen = 0;
+function collectBrowserSpans() {
+	if (typeof PerformanceObserver === 'undefined') return;
+	const origin = performance.timeOrigin;
+	if (!longTasks && PerformanceObserver.supportedEntryTypes?.includes('longtask')) {
+		longTasks = new PerformanceObserver((list) => {
+			for (const e of list.getEntries()) loadTimeline.span('longTask', origin + e.startTime, origin + e.startTime + e.duration);
+		});
+		longTasks.observe({ type: 'longtask', buffered: true });
+	}
+	for (const e of longTasks?.takeRecords() ?? []) loadTimeline.span('longTask', origin + e.startTime, origin + e.startTime + e.duration);
+	const resources = performance.getEntriesByType?.('resource') ?? [];
+	for (const e of resources.slice(resourcesSeen)) {
+		if (e.duration < FETCH_SPAN_MS) continue;
+		const file = e.name.split('/').pop().split('?')[0];
+		// One row per kind of file; the bar says which.
+		const ext = file.includes('.') ? file.split('.').pop() : 'other';
+		loadTimeline.span(`fetch ${ext}: ${file}`, origin + e.startTime, origin + e.responseEnd, 'network');
+	}
+	resourcesSeen = resources.length;
+}
+if (typeof window !== 'undefined') collectBrowserSpans();
 
 function emit(rec) {
 	records.push(rec);
@@ -330,6 +367,7 @@ export const frameSlo = {
 				state: snapshotState(),
 			});
 			watchLongFrames();
+			renderHud.setTimelineOpener(showLoadGantt);
 			renderHud.setMissSource((n) => ({
 				loads: Object.keys(LOAD_BUDGETS_MS).map((name) => ({ name, ...(lastLoad[name] ?? {}) })),
 				frames: missed.slice(0, n),
@@ -348,6 +386,7 @@ export const frameSlo = {
 	 * each layer or pass inside it ({ name: ms }).
 	 */
 	drew(ms, layers = null) {
+		if (ms >= 2) { const t = epochNow(); loadTimeline.span('draw', t - ms, t); }
 		if (!enabled) return;
 		lastDrawAt = performance.now();
 		interval.draws++;
@@ -360,6 +399,8 @@ export const frameSlo = {
 	 * it took, and optionally a small detail object (the last one is kept).
 	 */
 	work(kind, ms, detail = null) {
+		// On the load timeline whether or not the frame log is on.
+		if (ms >= 1) { const t = epochNow(); loadTimeline.span(kind, t - ms, t); }
 		if (!enabled) return;
 		let w = interval.work.get(kind);
 		if (!w) interval.work.set(kind, w = { ms: 0, n: 0, max: 0, detail: null });
@@ -412,6 +453,10 @@ export const frameSlo = {
 			}),
 			state: snapshotState(),
 		};
+		// What every thread did during it (js/load_timeline.js).
+		collectBrowserSpans();
+		const end = epochNow();
+		rec.timeline = loadTimeline.capture(end - ms, end);
 		emit(rec);
 		// "terrain 462/400!": what the phase took, its budget, and a mark when over.
 		const detail = rec.phases.length ? '  ' + rec.phases.map((p) =>
@@ -421,8 +466,22 @@ export const frameSlo = {
 		// The HUD keeps the latest load of each kind above the missed frames
 		// until the next one replaces it.
 		lastLoad[name] = { line, record: rec };
+		if (timelineOnLoad) showLoadGantt(rec);
 		return rec;
 	},
+
+	/** The latest load of a kind ('page load', 'new seed'): its record, or null. */
+	lastLoad(name = 'page load') { return lastLoad[name]?.record ?? null; },
+
+	/** The latest load of a kind as a text chart, for a terminal (the page's chart is showTimeline). */
+	timeline(name = 'page load', width = 64) { return lastLoad[name] ? timelineText(lastLoad[name].record, width) : ''; },
+
+	/** Whether every load that finishes opens its chart (the host's option; ?timeline=1 does the same). */
+	setTimelineOnLoad(on) { timelineOnLoad = !!on || new URLSearchParams(globalThis.location?.search ?? '').get('timeline') === '1'; },
+
+	/** Opens the latest load of a kind as a Gantt chart (js/load_gantt.js). */
+	showTimeline(name = 'page load') { showLoadGantt(lastLoad[name]?.record); },
+	hideTimeline() { hideLoadGantt(); },
 
 	/**
 	 * What a frame just drawn shows that is not final, as the terrain view

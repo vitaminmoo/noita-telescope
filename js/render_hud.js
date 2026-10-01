@@ -54,6 +54,8 @@ let tracing = false;         // items are traced with the HUD off (frame_slo.js)
 let missSource = null;       // (n) => { load, frames }: the load and the frames that missed their budgets
 let shownMisses = [];        // what the Missed frames section is showing, for the click-to-copy
 let missLoadEl = null;       // the latest page load and new seed, above the missed frames
+let timelineOpener = null;   // (load record) => void: opens the load's Gantt chart
+let shownLoadsKey = null;    // which loads the rows above the missed frames were built for
 let copiedUntil = 0;
 let root = null, barsCanvas = null, stripCanvas = null, headEl = null, totalEl = null, queueEl = null, cachesEl = null, missEl = null;
 let timer = 0;
@@ -95,6 +97,10 @@ export const renderHud = {
 	 *  and the last n frames that missed their budget as { line, record },
 	 *  newest first. */
 	setMissSource(fn) { missSource = fn; },
+
+	/** What a click on a load's [chart] does: (load record) => void. Set by the
+	 *  frame log, which this module cannot import (it imports this one). */
+	setTimelineOpener(fn) { timelineOpener = fn; },
 
 	/** Count of async render work in flight, including work posted before the HUD was on. */
 	setPendingSource(fn) { pendingSource = fn; },
@@ -464,6 +470,7 @@ function renderCaches() {
 function renderMisses() {
 	if (!missSource) {
 		shownMisses = [];
+		shownLoadsKey = null;
 		missLoadEl.replaceChildren();
 		missEl.pre.textContent = '(frame log off)';
 		return;
@@ -477,7 +484,10 @@ function renderMisses() {
 	const fit = (line) => (line.length > w ? line.slice(0, w - 1) + '…' : line);
 	// Always one line per kind of load, so the list below does not move.
 	// The total, then each phase as "took/budget", each red when over its own.
-	missLoadEl.replaceChildren(...loads.map((l) => {
+	// Rebuilt only when a load changed: the rows take clicks, and a row replaced
+	// between the press and the release never gets its click.
+	const loadsKey = loads.map((l) => (l.record ? `${l.name}@${l.record.t}` : l.name)).join('|');
+	if (loadsKey !== shownLoadsKey) missLoadEl.replaceChildren(...loads.map((l) => {
 		const row = document.createElement('div');
 		Object.assign(row.style, { overflow: 'hidden', textOverflow: 'ellipsis' });
 		if (!l.record) {
@@ -492,10 +502,19 @@ function renderMisses() {
 			span.style.color = over ? INK_OVER : INK;
 			return span;
 		};
+		// Opens the load's Gantt chart (js/load_gantt.js) instead of copying.
+		if (r.timeline?.length && timelineOpener) {
+			const chart = part('[chart] ', false);
+			Object.assign(chart.style, { color: INK_MUTED, cursor: 'pointer' });
+			chart.title = 'Open this load as a Gantt chart: every thread, what it ran and when';
+			chart.addEventListener('click', (e) => { e.stopPropagation(); timelineOpener(r); });
+			row.append(chart);
+		}
 		row.append(part(`${r.name}: ${r.ms}/${r.budgetMs} ms`, !r.ok));
 		for (const p of r.phases) row.append(part(`  ${p.name} ${p.ms}${p.budgetMs == null ? '' : `/${p.budgetMs}`}`, !!p.overMs));
 		return row;
 	}));
+	shownLoadsKey = loadsKey;
 	missEl.pre.textContent = frames.length ? frames.map(({ line }) => fit(line)).join('\n') : '(none yet)';
 }
 

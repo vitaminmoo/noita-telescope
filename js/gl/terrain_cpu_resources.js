@@ -9,6 +9,7 @@
 // What it does NOT build is the three material tables (material color, palette
 // material, fill material): they read the material atlas, which lives with the
 // renderer, and cost a few milliseconds.
+import { loadTimeline } from '../load_timeline.js';
 import { getWorldSize } from '../utils.js';
 import { buildChunkTextures, buildNoiseTable512 } from './chunk_textures.js';
 import { buildEngineResources, buildEngineTable, buildSinHashAndGrids, surfaceNoisePhase } from './engine_resources.js';
@@ -31,7 +32,7 @@ export function buildTerrainCpuResources(layers, biomeData, opts) {
     const timings = {};
     const timed = (name, fn) => {
         const s = performance.now();
-        const r = fn();
+        const r = loadTimeline.time(name, fn);
         timings[name] = (timings[name] || 0) + (performance.now() - s);
         return r;
     };

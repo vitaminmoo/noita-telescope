@@ -16,6 +16,7 @@
 // optional can be left out.
 import { BIOME_CONFIG, generateBiomeData } from './biome_generator.js';
 import { frameSlo } from './frame_slo.js';
+import { loadTimeline } from './load_timeline.js';
 import { GENERATOR_CONFIG } from './generator_config.js';
 import { loadPixelSceneData } from './pixel_scene_generation.js';
 import { loadPNG } from './png_sanitizer.js';
@@ -46,7 +47,7 @@ function loadBaseMap(kind) {
 
 async function timed(timings, name, fn) {
 	const t0 = performance.now();
-	const r = await fn();
+	const r = await loadTimeline.time(name, fn);
 	timings[name] = (timings[name] || 0) + (performance.now() - t0);
 	return r;
 }

@@ -14,6 +14,7 @@
 // module state (pixel_scene_generation.js, edge_decal_layer.js), so there is
 // one pool per realm; starting it twice returns the same workers.
 import { frameSlo } from './frame_slo.js';
+import { loadTimeline } from './load_timeline.js';
 import { PIXEL_SCENE_DATA, putPixelSceneBitmaps, putSceneMaterialMap, setPixelSceneBitmapRequester } from './pixel_scene_generation.js';
 import { defaultOverlayWorkerCount, takeWorker } from './prespawn.js';
 import { renderTrace } from './render_hud.js';
@@ -54,6 +55,7 @@ export function startOverlayWorkerPool({ count = defaultOverlayWorkerCount() } =
 		// have said: takeWorker replays it into the handler before `worker` is set.
 		const w = { worker: null, inflight: 0, ready: false, queue: [] };
 		const onMessage = (msg) => {
+			loadTimeline.add(msg.spans);
 			if (msg.type === 'READY') {
 				w.ready = true;
 				if (w.worker) {

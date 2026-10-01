@@ -16,6 +16,11 @@
 
 const cores = () => globalThis.navigator?.hardwareConcurrency || 4;
 
+// The browser keeps the timing of the first 250 resources a page fetches and
+// drops the rest; this page's modules alone are more. The load timeline
+// (js/load_timeline.js) reads them, so make room before they start arriving.
+globalThis.performance?.setResourceTimingBufferSize?.(3000);
+
 /** Terrain workers: two when the machine can spare them, else one. */
 export function defaultTerrainWorkerCount() {
 	return cores() >= 4 ? 2 : 1;

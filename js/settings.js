@@ -154,6 +154,7 @@ export function updateSettingsFromUI() {
 		debugLayerTimings: document.getElementById('debug-layer-timings')?.checked || false,
 		debugRenderHud: document.getElementById('debug-render-hud')?.checked || false,
 		debugFrameLog: document.getElementById('debug-frame-log')?.checked || false,
+		debugLoadTimeline: document.getElementById('debug-load-timeline')?.checked || false,
 		renderEverything: document.getElementById('debug-render-everything')?.checked || false,
 		checkerboardUnpainted: document.getElementById('debug-unpainted-checkerboard')?.checked ?? true,
 		biomeBoundaryContour: document.getElementById('debug-biome-boundary-contour')?.checked ?? false,

@@ -1,4 +1,5 @@
 // world_manager.js
+import { loadTimeline } from './load_timeline.js';
 import { app } from './app.js';
 import { recolorPixelScenes } from './overlay_manager.js';
 import { PIXEL_SCENE_SPAWN_DATA } from './pixel_scene_generation.js';
@@ -12,7 +13,7 @@ import { frameSlo } from './frame_slo.js';
 // Other modules import it from here.
 export { buildPixelSceneMetadata };
 
-export const worldWorker = new Worker(new URL('./world_worker.js', import.meta.url), { type: 'module' });
+export const worldWorker = new Worker(new URL('./world_worker.js', import.meta.url), { type: 'module', name: 'world' });
 // See overlay_manager.js: a dead worker is silent without this.
 worldWorker.addEventListener('error', (e) =>
 	console.error('world worker failed:', e.message ?? '(no message)', e.filename ?? '', e.lineno ?? ''));
@@ -24,6 +25,7 @@ const pendingGenerateRequests = new Set();
 
 worldWorker.onmessage = async (e) => {
     const msg = e.data;
+    loadTimeline.add(msg.spans);
 
     if (msg.type === 'STATUS') {
         app.setLoading(true, msg.msg);

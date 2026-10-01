@@ -135,7 +135,9 @@ try {
 			try {
 				const r = await waitLoaded(d);
 				const stats = await d.evalIn('window.terrainHost.stats()');
-				runs.push({ ...r, milestones: milestones(r.timeline, 0), renderer: stats.renderer, sceneSlots: stats.scenes.slots });
+				// What every thread did during the load, as a text chart (js/load_timeline.js).
+				const chart = await d.evalIn(`window.frameSlo.timeline('page load', 72)`);
+				runs.push({ ...r, chart, milestones: milestones(r.timeline, 0), renderer: stats.renderer, sceneSlots: stats.scenes.slots });
 				if (d.errors.length) console.log('page errors:', d.errors.slice(0, 3));
 			} finally { d.close(); }
 		}
@@ -160,6 +162,7 @@ try {
 		const ms = med(runs.map(r => r.milestones.complete));
 		console.log(`  page load objective (${PAGE_BUDGET_MS} ms to the complete view), cold: ${f0(ms)} ms, ${verdict(ms, PAGE_BUDGET_MS)}`);
 		phaseTable('cold load', runs);
+		console.log(`\ncold load: what each thread did (the last run)\n${runs[runs.length - 1].chart.split('\n').map(l => '  ' + l).join('\n')}`);
 	}
 
 	// --- return ----------------------------------------------------------------

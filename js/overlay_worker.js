@@ -5,6 +5,7 @@ import {
 } from './pixel_scene_generation.js';
 import * as bandSelect from './engine_resolve/band_select.js';
 import { createTileOverlaysCheap, createTileOverlays, createTileOverlaysExpanded } from './image_processing.js';
+import { loadTimeline } from './load_timeline.js';
 import { appSettings, updateSettings } from './settings.js';
 import { CHUNK_SIZE } from './constants.js';
 import { decodeMaterialIdTile, EDGE_DECAL_TILE } from './edge_decal_layer.js';
@@ -40,6 +41,8 @@ self.onmessage = async function(e) {
 	// (jobBusyStep) -- otherwise ten jobs awaiting one atlas load would each
 	// claim the whole wait and the worker would read as 1000% busy.
 	const traceId = data.traceId;
+	// When the job left the FIFO, for the load timeline (jobSpans).
+	data.startedAt = loadTimeline.now();
 	if (traceId) self.postMessage({ type: 'JOB_START', traceId });
 	const job = { ms: 0 };
 	jobBusyStep();
@@ -63,6 +66,14 @@ self.onmessage = async function(e) {
 	runningJobs.delete(job);
 	if (traceId) self.postMessage({ type: 'JOB_DONE', traceId, ms: job.ms });
 };
+
+// A finished job as a span on the load timeline, with whatever else this
+// thread recorded since its last reply: sent with the job's own reply, so the
+// page has it by the time it has the result.
+function jobSpans(req, name) {
+	loadTimeline.span(name, req.startedAt, loadTimeline.now());
+	return loadTimeline.take();
+}
 
 const runningJobs = new Set();
 let jobBusyAt = 0;
@@ -130,7 +141,10 @@ async function buildSceneBitmapsWorker(req) {
 	// one of its few in-flight slots for good.
 	const fail = (reason, err) => {
 		console.error(`[scene bitmaps] no bitmap for ${cacheKey}${textured ? ' (tex)' : ''}: ${reason}`, err ?? '');
-		self.postMessage({ type: 'SCENE_BITMAPS', epoch, cacheKey, key, variantKey, textured, levels: null, failReason: reason });
+		self.postMessage({
+			type: 'SCENE_BITMAPS', epoch, cacheKey, key, variantKey, textured, levels: null, failReason: reason,
+			spans: jobSpans(req, `sceneBitmaps: ${key}`),
+		});
 	};
 	const t0 = performance.now();
 	try {
@@ -208,7 +222,7 @@ async function buildSceneBitmapsWorker(req) {
 		const transfer = [...levels, ...airMasks].filter(Boolean);
 		self.postMessage({
 			type: 'SCENE_BITMAPS', epoch, cacheKey, key, variantKey, textured, width, height,
-			levels, airMasks, buildMs: performance.now() - t0,
+			levels, airMasks, buildMs: performance.now() - t0, spans: jobSpans(req, `sceneBitmaps: ${key}`),
 		}, transfer);
 	} catch (err) {
 		fail(`threw ${err?.message ?? err}`, err);
@@ -236,7 +250,7 @@ async function buildSceneMaterialsWorker(req) {
 	if (!map) console.error(`[scene materials] no map for ${cacheKey}: ${failReason}`);
 	self.postMessage({
 		type: 'SCENE_MATERIALS', epoch, cacheKey, key, variantKey, failReason,
-		...(map ?? { data: null }), buildMs: performance.now() - t0,
+		...(map ?? { data: null }), buildMs: performance.now() - t0, spans: jobSpans(req, `sceneMaps: ${key}`),
 	}, map ? [map.data.buffer] : []);
 }
 
@@ -348,6 +362,7 @@ async function generateEdgeDecalTileWorker(msg) {
 		type: 'EDGE_DECAL_TILE',
 		worldKey, tx, ty, rgba: tile,
 		debug: typeof decalDebug !== 'undefined' ? decalDebug : null,
+		spans: jobSpans(msg, `decalTiles: ${tx},${ty}`),
 	}, tile ? [tile.buffer] : []);
 }
 
@@ -475,4 +490,5 @@ if (!this.tileOverlaysByPW[`${pwX},${pwY}`]) {
 // before `onmessage` is assigned is dropped without a trace. A pool that posts
 // to a worker it has only just created (overlay_worker_pool.js,
 // world_scan_pool.js) holds its messages until this arrives.
-self.postMessage({ type: 'READY' });
+loadTimeline.started('modules');
+self.postMessage({ type: 'READY', spans: loadTimeline.take() });

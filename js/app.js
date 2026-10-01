@@ -26,6 +26,7 @@ import { NollaPrng } from './nolla_prng.js';
 import { appSettings, updateSettings, updateSettingsFromUI, updateSpellFlags, updateSpecialFlags, RENDER_LAYERS, readRenderLayersFromUI } from './settings.js';
 import { syncWorldWorkerData, getOrGenerateWorld, syncSettingsToWorldWorker } from './world_manager.js';
 import { TerrainWorkers } from './terrain_workers.js';
+import { loadTimeline } from './load_timeline.js';
 import { syncOverlayWorkerData, getOrGenerateOverlay, syncSettingsToOverlayWorker, recolorPixelScenes, invalidatePendingOverlays, overlayQueueStats } from './overlay_manager.js';
 import { edgeDecalAt, invalidateEdgeDecals, pendingEdgeDecalTiles } from './edge_decal_layer.js';
 import { runRenderBenchmark } from './render_benchmark.js';
@@ -394,6 +395,7 @@ export const app = {
 	init() {
 		// Milestones of the page's load, for its phases (frame_slo.js).
 		this.loadMarks = { modules: performance.now() };
+		loadTimeline.started('modules');
 		// The terrain workers (js/terrain_workers.js) generate every seed and build
 		// the GL terrain's CPU resources off this thread. Started first, so they
 		// decode the base map and the wang templates while the page loads.
@@ -683,6 +685,12 @@ export const app = {
 		document.getElementById('debug-layer-timings').onchange = () => {this.saveSettings(); this.draw();};
 		document.getElementById('debug-render-hud').onchange = () => {this.saveSettings(); this.draw();};
 		document.getElementById('debug-frame-log').onchange = () => {this.saveSettings(); this.draw();};
+		document.getElementById('debug-load-timeline').onchange = () => {
+			this.saveSettings();
+			frameSlo.setTimelineOnLoad(appSettings.debugLoadTimeline);
+			// Switched on: show the load there is, rather than wait for the next.
+			if (appSettings.debugLoadTimeline) frameSlo.showTimeline(frameSlo.lastLoad('new seed') ? 'new seed' : 'page load');
+		};
 		document.getElementById('debug-render-everything').onchange = () => {this.saveSettings(); this.draw();};
 		document.getElementById('debug-run-benchmark').onclick = async () => {
 			const status = document.getElementById('debug-benchmark-status');
@@ -2002,12 +2010,12 @@ export const app = {
 		try {
 			this.loadSettings();
 			this.startEarlyTerrainJob();
-			await loadTranslations();
+			await loadTimeline.time('translations', () => loadTranslations());
 			// The terrain workers decode the base maps themselves; this thread
 			// only needs them when it has to generate (loadBaseMaps).
 			if (!this.terrainWorkers) await this.loadBaseMaps();
 			console.log("Loading pixel scene data...");
-			await loadPixelSceneData();
+			await loadTimeline.time('pixelSceneMeta', () => loadPixelSceneData());
 			// The hover readout found a scene whose pixels were not decoded yet.
 			setScenePixelsListener(() => {
 				if (this.lastHoverEvent && document.getElementById('coords').style.display === 'block') {
@@ -2132,6 +2140,7 @@ export const app = {
 		btn.innerText = tiles ? "Generating Tiles..." : "Scanning Parallel World...";
 
 		const t0 = performance.now();
+		let awaitedMs = 0;   // of the time since t0, how long this thread only waited for the terrain workers
 
 		// Set limits on PWs
 		document.getElementById('search-pw-limit').max = getPWLimit(this.isNGP, this.gameMode);
@@ -2179,8 +2188,10 @@ export const app = {
 			let generated = null;
 			if (terrainJob) {
 				try {
-					const [biome, tileLayers, tileSpawns, terrainResources] = await Promise.all(
-						[terrainJob.biome, terrainJob.layers, terrainJob.spawns, terrainJob.terrain]);
+					const waitStart = performance.now();
+					const [biome, tileLayers, tileSpawns, terrainResources] = await loadTimeline.time('awaitTerrainWorkers', () => Promise.all(
+						[terrainJob.biome, terrainJob.layers, terrainJob.spawns, terrainJob.terrain]));
+					awaitedMs = performance.now() - waitStart;
 					generated = { biomeData: biome.biomeData, tileLayers, tileSpawns, terrainResources };
 				} catch (err) {
 					// A newer generate() replaced this one's job: the page is its now.
@@ -2340,7 +2351,8 @@ export const app = {
 
 		const t1 = performance.now();
 		console.log(`Generation completed in ${(t1 - t0) / 1000} seconds.`);
-		frameSlo.work('generate', t1 - t0, { tiles: !!tiles, rescan: !!rescan });
+		// What this thread did of it: the wait for the terrain workers is theirs.
+		frameSlo.work('generate', t1 - t0 - awaitedMs, { tiles: !!tiles, rescan: !!rescan });
 		
 		this.checkBounds();
 		this.draw();
@@ -3689,6 +3701,7 @@ export const app = {
 		}
 		if (frameSlo.enabled !== frameLog) frameSlo.setEnabled(frameLog);
 		const prof = this.startLayerProfile();
+		const drawStart = loadTimeline.now();
 		this.colorProbe.x = -1; // the tooltip's cached readback belongs to the old frame
 		this.frameSerial++;
 		this.scenesOnGL = false;
@@ -4682,6 +4695,9 @@ export const app = {
 		this.ctx.restore();
 
 		this.finishLayerProfile(prof);
+		// With no profile (the HUD and the frame log off) the draw still goes on
+		// the load timeline, when it took long enough to see there.
+		if (!prof && loadTimeline.now() - drawStart >= 2) loadTimeline.span('draw', drawStart, loadTimeline.now());
 
 		// The whole-world bakes the zoomed-out view draws from (backdropBake,
 		// sceneBake) cost 40-70 ms to build; build the main world's during idle
@@ -4943,6 +4959,7 @@ export const app = {
 			debugLayerTimings: document.getElementById('debug-layer-timings').checked,
 			debugRenderHud: document.getElementById('debug-render-hud').checked,
 			debugFrameLog: document.getElementById('debug-frame-log').checked,
+			debugLoadTimeline: document.getElementById('debug-load-timeline').checked,
 			renderEverything: document.getElementById('debug-render-everything').checked,
 			checkerboardUnpainted: document.getElementById('debug-unpainted-checkerboard').checked,
 			biomeBoundaryContour: document.getElementById('debug-biome-boundary-contour').checked,
@@ -5049,6 +5066,8 @@ export const app = {
 				document.getElementById('debug-layer-timings').checked = settings.debugLayerTimings || false;
 				document.getElementById('debug-render-hud').checked = settings.debugRenderHud || false;
 				document.getElementById('debug-frame-log').checked = settings.debugFrameLog || false;
+				document.getElementById('debug-load-timeline').checked = settings.debugLoadTimeline || false;
+				frameSlo.setTimelineOnLoad(settings.debugLoadTimeline);
 				document.getElementById('debug-render-everything').checked = settings.renderEverything || false;
 				settings.renderEverything = document.getElementById('debug-render-everything').checked;
 				document.getElementById('debug-unpainted-checkerboard').checked = settings.checkerboardUnpainted ?? true;

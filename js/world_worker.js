@@ -1,4 +1,5 @@
 // world_worker.js
+import { loadTimeline } from './load_timeline.js';
 import { injectPixelSceneData, injectPixelSceneSpawnData } from './pixel_scene_generation.js';
 import { getSpecialPoIs, scanSpawnFunctions } from './poi_scanner.js';
 import { addStaticPixelScenes } from './static_spawns.js';
@@ -48,6 +49,7 @@ function generatePWWorker() {
 
 	const { seed, ngPlusCount, pw, pwVertical, skipCosmeticScenes, perks, isDaily, gameMode } = worldState;
 	const t0 = performance.now();
+	const startedAt = loadTimeline.now();
 	
 	//self.postMessage({ type: 'STATUS', msg: `Searching PW ${pw >= 0 ? '+' : ''}${pw}, ${pwVertical}...` });
 
@@ -68,6 +70,7 @@ function generatePWWorker() {
 	*/
 	// Stripped out the images and let the overlay worker process them separately, this reduces the payload size to around 0.5 MB
 
+	loadTimeline.span(`scan: ${pw},${pwVertical}`, startedAt, loadTimeline.now());
 	self.postMessage({
 		type: 'PW_GENERATED',
 		seed: seed,
@@ -78,7 +81,8 @@ function generatePWWorker() {
 		pixelScenes: finalPixelScenes,
 		bgSprites: scanResults.backgroundSprites,
 		// This thread's time for the scan, without the clone back (world_scan_pool.js).
-		ms: performance.now() - t0
+		ms: performance.now() - t0,
+		spans: loadTimeline.take(),
 	});
 }
 
@@ -87,4 +91,5 @@ function generatePWWorker() {
 // before `onmessage` is assigned is dropped without a trace. A pool that posts
 // to a worker it has only just created (overlay_worker_pool.js,
 // world_scan_pool.js) holds its messages until this arrives.
-self.postMessage({ type: 'READY' });
+loadTimeline.started('modules');
+self.postMessage({ type: 'READY', spans: loadTimeline.take() });

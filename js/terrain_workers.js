@@ -15,6 +15,7 @@
 //
 // App-free: telescope's page and any other host of js/terrain_view.js use it
 // through generateTerrainWorld (js/terrain_world.js).
+import { loadTimeline } from './load_timeline.js';
 import { appSettings } from './settings.js';
 import { reviveTerrainCpuResources } from './gl/terrain_cpu_resources.js';
 import { defaultTerrainWorkerCount, takeWorker } from './prespawn.js';
@@ -70,6 +71,7 @@ export class TerrainWorkers {
 	}
 
 	onMessage(w, msg) {
+		loadTimeline.add(msg.spans);
 		if (msg.type === 'READY') {
 			w.ready = true;
 			// A prespawned worker's READY is replayed from inside takeWorker,

@@ -25,6 +25,7 @@ import { BIOME_CONFIG, generateBiomeData } from './biome_generator.js';
 import { GENERATOR_CONFIG } from './generator_config.js';
 import { buildSinHashAndGrids } from './gl/engine_resources.js';
 import { buildTerrainCpuResources, dropPaletteClosure, terrainCpuResourceBuffers } from './gl/terrain_cpu_resources.js';
+import { loadTimeline } from './load_timeline.js';
 import { loadPNG } from './png_sanitizer.js';
 import { prescanSpawnFunctions } from './poi_scanner.js';
 import { updateSettings } from './settings.js';
@@ -38,13 +39,13 @@ const BASE_MAP_FILES = {
 const baseMaps = new Map();   // kind -> Promise<{data, width, height}>
 const loadBaseMap = (kind) => {
 	let p = baseMaps.get(kind);
-	if (!p) baseMaps.set(kind, p = loadPNG(BASE_MAP_FILES[kind], { bitmap: false }));
+	if (!p) baseMaps.set(kind, p = loadTimeline.time(`baseMap: ${kind}`, () => loadPNG(BASE_MAP_FILES[kind], { bitmap: false })));
 	return p;
 };
 let templates = null;
-const loadTemplates = () => templates ??= Promise.all(Object.values(GENERATOR_CONFIG)
+const loadTemplates = () => templates ??= loadTimeline.time('wangTemplates', () => Promise.all(Object.values(GENERATOR_CONFIG)
 	.filter(conf => conf.enabled && !conf.wangData && conf.wangFile)
-	.map(async (conf) => { conf.wangData = await loadPNG(conf.wangFile, { bitmap: false }); }));
+	.map(async (conf) => { conf.wangData = await loadPNG(conf.wangFile, { bitmap: false }); })));
 
 // Same precedence as app.generate: NG+ first, then nightmare.
 const baseMapKind = (isNGP, gameMode) => (isNGP ? 'ngp' : gameMode === 'nightmare' ? 'nightmare' : 'normal');
@@ -73,9 +74,12 @@ function onPeerMessage(e) {
 	}
 }
 
-async function timed(timings, name, fn) {
+// A step's time, for the timings the page is sent; `span` also puts it on the
+// load timeline (the two loads above record their own, where they really ran:
+// here they are only waited for).
+async function timed(timings, name, fn, span = true) {
 	const t0 = performance.now();
-	const r = await fn();
+	const r = await (span ? loadTimeline.time(name, fn) : fn());
 	timings[name] = (timings[name] || 0) + (performance.now() - t0);
 	return r;
 }
@@ -96,8 +100,8 @@ async function generate(msg) {
 	const mapWidth = wide ? BIOME_CONFIG.W_NGP : BIOME_CONFIG.W_NG0;
 	const mapHeight = wide ? BIOME_CONFIG.H_NGP : BIOME_CONFIG.H_NG0;
 
-	const base = await timed(timings, 'baseMap', () => loadBaseMap(baseMapKind(isNGP, gameMode)));
-	await timed(timings, 'wangTemplates', loadTemplates);
+	const base = await timed(timings, 'baseMap', () => loadBaseMap(baseMapKind(isNGP, gameMode)), false);
+	await timed(timings, 'wangTemplates', loadTemplates, false);
 	const biomeData = await timed(timings, 'biomeMap', () =>
 		generateBiomeData(seed, ngPlusCount, gameMode, base.data, mapWidth, mapHeight));
 	self.postMessage({ type: 'BIOME', id, biomeData, mapWidth, mapHeight });
@@ -115,7 +119,7 @@ async function generate(msg) {
 
 	if (msg.prescan && !msg.assisted) {
 		const tileSpawns = await timed(timings, 'spawnPrescan', () => prescanSpawnFunctions(tileLayers, isNGP, gameMode));
-		self.postMessage({ type: 'SPAWNS', id, tileSpawns, ms: timings.spawnPrescan });
+		self.postMessage({ type: 'SPAWNS', id, tileSpawns, ms: timings.spawnPrescan, spans: loadTimeline.take() });
 	}
 
 	if (build) {
@@ -131,11 +135,11 @@ async function generate(msg) {
 		const transfer = terrainCpuResourceBuffers(cpu);
 		await postLayers();
 		timings.total = performance.now() - t0;
-		self.postMessage({ type: 'TERRAIN', id, cpu, timings }, transfer);
+		self.postMessage({ type: 'TERRAIN', id, cpu, timings, spans: loadTimeline.take() }, transfer);
 	} else {
 		await postLayers();
 		timings.total = performance.now() - t0;
-		self.postMessage({ type: 'TERRAIN', id, cpu: null, timings });
+		self.postMessage({ type: 'TERRAIN', id, cpu: null, timings, spans: loadTimeline.take() });
 	}
 }
 
@@ -149,15 +153,15 @@ async function assist(msg) {
 	if (msg.settings) updateSettings(msg.settings);
 	if (msg.sinHash) {
 		const t0 = performance.now();
-		const sinHash = buildSinHashAndGrids(seed);
+		const sinHash = loadTimeline.time('sinHashGrids', () => buildSinHashAndGrids(seed));
 		self.postMessage({ type: 'ASSIST_TIMING', id, name: 'sinHashGrids', ms: performance.now() - t0 });
 		peer.postMessage({ type: 'SINHASH', id, sinHash }, [sinHash.data.buffer]);
 	}
 	if (msg.prescan) {
 		const { tileLayers, isNGP, gameMode } = await fromPeer('LAYERS', id);
 		const t0 = performance.now();
-		const tileSpawns = prescanSpawnFunctions(tileLayers, isNGP, gameMode);
-		self.postMessage({ type: 'SPAWNS', id, tileSpawns, ms: performance.now() - t0 });
+		const tileSpawns = loadTimeline.time('spawnPrescan', () => prescanSpawnFunctions(tileLayers, isNGP, gameMode));
+		self.postMessage({ type: 'SPAWNS', id, tileSpawns, ms: performance.now() - t0, spans: loadTimeline.take() });
 	}
 }
 
@@ -185,4 +189,5 @@ self.onmessage = (e) => {
 
 // See overlay_worker.js: a module worker can be handed messages before this
 // module has finished evaluating; the page holds them until this arrives.
-self.postMessage({ type: 'READY' });
+loadTimeline.started('modules');
+self.postMessage({ type: 'READY', spans: loadTimeline.take() });
