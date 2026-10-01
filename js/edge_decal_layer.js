@@ -146,9 +146,11 @@ export function edgeDecalAt(worldX, worldY) {
  * @param world    the terrain view's world: seed, ngPlusCount, isNGP, gameMode, scenes
  * @param view     { width, height, camX, camY, camZ, pw, pwVertical } as TerrainView.render
  * @param frame    the frame serial
- * @returns {boolean} true when the pass ran (drew or requested)
+ * @returns {boolean} true when the pass ran (drew or requested). Afterwards
+ *          `decals.missingInView` is how many tiles of the view are not drawn yet.
  */
 export function drawEdgeDecals(terrain, decals, world, view, frame) {
+    decals.missingInView = 0;
     if ((view.pwVertical ?? 0) !== 0) return false;
     // Below the drawing zoom but close to it, the view's tiles are asked for
     // without being drawn, so zooming in across EDGE_DECAL_MIN_ZOOM finds them
@@ -200,6 +202,8 @@ export function drawEdgeDecals(terrain, decals, world, view, frame) {
                 if (drawing && tx >= tx0 && tx <= tx1 && ty >= ty0 && ty <= ty1) visible.push({ key: tileKey, tx, ty });
                 continue;
             }
+            // A tile of the view that is not drawn yet: the frame will change when it lands.
+            if (drawing && tx >= tx0 && tx <= tx1 && ty >= ty0 && ty <= ty1) decals.missingInView++;
             if (pending.has(tileKey)) continue;
             missing.push({ tx, ty, d: (tx - cx) * (tx - cx) + (ty - cy) * (ty - cy) });
         }

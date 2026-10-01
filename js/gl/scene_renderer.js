@@ -121,6 +121,9 @@ export class GLSceneRenderer {
         this.lost = false;
         /** Scenes drawn coarser than they had just been shown (see query). */
         this.detailDrops = 0;
+        /** Scenes of the last frame's view drawn from a stand-in, and not drawn. */
+        this.standIns = 0;
+        this.missing = 0;
         this.resetResidency();
     }
 
@@ -338,10 +341,14 @@ export class GLSceneRenderer {
      * uploads; the rest of `warm` (half a screen further) is only warmed, the
      * same margin the 2D path warms.
      */
-    query(list, s, level, near, warm) {
+    query(list, s, level, near, warm, view) {
         const gl = this.gl;
         const stamp = ++s.stampN;
         s.incomplete = false;
+        // Scenes of the view that are not showing what was asked for: drawn from
+        // a stand-in (another level's build, or the flat one), or not at all.
+        // Either way the frame will change again without the camera moving.
+        let standIns = 0, missing = 0;
         // Each scene's best slot key at this level, built once per list and level:
         // string building was most of a query.
         const textured = pixelScenesTexturedAt(level);
@@ -368,6 +375,8 @@ export class GLSceneRenderer {
                     let pk = primaryKeys[i];
                     if (pk === undefined) pk = primaryKeys[i] = `${pixelSceneCacheKeys(scene, level)[0]}#${level}`;
                     let slot = this.slots.get(pk) || null;
+                    let primary = !!slot;
+                    const inView = !(x + data.width < view.left || x > view.right || y + data.height < view.top || y > view.bottom);
                     if (!slot) {
                         const isNear = !(x + data.width < near.left || x > near.right || y + data.height < near.top || y > near.bottom);
                         if (isNear) {
@@ -382,7 +391,10 @@ export class GLSceneRenderer {
                             // on the GPU -- the scene was on screen from
                             // further out -- keeps being drawn (the search
                             // below), so zooming in stays continuous.
-                            if (d && (!textured || `${d.cacheKey}#${level}` === pk)) slot = this.slotFor(d, level, s);
+                            if (d && (!textured || `${d.cacheKey}#${level}` === pk)) {
+                                slot = this.slotFor(d, level, s);
+                                primary = !!slot && `${d.cacheKey}#${level}` === pk;
+                            }
                         } else {
                             warmPixelScene(scene, level);
                         }
@@ -404,7 +416,11 @@ export class GLSceneRenderer {
                             }
                         }
                     }
-                    if (!slot) continue;
+                    if (!slot) {
+                        if (inView) missing++;
+                        continue;
+                    }
+                    if (!primary && inView) standIns++;
                     // A scene drawn coarser than both what is asked for and what it
                     // was last drawn at has visibly lost detail: counted, for the
                     // frame log and the flicker check.
@@ -469,6 +485,8 @@ export class GLSceneRenderer {
         }
         s.airGroups = air.gs;
         s.colorGroups = color.gs;
+        s.standIns = standIns;
+        s.missing = missing;
         if (!s.buffer) s.buffer = gl.createBuffer();
         gl.bindBuffer(gl.ARRAY_BUFFER, s.buffer);
         gl.bufferData(gl.ARRAY_BUFFER, out, gl.DYNAMIC_DRAW);
@@ -564,7 +582,7 @@ export class GLSceneRenderer {
                     top: qy0 * cell - cell, bottom: (qy1 + 1) * cell + cell };
                 const warm = { left: near.left - vw / 2, right: near.right + vw / 2,
                     top: near.top - vh / 2, bottom: near.bottom + vh / 2 };
-                this.query(w.list, s, level, near, warm);
+                this.query(w.list, s, level, near, warm, { left: l, right: r, top: t, bottom: b });
                 s.queryKey = queryKey;
                 s.version = version;
                 s.queriedAt = now;
@@ -576,6 +594,12 @@ export class GLSceneRenderer {
             copies.push({ w, s });
         }
         gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+        // As of each copy's last query (a query reruns when a bitmap lands).
+        this.standIns = this.missing = 0;
+        for (const c of copies) {
+            this.standIns += c.s.standIns || 0;
+            this.missing += c.s.missing || 0;
+        }
 
         const q = terrain.gpuTimerBegin();
         const u = this.uniforms;

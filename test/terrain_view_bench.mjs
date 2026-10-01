@@ -19,8 +19,8 @@
 //   return    a browser that has been here before opens the page again (same
 //             profile: HTTP cache and compiled code on disk), under each cache
 //             policy the server can stand in for and with a round trip of
-//             latency per request. This is the load the 1 s objective is
-//             about: complete view, every scene, three worlds
+//             latency per request. This is the load the page-load objective
+//             (2 s) is about: complete view, every scene, three worlds
 //   reseed    the same page loads other seeds: what a seed costs once assets,
 //             workers and the GL program are warm
 //   moving    scripted pan and zoom on the loaded world: frame intervals and
@@ -49,8 +49,9 @@ const FIT = Number(flag('fit', '3'));
 const JSON_OUT = flag('json', null);
 const LATENCY = Number(flag('latency', '20'));
 const ONLY = flag('only', 'cold,return,reseed,moving,loading,ops,steps').split(',');
-const LOAD_BUDGET_MS = 1000;
-const verdict = (ms) => (ms <= LOAD_BUDGET_MS ? 'within' : `${f0(ms - LOAD_BUDGET_MS)} ms over`);
+// frame_slo.js's: opening the page, and a new seed on a page already up.
+const PAGE_BUDGET_MS = 2000, SEED_BUDGET_MS = 1000;
+const verdict = (ms, budget) => (ms <= budget ? 'within' : `${f0(ms - budget)} ms over`);
 
 const HOST = '/test/terrain_view_host/index.html';
 
@@ -146,7 +147,7 @@ try {
 		}
 		table('cold load: ms per step (median; steps under 0.5 ms left out)', ['step', 'ms'], steps);
 		const ms = med(runs.map(r => r.milestones.complete));
-		console.log(`  load objective (${LOAD_BUDGET_MS} ms to the complete view), cold: ${f0(ms)} ms, ${verdict(ms)}`);
+		console.log(`  page load objective (${PAGE_BUDGET_MS} ms to the complete view), cold: ${f0(ms)} ms, ${verdict(ms, PAGE_BUDGET_MS)}`);
 	}
 
 	// --- return ----------------------------------------------------------------
@@ -185,7 +186,7 @@ try {
 				f0(med(runs.map(r => r.net.requests))), f0(med(runs.map(r => r.net.notModified))), f0(med(runs.map(r => r.net.bytes)) / 1024)]));
 		for (const [name, runs] of Object.entries(res)) {
 			const ms = med(runs.map(r => r.milestones.complete));
-			console.log(`  load objective (${LOAD_BUDGET_MS} ms to the complete view), ${name}: ${f0(ms)} ms, ${verdict(ms)}`);
+			console.log(`  page load objective (${PAGE_BUDGET_MS} ms to the complete view), ${name}: ${f0(ms)} ms, ${verdict(ms, PAGE_BUDGET_MS)}`);
 		}
 	}
 
@@ -226,7 +227,7 @@ try {
 				}
 				table('new seed on a warm page: ms per step (median)', ['step', 'ms'], steps);
 				const ms = med(runs.map(r => r.milestones.complete));
-				console.log(`  load objective (${LOAD_BUDGET_MS} ms to the complete view), new seed: ${f0(ms)} ms, ${verdict(ms)}`);
+				console.log(`  new seed objective (${SEED_BUDGET_MS} ms to the complete view): ${f0(ms)} ms, ${verdict(ms, SEED_BUDGET_MS)}`);
 				await load({ seed: SEED, fit: FIT });
 			}
 

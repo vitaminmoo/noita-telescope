@@ -2281,6 +2281,7 @@ export const app = {
 		// changes, PW crossings while panning) lift it at once as before.
 		if (this.initialViewSettled) {
 			this.setLoading(false);
+			if (tiles) this.watchSeedLoad(t0, t1 - t0);
 			return;
 		}
 		this.setLoading(true, "Preparing view...");
@@ -2290,6 +2291,24 @@ export const app = {
 			this.initialViewSettled = true;
 			this.setLoading(false);
 		}
+	},
+
+	// A seed generated on a page that is already up: from the request to the
+	// first frame that shows it complete (frame_slo.js, the 'new seed' budget).
+	watchSeedLoad(t0, generateMs) {
+		const token = this.settleToken;
+		this.terrainCompleteAt = 0;
+		let idle = 0;
+		const tick = () => {
+			if (token !== this.settleToken || performance.now() - t0 > 30000) return;
+			// Complete has to hold across two checks: a round of builds landing
+			// reads as idle for a moment before the next round is asked for.
+			idle = (this.terrainCompleteAt && !this.asyncRenderPending()) ? idle + 1 : 0;
+			if (idle < 2) { setTimeout(tick, 50); return; }
+			frameSlo.load('new seed', this.terrainCompleteAt - t0,
+				{ generate: generateMs, render: this.terrainCompleteAt - t0 - generateMs });
+		};
+		setTimeout(tick, 50);
 	},
 
 	loadWorld(pwX, pwY) {
@@ -3007,8 +3026,13 @@ export const app = {
 			detailZoom: this.detailZoom(),
 			scenes: !!scenes,
 			edgeDecals: appSettings.edgeDecals,
+			// Behind the first load's overlay nobody sees an unfinished frame.
+			offscreen: !this.initialViewSettled,
 			onPass: prof ? (name) => markLayer(prof, name) : null,
 		});
+		// When the view last became complete (watchSeedLoad): 0 while it is not.
+		if (!frame?.complete) this.terrainCompleteAt = 0;
+		else if (!this.terrainCompleteAt) this.terrainCompleteAt = performance.now();
 
 		// The engine chunk table lands here (lazily, on the first GL draw); the
 		// unpainted mask built before it existed must fold it in once.
@@ -4630,7 +4654,7 @@ export const app = {
 		}
 		// The view is complete here; the rehearsal below is not part of the load.
 		// (The idle checks above add ~150 ms of waiting to it.)
-		if (!this.pageLoadReported) {
+		if (!this.pageLoadReported && !superseded()) {
 			this.pageLoadReported = true;
 			// t0 is when settling began: everything before it is modules, assets and generation.
 			frameSlo.load('page load', performance.now(), { untilGenerated: t0, settleView: performance.now() - t0 });

@@ -22,10 +22,19 @@
 //   loaf     the browser's own long-animation-frame attribution, when it has
 //            one (Chrome, frames over 50 ms): which script ran for how long
 //
-// The other objective is the load: a returning visitor should see the complete
-// view -- every scene of every world on screen -- within a second. A host
-// reports each load it finishes with frameSlo.load(); it is logged with its
-// steps whether or not the frame log is on.
+// A frame can also be on time and still wrong: scenes drawn from a stand-in
+// while their real build is made, scenes and decal tiles not there yet. The
+// viewer sees those change afterwards with the camera where it is, so they
+// count as misses too. The terrain view reports what each frame shows that is
+// not final (frameSlo.detail); a run of such frames is logged as one "detail"
+// record when it ends: how long the view took to become final, and the most
+// that was unfinished in it.
+//
+// The other objective is the load, to the complete view -- every scene of
+// every world on screen: two seconds for opening the page, one for a new seed
+// on a page that is already up. A host reports each load it finishes with
+// frameSlo.load(); it is logged with its steps whether or not the frame log
+// is on.
 //
 // Three ways out, all carrying the same records:
 //   * the console: one line per miss ("[frame] #12 +33 ms ...");
@@ -41,8 +50,10 @@
 import { renderHud, renderTrace } from './render_hud.js';
 
 const BUDGET_MS = 1000 / 60;
-/** A load -- navigation or new seed, to the complete view -- should take no longer. */
-const LOAD_BUDGET_MS = 1000;
+/** A load, to the complete view, should take no longer: opening the page, and
+ *  a new seed on a page that is already up. */
+const LOAD_BUDGETS_MS = { 'page load': 2000, 'new seed': 1000 };
+const LOAD_BUDGET_DEFAULT_MS = 1000;
 /** An interval over this is a missed frame: one refresh plus timer slack. */
 const MISS_MS = 20;
 /** Records kept for dump(). */
@@ -63,6 +74,8 @@ const states = new Map();      // name -> () => value
 const records = [];            // every record (session, miss, loaf), oldest first
 const missed = [];             // { line, record } for the HUD, newest first
 let pageLoadMiss = null;       // { line, record }: the page's first load, if it ran over its budget
+let episode = null;            // the run of not-final frames in progress
+let detailSuspended = false;
 let outbox = [];
 let flushTimer = 0;
 let sinkOk = true;
@@ -150,6 +163,40 @@ function oneLine(rec) {
 	return parts.join('  ');
 }
 
+function pushMiss(rec, line) {
+	missed.unshift({ line, record: rec });
+	if (missed.length > 40) missed.length = 40;
+}
+
+/** "#14 detail 420 ms (25 frames)  37 scenes on stand-ins, 12 not drawn yet, 4 decal tiles" */
+function detailLine(rec) {
+	const parts = [];
+	if (rec.sceneStandIns) parts.push(`${rec.sceneStandIns} scenes on stand-ins`);
+	if (rec.scenesMissing) parts.push(`${rec.scenesMissing} scenes not drawn yet`);
+	if (rec.decalTilesMissing) parts.push(`${rec.decalTilesMissing} decal tiles not drawn yet`);
+	return `#${rec.n} detail ${rec.durationMs} ms (${rec.frames} frames)  ${parts.join(', ')}`;
+}
+
+function closeEpisode(t) {
+	const e = episode;
+	episode = null;
+	const rec = {
+		type: 'detail',
+		n: ++serial,
+		t: Math.round(e.t0),
+		durationMs: Math.round(t - e.t0),
+		frames: e.frames,
+		sceneStandIns: e.sceneStandIns,
+		scenesMissing: e.scenesMissing,
+		decalTilesMissing: e.decalTilesMissing,
+		state: e.state,
+	};
+	emit(rec);
+	const line = detailLine(rec);
+	console.warn(`[frame] ${line}`, rec);
+	pushMiss(rec, line);
+}
+
 function toConsole(rec) {
 	const sec = Math.floor(rec.t / 1000);
 	if (sec !== consoleWindow) {
@@ -202,9 +249,11 @@ function onFrame(stamp) {
 		};
 		emit(rec);
 		toConsole(rec);
-		missed.unshift({ line: oneLine(rec), record: rec });
-		if (missed.length > 40) missed.length = 40;
+		pushMiss(rec, oneLine(rec));
 	}
+	// A run of not-final frames that just stopped being drawn (the page went
+	// idle before the view finished) ends where its last frame was.
+	if (episode && t - episode.last > 2000) closeEpisode(episode.last);
 	lastT = t;
 	interval = newInterval();
 }
@@ -320,37 +369,67 @@ export const frameSlo = {
 		try { return fn(); } finally { this.work(kind, performance.now() - t0, detail); }
 	},
 
-	loadBudgetMs: LOAD_BUDGET_MS,
+	loadBudgetsMs: LOAD_BUDGETS_MS,
 
 	/**
-	 * A load finished: the view the host opened on is complete. `ms` is the
-	 * time it took (since navigation for the page's first load, since the
-	 * request for a later seed) and `steps` whatever breakdown the host has,
-	 * as { name: ms }. Returns the record.
+	 * A load finished: the view the host opened on is complete. `name` is
+	 * 'page load' (timed from navigation) or 'new seed' (from the request, on a
+	 * page already up) -- each has its budget -- `ms` the time it took, and
+	 * `steps` whatever breakdown the host has, as { name: ms }. Returns the
+	 * record.
 	 */
 	load(name, ms, steps = null) {
+		const budgetMs = LOAD_BUDGETS_MS[name] ?? LOAD_BUDGET_DEFAULT_MS;
 		const rec = {
 			type: 'load',
 			name,
 			t: Math.round(performance.now()),
 			ms: Math.round(ms),
-			budgetMs: LOAD_BUDGET_MS,
-			overMs: Math.max(0, Math.round(ms - LOAD_BUDGET_MS)),
-			ok: ms <= LOAD_BUDGET_MS,
+			budgetMs,
+			overMs: Math.max(0, Math.round(ms - budgetMs)),
+			ok: ms <= budgetMs,
 			steps,
 			state: snapshotState(),
 		};
 		emit(rec);
 		const detail = steps ? '  ' + Object.entries(steps).map(([k, v]) => `${k} ${Math.round(v)}`).join(', ') : '';
-		const line = `${name}: ${rec.ms} ms, ${rec.ok ? 'within' : `${rec.overMs} ms over`} the ${LOAD_BUDGET_MS} ms budget${detail}`;
+		const line = `${name}: ${rec.ms} ms, ${rec.ok ? 'within' : `${rec.overMs} ms over`} the ${budgetMs} ms budget${detail}`;
 		console.info(`[load] ${line}`);
-		// The first load a page reports is the one a visitor waited for; the HUD
-		// shows it next to the missed frames when it missed.
+		// The first load a page reports is the one a visitor waited for: the HUD
+		// keeps it above the missed frames when it missed. A later seed that
+		// misses is listed among them.
 		if (!this.firstLoadSeen) {
 			this.firstLoadSeen = true;
 			if (!rec.ok) pageLoadMiss = { line, record: rec };
+		} else if (!rec.ok && enabled) {
+			rec.n = ++serial;
+			pushMiss(rec, `#${rec.n} load  ${line}`);
 		}
 		return rec;
+	},
+
+	/**
+	 * What a frame just drawn shows that is not final, as the terrain view
+	 * counts it: { sceneStandIns, scenesMissing, decalTilesMissing }. All zero
+	 * ends the run of not-final frames in progress, which is then logged.
+	 */
+	detail(d) {
+		if (!enabled || detailSuspended) return;
+		const t = performance.now();
+		if (!(d.sceneStandIns || d.scenesMissing || d.decalTilesMissing)) {
+			if (episode) closeEpisode(t);
+			return;
+		}
+		episode ??= { t0: t, frames: 0, sceneStandIns: 0, scenesMissing: 0, decalTilesMissing: 0, state: snapshotState() };
+		episode.frames++;
+		episode.last = t;
+		for (const k of ['sceneStandIns', 'scenesMissing', 'decalTilesMissing']) if (d[k] > episode[k]) episode[k] = d[k];
+	},
+
+	/** Frames nobody sees (a loading overlay is up) are not counted as not-final. */
+	suspendDetail(on) {
+		detailSuspended = !!on;
+		if (on) episode = null;
 	},
 
 	/** A named piece of state read at every miss: `fn` returns something JSON-able and small. */

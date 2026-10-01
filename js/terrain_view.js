@@ -260,6 +260,8 @@ export class TerrainView {
 	 *   pw, pwVertical       draw space's anchor world (default 0)
 	 *   worlds               world keys to draw scenes for (default: worldsInView)
 	 *   frame                the host's frame serial (default: a counter)
+	 *   offscreen            true for a frame nobody sees (behind a loading
+	 *                        overlay): its unfinished detail is not logged
 	 *   onPass               (name) => void, called as 'terrainGL', 'scenesGL'
 	 *                        and 'edgeDecals' finish, for a host's own profiler
 	 *  Operations, each on unless said otherwise:
@@ -279,11 +281,13 @@ export class TerrainView {
 	 *                        (default camZ; Infinity = never reduce detail)
 	 *
 	 * @returns {null|{canvas, terrain:boolean, scenes:boolean, edgeDecals:boolean,
-	 *                 worlds:string[], redrawInMs:number|null, complete:boolean}}
+	 *                 worlds:string[], redrawInMs:number|null, detail, complete:boolean}}
 	 *   null when GL is unavailable (see `failed`). `scenes` / `edgeDecals` say
 	 *   that pass ran; `redrawInMs` is non-null when landed bitmaps were left
-	 *   for a later frame; `complete` is false while anything the frame wanted
-	 *   is missing.
+	 *   for a later frame. `detail` counts what the frame shows that is not
+	 *   final -- { sceneStandIns, scenesMissing, decalTilesMissing } -- and
+	 *   `complete` is true only when there is none and nothing is in flight:
+	 *   the frame will not change until the camera does.
 	 */
 	render(view) {
 		const w = this.world;
@@ -342,6 +346,14 @@ export class TerrainView {
 			view.onPass?.('edgeDecals');
 		}
 		this.timings.frame = t;
+		// What this frame shows that is not final: it will change again with the
+		// camera where it is. The frame log counts frames like this as misses.
+		const detail = {
+			sceneStandIns: scenes ? this.scenes.standIns : 0,
+			scenesMissing: (scenes ? this.scenes.missing : 0) + this.missingSceneWorlds,
+			decalTilesMissing: edgeDecals ? this.decals.missingInView : 0,
+		};
+		if (!view.offscreen) frameSlo.detail(detail);
 		return {
 			canvas,
 			terrain: view.terrain !== false,
@@ -349,7 +361,8 @@ export class TerrainView {
 			edgeDecals,
 			worlds,
 			redrawInMs: this.redrawInMs,
-			complete: this.pending().total === 0,
+			detail,
+			complete: this.pending().total === 0 && !detail.sceneStandIns && !detail.scenesMissing && !detail.decalTilesMissing,
 		};
 	}
 
