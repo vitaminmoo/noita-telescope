@@ -1,0 +1,25 @@
+# Deploys every push to the branch to Cloudflare Pages (tools/deploy_pages.sh).
+#
+# Does nothing until the repository has two secrets:
+#   CLOUDFLARE_API_TOKEN   a token with "Cloudflare Pages: Edit"
+#   CLOUDFLARE_ACCOUNT_ID  the account the Pages project lives in
+# Until then tools/git-hooks/pre-push deploys from a clone that is logged in.
+name: Deploy to Cloudflare Pages
+on:
+  push:
+    branches: [gl-and-full-resolution]
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "::notice::CLOUDFLARE_API_TOKEN is not set; skipping the deploy"
+            exit 0
+          fi
+          tools/deploy_pages.sh "$GITHUB_SHA" "$GITHUB_REF_NAME"

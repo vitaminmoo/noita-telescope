@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Deploys a pushed branch to Cloudflare Pages (tools/deploy_pages.sh), so the
+# site follows the branch. Enable once per clone:
+#
+#   git config core.hooksPath tools/git-hooks
+#
+# Only the branches in DEPLOY_BRANCHES deploy (space separated; default below).
+# SKIP_DEPLOY=1 git push ... pushes without deploying. A deploy that fails is
+# reported and the push goes ahead: the site being behind is better than the
+# branch being behind.
+set -uo pipefail
+
+branches="${DEPLOY_BRANCHES:-gl-and-full-resolution}"
+[ -n "${SKIP_DEPLOY:-}" ] && exit 0
+root="$(git rev-parse --show-toplevel)"
+
+# stdin: <local ref> <local sha> <remote ref> <remote sha>, one line per ref pushed.
+while read -r local_ref local_sha _remote_ref _remote_sha; do
+	case "$local_ref" in refs/heads/*) ;; *) continue ;; esac
+	[ "$local_sha" = 0000000000000000000000000000000000000000 ] && continue   # a delete
+	branch="${local_ref#refs/heads/}"
+	for b in $branches; do
+		[ "$b" = "$branch" ] || continue
+		if ! "$root/tools/deploy_pages.sh" "$local_sha" "$branch" </dev/null; then
+			echo "pre-push: the Pages deploy of $branch FAILED; pushing anyway (tools/deploy_pages.sh $branch to retry)" >&2
+		fi
+	done
+done
+exit 0
