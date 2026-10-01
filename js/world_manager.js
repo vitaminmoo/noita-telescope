@@ -1,11 +1,15 @@
 // world_manager.js
 import { app } from './app.js';
 import { recolorPixelScenes } from './overlay_manager.js';
-import { PIXEL_SCENE_DATA, PIXEL_SCENE_SPAWN_DATA } from './pixel_scene_generation.js';
+import { PIXEL_SCENE_SPAWN_DATA } from './pixel_scene_generation.js';
 import { continueSearchSequence, syncPW } from './search_manager.js';
 import { appSettings, updateSettingsFromUI } from './settings.js';
 import { TRANSLATIONS } from './translations.js';
 import { unlockedSpells } from './unlocks.js';
+import { buildPixelSceneMetadata } from './world_scan_pool.js';
+
+// Other modules import it from here.
+export { buildPixelSceneMetadata };
 
 export const worldWorker = new Worker(new URL('./world_worker.js', import.meta.url), { type: 'module' });
 // See overlay_manager.js: a dead worker is silent without this.
@@ -22,6 +26,10 @@ worldWorker.onmessage = async (e) => {
 
     if (msg.type === 'STATUS') {
         app.setLoading(true, msg.msg);
+    }
+    else if (msg.type === 'PW_FAILED') {
+        // Left pending on purpose: asking again would fail the same way every frame.
+        console.error(`world worker: PW ${msg.pw},${msg.pwVertical} failed to generate:`, msg.error);
     }
     else if (msg.type === 'PW_GENERATED') {
         const pwKey = `${msg.pw},${msg.pwVertical}`;
@@ -51,49 +59,6 @@ worldWorker.onmessage = async (e) => {
 		recolorPixelScenes(msg.pixelScenes);
     }
 };
-
-// Pixel scene metadata without the pixels (PERF_PLAN Step 4).
-//
-// PIXEL_SCENE_DATA carries every scene's full RGBA image in `imgElement` plus its
-// recolored `variants` - a few hundred MB once all scenes are loaded. Only the overlay
-// worker recolors, so it is the only worker that needs those pixels; the generation
-// side (world worker) and the filtering side (search worker) read spawn data plus a
-// handful of scalar fields. Structured cloning the cache wholesale copied the images
-// into those workers for nothing, so they get this projection instead.
-//
-// Keep this in sync with the fields worker-side code reads off PIXEL_SCENE_DATA
-// (pixel_scene_generation.js loadPixelScene / loadRandomPixelScene).
-export function buildPixelSceneMetadata(sceneData = PIXEL_SCENE_DATA) {
-	const metadata = {};
-	for (const key of Object.keys(sceneData)) {
-		const scene = sceneData[key];
-		metadata[key] = {
-			key: scene.key,
-			biome: scene.biome,
-			name: scene.name,
-			width: scene.width,
-			height: scene.height,
-			isCosmetic: scene.isCosmetic,
-			// Which recolor classes the scene contains (classifyPixelSceneColors).
-			// underlyingBiomeSuffix() reads both to decide whether a scene needs an
-			// `@<chunk biome>` variant, and a worker that cannot see them answers "no
-			// suffix" for every scene it generates. That is how a pseudo-biome scene
-			// (general/, temple/, spliced/) came out of the worker as plain
-			// `biome=spliced`: its density-class pixels have no color in either table,
-			// so sceneBiomePaint fell back to magenta. The main thread generates the
-			// current world and the workers generate all the others, so the same scene
-			// resolved two ways, and the parallel-world copies -- which the pixel-scene
-			// layer draws at the same world position, and which only come into view
-			// when zoomed far out -- painted magenta over the correct main-world one.
-			hasAir: scene.hasAir,
-			hasBiomeFill: scene.hasBiomeFill,
-			// Same shape as the main thread cache, minus the pixels: no recolored variant
-			// ever exists on these workers.
-			variants: {}
-		};
-	}
-	return metadata;
-}
 
 export function syncWorldWorkerData() {
     worldWorker.postMessage({
