@@ -40,10 +40,13 @@ if [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ] && [ -f "$cache" ]; then
 	export CLOUDFLARE_ACCOUNT_ID
 fi
 
+message="$(git -C "$root" log -1 --format=%s "$sha")"
 echo "deploy_pages: $(git -C "$root" log -1 --format='%h %s' "$sha") -> $project, branch $branch"
-npx --yes wrangler pages deploy "$site" \
+# Run from the archive: wrangler reads the git state of the directory it runs
+# in, and the checkout's (untracked files, edits) says nothing about this tree.
+cd "$site"
+npx --yes wrangler pages deploy . \
 	--project-name="$project" \
 	--branch="$branch" \
 	--commit-hash="$sha" \
-	--commit-message="$(git -C "$root" log -1 --format=%s "$sha")" \
-	--commit-dirty=false
+	--commit-message="$message"
