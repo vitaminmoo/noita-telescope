@@ -1,4 +1,4 @@
-/* global process */
+/* global process, Buffer */
 // Headless browser driver for the tier-2 (GL) regression run.
 //
 // Owns its own throwaway HTTP server on a random free port so it can run while
@@ -122,7 +122,7 @@ export async function drive({ port, seed = 786433191, ng = 0, settleMs = 8000, q
  *   width, height  window and device metrics
  *   profile  a user-data dir to reuse, so a second launch finds the first
  *            one's HTTP and code caches (a return visit); default: a fresh one
- * @returns {Promise<{evalIn, errors, logs, close, quit}>}  `quit()` closes the
+ * @returns {Promise<{evalIn, errors, logs, close, quit, screenshot}>}  `quit()` closes the
  *          browser the way a user would, so its caches reach the disk; `close()`
  *          just kills it
  */
@@ -184,7 +184,9 @@ export async function openPage({ port, path, angle = 'swiftshader', width = 1280
 		await Promise.race([exited, sleep(5000)]);
 		chrome.kill();
 	};
-	return { evalIn, errors, logs, quit, close: () => { chrome.kill(); } };
+	/** The page as it is on screen, as PNG bytes. */
+	const screenshot = async () => Buffer.from((await send('Page.captureScreenshot', { format: 'png' }, sessionId)).data, 'base64');
+	return { evalIn, errors, logs, quit, screenshot, close: () => { chrome.kill(); } };
 }
 
 export { sleep };

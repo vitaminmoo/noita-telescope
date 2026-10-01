@@ -23,7 +23,10 @@ const STRIP_MS = 30000;      // history strip span
 const TICK_MS = 250;
 const FINISHED_MAX = 256;    // finished items kept for the frame log and late GPU shares
 const MISS_ROWS = 10;
-const QUEUE_ROWS = 12;
+const QUEUE_ROWS = 10;       // the queue always shows this many rows, plus the "… n more" line's space
+const BAR_ROWS = 10;         // and the subsystem bars always this many rows
+/** drawNow over this misses a 60 fps frame on its own. */
+const FRAME_BUDGET_MS = 1000 / 60;
 const STALE_MS = 60000;      // a traced item never answered is dropped after this
 
 // Validated categorical slots 1-3 (dataviz reference palette, dark steps) on
@@ -34,6 +37,7 @@ const LANES = [
 	{ key: 'gpu', label: 'GPU (WebGL)', color: '#d95926' },
 ];
 const INK = '#e8e8e6';
+const INK_OVER = '#ff6b5e';   // a value past its budget
 const INK_MUTED = '#9a9a96';
 const GRID = '#333331';
 
@@ -47,7 +51,9 @@ const statSources = new Map();   // name -> () => string, one line (or lines) un
 let nextId = 1;
 let on = false;
 let tracing = false;         // items are traced with the HUD off (frame_slo.js)
-let missSource = null;       // () => string[], newest first: the frames that missed the budget
+let missSource = null;       // (n) => [{ line, record }], newest first: the frames that missed the budget
+let shownMisses = [];        // what the Missed frames section is showing, for the click-to-copy
+let copiedUntil = 0;
 let root = null, barsCanvas = null, stripCanvas = null, headEl = null, totalEl = null, queueEl = null, cachesEl = null, missEl = null;
 let timer = 0;
 let pendingSource = null;    // () => number of async render items in flight (traced or not)
@@ -82,7 +88,8 @@ export const renderHud = {
 		if (!tracing && !on) { active.clear(); finished.length = 0; }
 	},
 
-	/** The frame log's lines for the Missed frames section, newest first. */
+	/** The frame log's entries for the Missed frames section, newest first:
+	 *  (n) => [{ line, record }], the short line shown and the full record. */
 	setMissSource(fn) { missSource = fn; },
 
 	/** Count of async render work in flight, including work posted before the HUD was on. */
@@ -225,6 +232,12 @@ function buildDom(container) {
 	queueEl = section('Queue');
 	missEl = section('Missed frames');
 	cachesEl = section('Caches');
+	// The one part of the HUD that takes clicks: it copies what it shows.
+	for (const el of [missEl.h, missEl.pre]) {
+		Object.assign(el.style, { pointerEvents: 'auto', cursor: 'copy' });
+		el.title = 'Click to copy these missed frames: one line each, then the full records as JSON lines';
+		el.addEventListener('click', copyMisses);
+	}
 	// The HUD is anchored bottom-right, so the fixed-height parts (the graphs
 	// and the cache lines) go last: they stay put while the queue and the
 	// missed frames above them grow and shrink.
@@ -260,8 +273,17 @@ function tick() {
 
 	const drawMs = frames.map((f) => f.ms);
 	const avg = drawMs.length ? drawMs.reduce((a, b) => a + b, 0) / drawMs.length : 0;
-	headEl.textContent = `Render HUD · last ${WINDOW_MS / 1000}s · ${(drawMs.length * 1000 / WINDOW_MS).toFixed(0)} draws/s · ` +
-		`drawNow avg ${avg.toFixed(1)} max ${Math.max(0, ...drawMs).toFixed(1)} ms · GPU timer ${gpuTimerState}`;
+	// drawNow's average and maximum turn red past the 60 fps frame time.
+	const max = Math.max(0, ...drawMs);
+	const budgeted = (v) => {
+		const span = document.createElement('span');
+		span.textContent = v.toFixed(1);
+		if (v > FRAME_BUDGET_MS) span.style.color = INK_OVER;
+		return span;
+	};
+	headEl.replaceChildren(
+		`Render HUD · last ${WINDOW_MS / 1000}s · ${(drawMs.length * 1000 / WINDOW_MS).toFixed(0)} draws/s · drawNow avg `,
+		budgeted(avg), ' max ', budgeted(max), ` ms · GPU timer ${gpuTimerState}`);
 
 	const sorted = [...rows.values()]
 		.map((r) => ({ ...r, total: r.main + r.worker + r.gpu }))
@@ -297,28 +319,27 @@ function niceMax(v) {
 }
 
 function drawBars(rows, laneTotals) {
-	const ROW = 15, NAME_W = 112, SPLIT_W = 126, VAL_W = 96, MAX_ROWS = 12;
-	const shown = rows.slice(0, MAX_ROWS);
-	const other = rows.slice(MAX_ROWS);
+	const ROW = 15, NAME_W = 112, SPLIT_W = 126, VAL_W = 96;
+	// Always BAR_ROWS rows tall, busy or idle, so nothing under the bars moves:
+	// the busiest subsystems, the rest folded into the last row.
+	const shown = rows.slice(0, rows.length > BAR_ROWS ? BAR_ROWS - 1 : BAR_ROWS);
+	const other = rows.slice(shown.length);
 	if (other.length) {
 		const o = { sys: `+${other.length} more`, main: 0, worker: 0, gpu: 0, total: 0 };
 		for (const r of other) { o.main += r.main; o.worker += r.worker; o.gpu += r.gpu; o.total += r.total; }
 		shown.push(o);
 	}
-	const h = Math.max(1, shown.length) * ROW + 14;
-	const { ctx, w } = setupCanvas(barsCanvas, h);
+	const plotH = BAR_ROWS * ROW;
+	const { ctx, w } = setupCanvas(barsCanvas, plotH + 14);
 	const x0 = NAME_W;
 	const barW = w - NAME_W - SPLIT_W - VAL_W - 8;
 	const pct = (ms) => (100 * ms) / WINDOW_MS;
 	const axis = niceMax(Math.max(1, ...shown.map((r) => pct(r.total))));
-	const plotH = Math.max(1, shown.length) * ROW;
 
 	if (!shown.length) {
 		ctx.fillStyle = INK_MUTED;
 		ctx.textAlign = 'left';
 		ctx.fillText('no samples yet — pan or zoom the map', 0, ROW / 2);
-		totalEl.replaceChildren();
-		return;
 	}
 	// Recessive grid: quarter lines, axis labels under the plot.
 	ctx.strokeStyle = GRID;
@@ -397,13 +418,24 @@ const pad = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s.padEnd(n));
 const ms = (v) => (v >= 100 ? v.toFixed(0) : v.toFixed(1));
 
 function renderQueue(t) {
-	const items = [...active.values()].sort((a, b) => a.t0 - b.t0);
-	const untraced = pendingSource ? Math.max(0, pendingSource() - items.filter((i) => i.kind === 'scene' || i.kind === 'decal').length) : 0;
-	queueEl.h.textContent = `Queue — ${items.length} traced` + (untraced ? `, ${untraced} posted before the HUD was on` : '');
-	if (!items.length) { queueEl.pre.textContent = '(idle)'; return; }
-	const lines = items.slice(0, QUEUE_ROWS).map((i) =>
-		`${pad(i.stage, 8)} ${pad(i.kind, 7)} ${pad(i.label, 24)} ${ms(t - i.t0).padStart(6)} ago`);
-	if (items.length > QUEUE_ROWS) lines.push(`… ${items.length - QUEUE_ROWS} more`);
+	// Ordered by when each item started being worked on, longest-running first;
+	// the ones still waiting follow, in the order they were posted.
+	const startedAt = (i) => i.stages.findLast((st) => st.name === 'running')?.t ?? null;
+	const items = [...active.values()].map((i) => ({ i, started: startedAt(i) })).sort((a, b) => {
+		if ((a.started === null) !== (b.started === null)) return a.started === null ? 1 : -1;
+		return a.started === null ? a.i.t0 - b.i.t0 : a.started - b.started;
+	});
+	const untraced = pendingSource ? Math.max(0, pendingSource() - items.filter(({ i }) => i.kind === 'scene' || i.kind === 'decal').length) : 0;
+	queueEl.h.textContent = `Queue — ${items.length} traced, ${items.filter((e) => e.started !== null).length} running`
+		+ (untraced ? `, ${untraced} posted before the HUD was on` : '');
+	// Always QUEUE_ROWS lines and the line that says how many more there are,
+	// blank when there are none, so the section never changes height.
+	const lines = items.slice(0, QUEUE_ROWS).map(({ i, started }) =>
+		`${pad(i.stage, 8)} ${pad(i.kind, 7)} ${pad(i.label, 24)} ${ms(t - (started ?? i.t0)).padStart(6)} ${started === null ? 'waiting' : 'running'}`);
+	if (!lines.length) lines.push('(idle)');
+	while (lines.length < QUEUE_ROWS) lines.push('');
+	// A space, not nothing: an empty last line of a <pre> takes no height.
+	lines.push(items.length > QUEUE_ROWS ? `… ${items.length - QUEUE_ROWS} more` : ' ');
 	queueEl.pre.textContent = lines.join('\n');
 }
 
@@ -419,11 +451,34 @@ function renderCaches() {
 
 // Frames that took longer than the 60 fps budget, newest first, each with what
 // the main thread spent the interval on and what was queued (frame_slo.js). The
-// full records go to the console and the frame log.
+// full records go to the console and the frame log; a click copies the ones shown.
 function renderMisses() {
-	const lines = missSource ? missSource(MISS_ROWS) : null;
-	if (!lines) { missEl.pre.textContent = '(frame log off)'; return; }
-	missEl.h.textContent = 'Missed frames — over 60 fps; ms over, what ran, what was queued (full records: console / frame log)';
+	shownMisses = missSource ? missSource(MISS_ROWS) : [];
+	if (!missSource) { missEl.pre.textContent = '(frame log off)'; return; }
+	missEl.h.textContent = now() < copiedUntil
+		? `Missed frames — copied ${shownMisses.length} to the clipboard`
+		: 'Missed frames — over 60 fps; ms over, what ran, what was queued (click to copy)';
 	const w = Math.max(40, Math.floor((root.clientWidth - 20) / 6.7));
-	missEl.pre.textContent = lines.length ? lines.map((l) => (l.length > w ? l.slice(0, w - 1) + '…' : l)).join('\n') : '(none yet)';
+	missEl.pre.textContent = shownMisses.length
+		? shownMisses.map(({ line }) => (line.length > w ? line.slice(0, w - 1) + '…' : line)).join('\n') : '(none yet)';
+}
+
+// The missed frames on show, as text: their one-line summaries, then each full
+// record as a line of JSON -- what the frame log holds for them.
+function copyMisses() {
+	if (!shownMisses.length) return;
+	const text = shownMisses.map((m) => m.line).join('\n') + '\n\n'
+		+ shownMisses.map((m) => JSON.stringify(m.record)).join('\n') + '\n';
+	const done = () => { copiedUntil = now() + 1500; renderMisses(); };
+	const fallback = () => {
+		// No async clipboard (an insecure origin): the old selection-based copy.
+		const ta = document.createElement('textarea');
+		ta.value = text;
+		Object.assign(ta.style, { position: 'fixed', opacity: '0' });
+		document.body.appendChild(ta);
+		ta.select();
+		try { if (document.execCommand('copy')) done(); } finally { ta.remove(); }
+	};
+	if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).then(done, fallback);
+	else fallback();
 }

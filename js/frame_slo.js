@@ -61,7 +61,7 @@ let lastDrawAt = -Infinity;
 let interval = newInterval();
 const states = new Map();      // name -> () => value
 const records = [];            // every record (session, miss, loaf), oldest first
-const missLines = [];          // short lines for the HUD, newest first
+const missed = [];             // { line, record } for the HUD, newest first
 let outbox = [];
 let flushTimer = 0;
 let sinkOk = true;
@@ -201,8 +201,8 @@ function onFrame(stamp) {
 		};
 		emit(rec);
 		toConsole(rec);
-		missLines.unshift(oneLine(rec));
-		if (missLines.length > 40) missLines.length = 40;
+		missed.unshift({ line: oneLine(rec), record: rec });
+		if (missed.length > 40) missed.length = 40;
 	}
 	lastT = t;
 	interval = newInterval();
@@ -267,7 +267,7 @@ export const frameSlo = {
 				state: snapshotState(),
 			});
 			watchLongFrames();
-			renderHud.setMissSource((n) => missLines.slice(0, n));
+			renderHud.setMissSource((n) => missed.slice(0, n));
 			rafId = requestAnimationFrame(onFrame);
 		} else {
 			cancelAnimationFrame(rafId);
@@ -360,7 +360,7 @@ export const frameSlo = {
 
 	clear() {
 		records.length = 0;
-		missLines.length = 0;
+		missed.length = 0;
 		serial = 0;
 	},
 };
