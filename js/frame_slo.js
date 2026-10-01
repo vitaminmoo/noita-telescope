@@ -32,8 +32,9 @@
 //
 // The other objective is the load, to the complete view -- every scene of
 // every world on screen: two seconds for opening the page, one for a new seed
-// on a page that is already up. A host reports each load it finishes with
-// frameSlo.load(); it is logged with its steps whether or not the frame log
+// on a page that is already up, each divided into phases with a budget of
+// their own (LOAD_PHASES_MS). A host reports each load it finishes with
+// frameSlo.load(); it is logged with its phases whether or not the frame log
 // is on.
 //
 // Three ways out, all carrying the same records:
@@ -50,9 +51,21 @@
 import { renderHud, renderTrace } from './render_hud.js';
 
 const BUDGET_MS = 1000 / 60;
-/** A load, to the complete view, should take no longer: opening the page, and
- *  a new seed on a page that is already up. */
-const LOAD_BUDGETS_MS = { 'page load': 2000, 'new seed': 1000 };
+// What a load is allowed, phase by phase; a load's budget is the sum. Each
+// phase ends at a milestone and is measured from the one before, so they add
+// up to the whole load however the work inside overlaps:
+//   modules   navigation -> the page's script has loaded and run
+//   assets    -> everything that does not depend on the seed is fetched and decoded
+//   generate  -> the seed's world data exists (biome map, wang tiles, spawn prescan)
+//   terrain   -> terrain is on screen (GPU resources built and uploaded, first frame)
+//   scenes    -> the view is complete (worlds scanned; every scene and decal of it drawn)
+// 'page load' is opening the page; 'new seed' a seed on a page that is already up.
+const LOAD_PHASES_MS = {
+	'page load': { modules: 250, assets: 250, generate: 400, terrain: 400, scenes: 700 },
+	'new seed': { generate: 350, terrain: 350, scenes: 300 },
+};
+const sum = (o) => Object.values(o).reduce((a, b) => a + b, 0);
+const LOAD_BUDGETS_MS = Object.fromEntries(Object.entries(LOAD_PHASES_MS).map(([k, v]) => [k, sum(v)]));
 const LOAD_BUDGET_DEFAULT_MS = 1000;
 /** An interval over this is a missed frame: one refresh plus timer slack. */
 const MISS_MS = 20;
@@ -373,16 +386,18 @@ export const frameSlo = {
 	},
 
 	loadBudgetsMs: LOAD_BUDGETS_MS,
+	loadPhasesMs: LOAD_PHASES_MS,
 
 	/**
 	 * A load finished: the view the host opened on is complete. `name` is
 	 * 'page load' (timed from navigation) or 'new seed' (from the request, on a
-	 * page already up) -- each has its budget -- `ms` the time it took, and
-	 * `steps` whatever breakdown the host has, as { name: ms }. Returns the
-	 * record.
+	 * page already up), `ms` the time it took, and `phases` how long each phase
+	 * of it took, in order, as { name: ms } -- the names of LOAD_PHASES_MS, each
+	 * of which has a budget of its own. Returns the record.
 	 */
-	load(name, ms, steps = null) {
+	load(name, ms, phases = null) {
 		const budgetMs = LOAD_BUDGETS_MS[name] ?? LOAD_BUDGET_DEFAULT_MS;
+		const budgets = LOAD_PHASES_MS[name] ?? {};
 		const rec = {
 			type: 'load',
 			name,
@@ -391,11 +406,16 @@ export const frameSlo = {
 			budgetMs,
 			overMs: Math.max(0, Math.round(ms - budgetMs)),
 			ok: ms <= budgetMs,
-			steps,
+			phases: Object.entries(phases ?? {}).map(([phase, v]) => {
+				const b = budgets[phase] ?? null;
+				return { name: phase, ms: Math.round(v), budgetMs: b, overMs: b == null ? null : Math.max(0, Math.round(v - b)) };
+			}),
 			state: snapshotState(),
 		};
 		emit(rec);
-		const detail = steps ? '  ' + Object.entries(steps).map(([k, v]) => `${k} ${Math.round(v)}`).join(', ') : '';
+		// "terrain 462/400!": what the phase took, its budget, and a mark when over.
+		const detail = rec.phases.length ? '  ' + rec.phases.map((p) =>
+			`${p.name} ${p.ms}${p.budgetMs == null ? '' : `/${p.budgetMs}${p.overMs ? '!' : ''}`}`).join(', ') : '';
 		const line = `${name}: ${rec.ms} ms, ${rec.ok ? 'within' : `${rec.overMs} ms over`} the ${budgetMs} ms budget${detail}`;
 		console.info(`[load] ${line}`);
 		// The HUD keeps the latest load of each kind above the missed frames

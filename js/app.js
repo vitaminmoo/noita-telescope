@@ -391,6 +391,8 @@ export const app = {
 	lastViewURL: null,
 
 	init() {
+		// Milestones of the page's load, for its phases (frame_slo.js).
+		this.loadMarks = { modules: performance.now() };
 		// Read x/y/z before anything async can run: the first background asset to
 		// land calls draw(), which would otherwise write the default view over the
 		// parameters we are about to read.
@@ -425,7 +427,10 @@ export const app = {
 		this.initUnlocks();
 		this.initRegions();
 		// Wow do I hate async/await
-		this.preload().then(async () => await this.loadFromURLParams());
+		this.preload().then(async () => {
+			this.loadMarks.assets = performance.now();
+			await this.loadFromURLParams();
+		});
 
 		// Menu Toggles
 		document.querySelector('.adv-toggle').onclick = () => this.toggleAdvancedSearch();
@@ -2015,6 +2020,8 @@ export const app = {
 
 	// Could probably default rescan to true if tiles is true
 	async generate(tiles, rescan) {
+		const requestedAt = performance.now();
+		this.terrainFrameAt = 0;   // set by the first terrain frame of this world (drawTerrainGL)
 		// Temporarily disable the button to prevent multiple clicks during generation, will be re-enabled at the end
 		document.getElementById('gen-btn').disabled = true;
 		document.getElementById('gen-btn').innerText = "Generating...";
@@ -2281,7 +2288,7 @@ export const app = {
 		// changes, PW crossings while panning) lift it at once as before.
 		if (this.initialViewSettled) {
 			this.setLoading(false);
-			if (tiles) this.watchSeedLoad(t0, t1 - t0);
+			if (tiles) this.watchSeedLoad(requestedAt, t1);
 			return;
 		}
 		this.setLoading(true, "Preparing view...");
@@ -2295,7 +2302,7 @@ export const app = {
 
 	// A seed generated on a page that is already up: from the request to the
 	// first frame that shows it complete (frame_slo.js, the 'new seed' budget).
-	watchSeedLoad(t0, generateMs) {
+	watchSeedLoad(t0, generatedAt) {
 		const token = this.settleToken;
 		this.terrainCompleteAt = 0;
 		let idle = 0;
@@ -2305,8 +2312,12 @@ export const app = {
 			// reads as idle for a moment before the next round is asked for.
 			idle = (this.terrainCompleteAt && !this.asyncRenderPending()) ? idle + 1 : 0;
 			if (idle < 2) { setTimeout(tick, 50); return; }
-			frameSlo.load('new seed', this.terrainCompleteAt - t0,
-				{ generate: generateMs, render: this.terrainCompleteAt - t0 - generateMs });
+			const terrainAt = this.terrainFrameAt || generatedAt;
+			frameSlo.load('new seed', this.terrainCompleteAt - t0, {
+				generate: generatedAt - t0,
+				terrain: terrainAt - generatedAt,
+				scenes: this.terrainCompleteAt - terrainAt,
+			});
 		};
 		setTimeout(tick, 50);
 	},
@@ -3030,6 +3041,7 @@ export const app = {
 			offscreen: !this.initialViewSettled,
 			onPass: prof ? (name) => markLayer(prof, name) : null,
 		});
+		if (frame && !this.terrainFrameAt) this.terrainFrameAt = performance.now();
 		// When the view last became complete (watchSeedLoad): 0 while it is not.
 		if (!frame?.complete) this.terrainCompleteAt = 0;
 		else if (!this.terrainCompleteAt) this.terrainCompleteAt = performance.now();
@@ -4656,8 +4668,16 @@ export const app = {
 		// (The idle checks above add ~150 ms of waiting to it.)
 		if (!this.pageLoadReported && !superseded()) {
 			this.pageLoadReported = true;
-			// t0 is when settling began: everything before it is modules, assets and generation.
-			frameSlo.load('page load', performance.now(), { untilGenerated: t0, settleView: performance.now() - t0 });
+			// t0 is when settling began, which is when the world had been generated.
+			const m = this.loadMarks, done = performance.now();
+			const assetsAt = m.assets ?? m.modules, terrainAt = this.terrainFrameAt || t0;
+			frameSlo.load('page load', done, {
+				modules: m.modules,
+				assets: assetsAt - m.modules,
+				generate: t0 - assetsAt,
+				terrain: terrainAt - t0,
+				scenes: done - terrainAt,
+			});
 		}
 		// Rehearse zooming once in steps of sqrt(2) each way (doubling skipped the
 		// narrower zoom bands of some layers): the first frame past

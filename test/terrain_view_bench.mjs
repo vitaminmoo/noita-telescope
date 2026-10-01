@@ -71,6 +71,17 @@ function table(title, head, rows) {
 	}
 }
 
+/** The load's phases against their budgets (the host's frameSlo.load record). */
+function phaseTable(title, runs) {
+	const phases = runs[0].timings.load?.phases;
+	if (!phases?.length) return;
+	table(`${title}: ms per phase against its budget (median)`, ['phase', 'ms', 'budget', ''],
+		phases.map((p, i) => {
+			const ms = med(runs.map(r => r.timings.load.phases[i].ms));
+			return [p.name, f0(ms), p.budgetMs ?? '-', p.budgetMs == null ? '' : verdict(ms, p.budgetMs)];
+		}));
+}
+
 /** Waits for the page's own load (auto=1) and returns { timings, timeline }. */
 async function waitLoaded(d, what = 'terrainHost.loaded') {
 	for (let i = 0; i < 240; i++) {
@@ -148,6 +159,7 @@ try {
 		table('cold load: ms per step (median; steps under 0.5 ms left out)', ['step', 'ms'], steps);
 		const ms = med(runs.map(r => r.milestones.complete));
 		console.log(`  page load objective (${PAGE_BUDGET_MS} ms to the complete view), cold: ${f0(ms)} ms, ${verdict(ms, PAGE_BUDGET_MS)}`);
+		phaseTable('cold load', runs);
 	}
 
 	// --- return ----------------------------------------------------------------
@@ -188,6 +200,7 @@ try {
 			const ms = med(runs.map(r => r.milestones.complete));
 			console.log(`  page load objective (${PAGE_BUDGET_MS} ms to the complete view), ${name}: ${f0(ms)} ms, ${verdict(ms, PAGE_BUDGET_MS)}`);
 		}
+		phaseTable(`return visit, ${Object.keys(res)[0]}`, Object.values(res)[0]);
 	}
 
 	// Everything else shares one warm page.
@@ -228,6 +241,7 @@ try {
 				table('new seed on a warm page: ms per step (median)', ['step', 'ms'], steps);
 				const ms = med(runs.map(r => r.milestones.complete));
 				console.log(`  new seed objective (${SEED_BUDGET_MS} ms to the complete view): ${f0(ms)} ms, ${verdict(ms, SEED_BUDGET_MS)}`);
+				phaseTable('new seed', runs);
 				await load({ seed: SEED, fit: FIT });
 			}
 

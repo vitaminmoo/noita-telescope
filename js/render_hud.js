@@ -476,10 +476,24 @@ function renderMisses() {
 	const w = Math.max(40, Math.floor((root.clientWidth - 20) / 6.7));
 	const fit = (line) => (line.length > w ? line.slice(0, w - 1) + '…' : line);
 	// Always one line per kind of load, so the list below does not move.
+	// The total, then each phase as "took/budget", each red when over its own.
 	missLoadEl.replaceChildren(...loads.map((l) => {
 		const row = document.createElement('div');
-		row.textContent = fit(l.record ? l.line : `${l.name}: none yet`);
-		row.style.color = !l.record ? INK_MUTED : l.record.ok ? INK : INK_OVER;
+		Object.assign(row.style, { overflow: 'hidden', textOverflow: 'ellipsis' });
+		if (!l.record) {
+			row.textContent = `${l.name}: none yet`;
+			row.style.color = INK_MUTED;
+			return row;
+		}
+		const r = l.record;
+		const part = (text, over) => {
+			const span = document.createElement('span');
+			span.textContent = text;
+			span.style.color = over ? INK_OVER : INK;
+			return span;
+		};
+		row.append(part(`${r.name}: ${r.ms}/${r.budgetMs} ms`, !r.ok));
+		for (const p of r.phases) row.append(part(`  ${p.name} ${p.ms}${p.budgetMs == null ? '' : `/${p.budgetMs}`}`, !!p.overMs));
 		return row;
 	}));
 	missEl.pre.textContent = frames.length ? frames.map(({ line }) => fit(line)).join('\n') : '(none yet)';

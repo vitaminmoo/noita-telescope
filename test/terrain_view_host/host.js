@@ -253,13 +253,22 @@ host.load = async (o = {}) => {
 		const s0 = performance.now();
 		T.settle = { frames: await host.settle(), total: performance.now() - s0 };
 		mark('settled');
-		// The page's first load is timed from navigation; a later seed from its request.
+		// The page's first load is timed from navigation; a later seed from its
+		// request. Phases run from one milestone to the next (frame_slo.js).
 		const first = host.loads++ === 0;
-		const began = first ? 0 : host.timeline.findLast(m => m.name === 'load:start').t;
-		T.load = frameSlo.load(first ? 'page load' : 'new seed', performance.now() - began, {
-			...(first ? { modules: host.timeline.find(m => m.name === 'hostReady').t } : {}),
-			assets: T.assets.total, generate: T.generate.total, gpuResources: T.prepare.total,
-			scans: T.scan.total, scenes: T.settle.total,
+		const at = (name) => host.timeline.findLast(m => m.name === name).t;
+		const began = first ? 0 : at('load:start');
+		const done = performance.now();
+		T.load = frameSlo.load(first ? 'page load' : 'new seed', done - began, first ? {
+			modules: at('hostReady'),
+			assets: at('assets') - at('hostReady'),
+			generate: at('generated') - at('assets'),
+			terrain: at('firstFrame') - at('generated'),
+			scenes: done - at('firstFrame'),
+		} : {
+			generate: at('generated') - began,
+			terrain: at('firstFrame') - at('generated'),
+			scenes: done - at('firstFrame'),
 		});
 	}
 	showStatus();
