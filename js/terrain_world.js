@@ -73,17 +73,23 @@ function timedSync(timings, name, fn) {
  *        the scene table (default on; off for a host that draws no scenes)
  * @param {string[]} [opts.baseMaps]      which base biome maps to decode now
  *        ('normal', 'ngp', 'nightmare'); the others load on first use
+ * @param {boolean} [opts.wangTemplates]  decode the wang templates now (default
+ *        on). A host that generates in the terrain workers (generateTerrainWorld's
+ *        `workers`) passes false and `baseMaps: []`: the workers load both
+ *        themselves, and this thread never decodes them
  * @returns {Promise<object>} timings: translations, baseMaps, wangTemplates,
  *          pixelSceneMeta, sceneWorkerSync
  */
-export async function loadTerrainAssets({ translations = true, sceneWorkers = true, baseMaps: kinds = ['normal'] } = {}) {
+export async function loadTerrainAssets({ translations = true, sceneWorkers = true, baseMaps: kinds = ['normal'], wangTemplates = true } = {}) {
 	const timings = {};
 	const jobs = [];
 	if (translations) jobs.push(timed(timings, 'translations', () => loadTranslations()));
-	jobs.push(timed(timings, 'baseMaps', () => Promise.all(kinds.map(loadBaseMap))));
-	jobs.push(timed(timings, 'wangTemplates', () => Promise.all(Object.values(GENERATOR_CONFIG)
-		.filter(conf => conf.enabled && !conf.wangData && conf.wangFile)
-		.map(async (conf) => { conf.wangData = await loadPNG(conf.wangFile); }))));
+	if (kinds.length) jobs.push(timed(timings, 'baseMaps', () => Promise.all(kinds.map(loadBaseMap))));
+	if (wangTemplates) {
+		jobs.push(timed(timings, 'wangTemplates', () => Promise.all(Object.values(GENERATOR_CONFIG)
+			.filter(conf => conf.enabled && !conf.wangData && conf.wangFile)
+			.map(async (conf) => { conf.wangData = await loadPNG(conf.wangFile, { bitmap: false }); }))));
+	}
 	jobs.push(timed(timings, 'pixelSceneMeta', () => loadPixelSceneData()));
 	await Promise.all(jobs);
 	if (sceneWorkers) await timed(timings, 'sceneWorkerSync', () => syncOverlayPoolMetadata());
@@ -96,11 +102,24 @@ export async function loadTerrainAssets({ translations = true, sceneWorkers = tr
  *
  * @param {object} opts  seed, ngPlusCount (0), gameMode ('normal'), extraRerolls (0)
  *   prescan  false skips the spawn prescan (a host that draws terrain only)
+ *   workers  a TerrainWorkers (js/terrain_workers.js): generate there instead
+ *            of on this thread. Omitted, everything below runs here, in one task.
+ *   build    with `workers`: TerrainView.buildOptions(). The workers then also
+ *            build the renderer's CPU resources (world.terrainResources), so
+ *            the first frame only has to upload them.
+ *   onSpawns with `workers`: (world) => void, called as soon as the biome map
+ *            and the prescan are in -- before the tile layers and the renderer
+ *            resources -- which is all a per-world scan needs
+ *            (scanTerrainWorlds), so the scans can run beside the rest.
  * @returns {Promise<object>} the world for TerrainView.setWorld, with empty
  *   `scenes` / `pois` / `bgSprites` (see scanTerrainWorld) and `timings`:
- *   baseMap, wangTemplates, biomeMap, wangTiles, spawnPrescan
+ *   baseMap, wangTemplates, biomeMap, wangTiles, spawnPrescan (and, from the
+ *   workers, the renderer build's steps and when each product landed)
  */
-export async function generateTerrainWorld({ seed, ngPlusCount = 0, gameMode = 'normal', extraRerolls = 0, prescan = true }) {
+export async function generateTerrainWorld({
+	seed, ngPlusCount = 0, gameMode = 'normal', extraRerolls = 0, prescan = true, workers = null, build = null, onSpawns = null,
+}) {
+	if (workers) return generateInWorkers({ seed, ngPlusCount, gameMode, extraRerolls, prescan, build, onSpawns }, workers);
 	const timings = {};
 	const isNGP = ngPlusCount > 0;
 	const wide = isNGP || gameMode === 'nightmare';
@@ -110,7 +129,7 @@ export async function generateTerrainWorld({ seed, ngPlusCount = 0, gameMode = '
 	const base = await timed(timings, 'baseMap', () => loadBaseMap(baseMapKind(isNGP, gameMode)));
 	await timed(timings, 'wangTemplates', async () => {
 		for (const conf of Object.values(GENERATOR_CONFIG)) {
-			if (conf.enabled && !conf.wangData && conf.wangFile) conf.wangData = await loadPNG(conf.wangFile);
+			if (conf.enabled && !conf.wangData && conf.wangFile) conf.wangData = await loadPNG(conf.wangFile, { bitmap: false });
 		}
 	});
 	const biomeData = timedSync(timings, 'biomeMap', () =>
@@ -130,6 +149,27 @@ export async function generateTerrainWorld({ seed, ngPlusCount = 0, gameMode = '
 		scenes: {}, pois: {}, bgSprites: {},
 		timings,
 	};
+}
+
+async function generateInWorkers(opts, workers) {
+	const { seed, ngPlusCount, gameMode } = opts;
+	const job = workers.generate(opts);
+	const { biomeData, mapWidth, mapHeight } = await job.biome;
+	const world = {
+		seed, ngPlusCount, isNGP: ngPlusCount > 0, gameMode, mapWidth, mapHeight,
+		tileLayers: null, biomeData, tileSpawns: null, terrainResources: null,
+		generatorConfig: GENERATOR_CONFIG,
+		scenes: {}, pois: {}, bgSprites: {},
+		timings: job.timings,
+	};
+	const spawns = job.spawns.then((tileSpawns) => {
+		world.tileSpawns = tileSpawns;
+		if (tileSpawns) opts.onSpawns?.(world);
+	});
+	world.tileLayers = await job.layers;
+	world.terrainResources = await job.terrain;
+	await spawns;
+	return world;
 }
 
 /**

@@ -14,8 +14,11 @@
 //      &pws=0,0;-1,0;1,0     worlds to scan (default: every world the framed view sees,
 //                            heaven and hell rows included); pws=none scans nothing
 //      &scan=workers|main    where the parallel-world scans run (default workers)
-//      &worldWorkers=N &sceneWorkers=N   pool sizes (sceneWorkers: the overlay pool, which
-//                            builds scene bitmaps and decal tiles) (default: what the modules pick)
+//      &gen=workers|main     where the seed is generated and the renderer's CPU resources
+//                            are built: the terrain workers, or this thread (default workers)
+//      &worldWorkers=N &sceneWorkers=N &terrainWorkers=N   pool sizes (sceneWorkers: the
+//                            overlay pool, which builds scene bitmaps and decal tiles;
+//                            terrainWorkers: 1 or 2) (default: what the modules pick)
 //      &scenes=0  &terrain=0  &engine=0  &textures=0  &edgenoise=0  &decals=0   switch an operation off
 //      &auto=0               do not load on arrival; a driver calls terrainHost.load()
 //      &framelog=1           log every frame over the 60 fps budget (js/frame_slo.js)
@@ -24,6 +27,7 @@ import { onEdgeDecalTile } from '../../js/edge_decal_layer.js';
 import { onSceneBitmaps, overlayPoolStats, startOverlayWorkerPool } from '../../js/overlay_worker_pool.js';
 import { applyTerrainSettings, drawSpace, TerrainView } from '../../js/terrain_view.js';
 import { generateTerrainWorld, loadTerrainAssets, scanTerrainWorld, scanTerrainWorlds } from '../../js/terrain_world.js';
+import { TerrainWorkers } from '../../js/terrain_workers.js';
 import { getWorldSize } from '../../js/utils.js';
 import { WorldScanPool } from '../../js/world_scan_pool.js';
 
@@ -64,8 +68,11 @@ window.terrainHost = host;
 const num = (name) => (params.has(name) ? Number(params.get(name)) : undefined);
 const DEFAULT_SCAN = params.get('scan') || 'workers';
 host.scanMode = DEFAULT_SCAN;
+const DEFAULT_GEN = params.get('gen') || 'workers';
 if (flag('scenes')) startOverlayWorkerPool({ count: num('sceneWorkers') });
 if (host.scanMode === 'workers') host.pool = new WorldScanPool({ count: num('worldWorkers') });
+// The terrain workers decode the base map and the wang templates as they start.
+if (DEFAULT_GEN === 'workers') host.terrainWorkers = new TerrainWorkers({ count: num('terrainWorkers') });
 
 const mark = (name) => host.timeline.push({ name, t: performance.now() });
 
@@ -142,8 +149,7 @@ host.setView = ({ x, y, zoom }) => {
 };
 
 /** Frames `count` whole parallel worlds side by side, centred on the main one. */
-host.fitWorlds = (count = 3) => {
-	const w = host.world;
+host.fitWorlds = (count = 3, w = host.world) => {
 	const worldWidth = getWorldSize(w?.isNGP ?? false, w?.gameMode ?? 'normal') * 512;
 	const zoom = Math.min(host.size.width / (count * worldWidth), host.size.height / (48 * 512));
 	host.cam = { x: worldWidth / 2, y: 24 * 512, z: zoom };
@@ -161,6 +167,9 @@ host.fitWorlds = (count = 3) => {
  *   pws        world keys to scan, in order (default: every world the framed
  *              view sees); [] scans nothing (terrain only)
  *   scan       'workers' (the world scan pool) or 'main'
+ *   gen        'workers' (the terrain workers: generation and the renderer's
+ *              CPU build off this thread, the scans started as soon as the
+ *              prescan is in) or 'main' (this thread, one step after another)
  *   translations  load PoI names (not needed to draw)
  *   settle     keep drawing until the view is complete before resolving
  *   reveal     'terrain': draw the terrain as soon as it is ready, scenes as
@@ -170,7 +179,7 @@ host.fitWorlds = (count = 3) => {
  */
 host.load = async (o = {}) => {
 	const {
-		seed, ng = 0, gameMode = 'normal', scan = DEFAULT_SCAN,
+		seed, ng = 0, gameMode = 'normal', scan = DEFAULT_SCAN, gen = DEFAULT_GEN,
 		translations = true, settle = true, fit = 3,
 	} = o;
 	host.scanMode = scan;
@@ -180,47 +189,76 @@ host.load = async (o = {}) => {
 	// A load that scans no world draws no scenes: nothing would ever place them.
 	const wantScenes = flag('scenes') && !(o.pws && o.pws.length === 0);
 	host.ops.scenes = wantScenes;
-
-	// Seed-independent, so it overlaps the fetches: context, program link, atlas.
-	applyTerrainSettings({ terrainRenderer: 'gl', gameMode });
-	const early = host.view.prepare();
-
-	let t0 = performance.now();
-	T.assets = await loadTerrainAssets({ translations, sceneWorkers: wantScenes });
-	T.assets.total = performance.now() - t0;
-	mark('assets');
-
-	t0 = performance.now();
-	const world = await generateTerrainWorld({ seed, ngPlusCount: ng, gameMode, prescan: wantScenes });
-	T.generate = { ...world.timings, total: performance.now() - t0 };
-	mark('generated');
-
-	T.prepareEarly = await early;
+	const inWorkers = gen === 'workers';
+	if (inWorkers) host.terrainWorkers ??= new TerrainWorkers({ count: num('terrainWorkers') });
 	// A later seed is shown when its scenes can be: until then the frame on
 	// screen stays the old seed's. Drawing its terrain first would take away
 	// every scene the two seeds share (the static ones) for the few frames the
 	// scans are out, and bring them back.
 	const reveal = o.reveal ?? (host.world ? 'scanned' : 'terrain');
 	host.holdFrame = reveal === 'scanned';
+
+	// Seed-independent, so it overlaps the fetches: context, program link, atlas.
+	applyTerrainSettings({ terrainRenderer: 'gl', gameMode });
+	const early = host.view.prepare();
+
+	let t0 = performance.now();
+	// The terrain workers load the base map and the wang templates themselves,
+	// and need nothing loaded here: with them, the seed generates while this
+	// thread's assets (translations, the scene table) are still coming in.
+	const assetsStart = t0;
+	const assets = loadTerrainAssets({
+		translations, sceneWorkers: wantScenes, ...(inWorkers ? { baseMaps: [], wangTemplates: false } : {}),
+	}).then((timings) => {
+		timings.total = performance.now() - assetsStart;
+		mark('assets');
+		return timings;
+	});
+	if (!inWorkers) await assets;
+
+	// The scans need the biome map and the prescan, not the terrain: with the
+	// terrain workers they start while the renderer's resources are still
+	// being built. The camera and the worlds it sees follow from the game mode.
+	let pws = null, scans = Promise.resolve(), scanT0 = 0;
+	// Set when the workers' prescan landed; the scans then wait only for the
+	// scene table and the translations they hand the scan workers.
+	let scansAsked = null;
+	const startScans = (world) => {
+		if (fit) host.fitWorlds(fit, world);
+		// What the view will ask for: the main world first, then the rest.
+		pws = o.pws ?? host.view.worldsInView({
+			width: host.size.width, height: host.size.height, camX: host.cam.x, camY: host.cam.y, camZ: host.cam.z,
+		}, 1, world).sort((a, b) => (a === '0,0' ? -1 : b === '0,0' ? 1 : 0));
+		T.worlds = pws;
+		scanT0 = performance.now();
+		if (pws.length && scan === 'workers' && world.tileSpawns) {
+			host.pool ??= new WorldScanPool({ count: num('worldWorkers') });
+			for (const k of pws) scanning.add(`${world.seed}|${k}`);
+			scans = scanTerrainWorlds(world, pws, { pool: host.pool, onWorld: () => { mark('scanned'); host.requestDraw(); } })
+				.finally(() => { for (const k of pws) scanning.delete(`${world.seed}|${k}`); });
+		}
+	};
+
+	t0 = performance.now();
+	const world = await generateTerrainWorld({
+		seed, ngPlusCount: ng, gameMode, prescan: wantScenes,
+		...(inWorkers ? {
+			workers: host.terrainWorkers,
+			build: host.view.buildOptions({ engineTerrain: host.ops.engineTerrain }),
+			onSpawns: (w) => { scansAsked = assets.then(() => startScans(w)); },
+		} : {}),
+	});
+	T.assets = await assets;
+	T.generate = { ...world.timings, total: performance.now() - t0 };
+	mark('generated');
+
+	T.prepareEarly = await early;
 	host.world = world;
 	host.view.setWorld(world);
-	if (fit) host.fitWorlds(fit);
-	// What the view will ask for: the main world first, then the rest.
-	const pws = o.pws ?? host.view.worldsInView({
-		width: host.size.width, height: host.size.height, camX: host.cam.x, camY: host.cam.y, camZ: host.cam.z,
-	}).sort((a, b) => (a === '0,0' ? -1 : b === '0,0' ? 1 : 0));
-	T.worlds = pws;
+	if (scansAsked) await scansAsked;
+	else startScans(world);
 
-	// Scans start before the GPU build so the workers run under it.
-	t0 = performance.now();
-	let scans = Promise.resolve();
-	if (pws.length && scan === 'workers') {
-		host.pool ??= new WorldScanPool({ count: num('worldWorkers') });
-		for (const k of pws) scanning.add(`${world.seed}|${k}`);
-		scans = scanTerrainWorlds(world, pws, { pool: host.pool, onWorld: () => { mark('scanned'); host.requestDraw(); } })
-			.finally(() => { for (const k of pws) scanning.delete(`${world.seed}|${k}`); });
-	}
-
+	// With the terrain workers this is the uploads alone.
 	const p0 = performance.now();
 	T.prepare = { ...await host.view.prepare({ sync: true, engineTerrain: host.ops.engineTerrain }) };
 	T.prepare.total = performance.now() - p0;
@@ -245,7 +283,7 @@ host.load = async (o = {}) => {
 	await scans;
 	host.loading = false;
 	host.holdFrame = false;
-	T.scan = { total: performance.now() - t0 };
+	T.scan = { total: performance.now() - scanT0 };
 	for (const [k, v] of Object.entries(world.timings)) if (k.startsWith('scan')) T.scan[k] = v;
 	mark('scansDone');
 

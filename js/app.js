@@ -25,6 +25,7 @@ import { addStaticPixelScenes } from './static_spawns.js';
 import { NollaPrng } from './nolla_prng.js';
 import { appSettings, updateSettings, updateSettingsFromUI, updateSpellFlags, updateSpecialFlags, RENDER_LAYERS, readRenderLayersFromUI } from './settings.js';
 import { syncWorldWorkerData, getOrGenerateWorld, syncSettingsToWorldWorker } from './world_manager.js';
+import { TerrainWorkers } from './terrain_workers.js';
 import { syncOverlayWorkerData, getOrGenerateOverlay, syncSettingsToOverlayWorker, recolorPixelScenes, invalidatePendingOverlays, overlayQueueStats } from './overlay_manager.js';
 import { edgeDecalAt, invalidateEdgeDecals, pendingEdgeDecalTiles } from './edge_decal_layer.js';
 import { runRenderBenchmark } from './render_benchmark.js';
@@ -393,6 +394,15 @@ export const app = {
 	init() {
 		// Milestones of the page's load, for its phases (frame_slo.js).
 		this.loadMarks = { modules: performance.now() };
+		// The terrain workers (js/terrain_workers.js) generate every seed and build
+		// the GL terrain's CPU resources off this thread. Started first, so they
+		// decode the base map and the wang templates while the page loads.
+		try {
+			this.terrainWorkers = new TerrainWorkers();
+		} catch (err) {
+			console.warn('Terrain workers unavailable, generating on the page:', err);
+			this.terrainWorkers = null;
+		}
 		// Read x/y/z before anything async can run: the first background asset to
 		// land calls draw(), which would otherwise write the default view over the
 		// parameters we are about to read.
@@ -1991,12 +2001,11 @@ export const app = {
 		this.setLoading(true, "Loading Assets...");
 		try {
 			this.loadSettings();
+			this.startEarlyTerrainJob();
 			await loadTranslations();
-			try {
-				this.baseBiomeMapNG0 = await loadPNG('../data/biome_maps/biome_map.png');
-				this.baseBiomeMapNGP = await loadPNG('../data/biome_maps/biome_map_newgame_plus.png');
-				this.baseBiomeMapNightmare = await loadPNG('../data/biome_maps/biome_map_nightmare.png');
-			} catch(e) { console.error("Base assets failed to load."); console.error(e); }
+			// The terrain workers decode the base maps themselves; this thread
+			// only needs them when it has to generate (loadBaseMaps).
+			if (!this.terrainWorkers) await this.loadBaseMaps();
 			console.log("Loading pixel scene data...");
 			await loadPixelSceneData();
 			// The hover readout found a scene whose pixels were not decoded yet.
@@ -2016,6 +2025,45 @@ export const app = {
 		} finally {
 			this.setLoading(false);
 		}
+	},
+
+	// What a full generation asks of the terrain workers for a seed.
+	terrainJobSpec(seed, ngPlusCount, gameMode) {
+		const glUsable = appSettings.terrainRenderer === 'gl' && !this.glTerrain?.failed && !this.glTerrain?.contextLost;
+		return {
+			seed, ngPlusCount, gameMode,
+			extraRerolls: Math.max(0, parseInt(document.getElementById('debug-extra-rerolls').value) || 0),
+			build: glUsable ? this.ensureTerrainView().buildOptions() : null,
+		};
+	},
+
+	// A page opened on a seed (?seed=N) will generate it as soon as its assets
+	// are in (loadFromURLParams). The terrain workers need none of those assets,
+	// so they are asked now and generate() picks the job up when it gets there.
+	startEarlyTerrainJob() {
+		if (!this.terrainWorkers) return;
+		const params = new URLSearchParams(window.location.search);
+		const seed = Number.parseInt(params.get('seed'), 10);   // absent, or 'daily': not known yet
+		if (Number.isNaN(seed)) return;
+		const ng = Number.parseInt(params.get('ng'), 10);
+		const mode = params.get('gamemode') ?? 'normal';
+		const spec = this.terrainJobSpec(
+			Math.max(0, Math.min(2147483647, seed)),
+			Number.isNaN(ng) ? 0 : Math.max(0, Math.min(28, ng)),
+			(mode === 'normal' || mode === 'nightmare') ? mode : document.getElementById('game-mode').value);
+		this.earlyTerrainJob = { key: JSON.stringify(spec), job: this.terrainWorkers.generate(spec) };
+	},
+
+	// The three base biome maps, for generating on this thread.
+	async loadBaseMaps() {
+		if (this.baseBiomeMapNG0 && this.baseBiomeMapNGP && this.baseBiomeMapNightmare) return;
+		try {
+			[this.baseBiomeMapNG0, this.baseBiomeMapNGP, this.baseBiomeMapNightmare] = await Promise.all([
+				loadPNG('../data/biome_maps/biome_map.png', { bitmap: false }),
+				loadPNG('../data/biome_maps/biome_map_newgame_plus.png', { bitmap: false }),
+				loadPNG('../data/biome_maps/biome_map_nightmare.png', { bitmap: false }),
+			]);
+		} catch(e) { console.error("Base assets failed to load."); console.error(e); }
 	},
 
 	// Could probably default rescan to true if tiles is true
@@ -2040,6 +2088,19 @@ export const app = {
 		this.pwVertical = parseInt(document.getElementById('pw-vertical').value) || 0;
 		this.isNGP = ngVal > 0;
 		this.gameMode = document.getElementById('game-mode').value;
+
+		// A full generation runs in the terrain workers: the biome map, the wang
+		// tiles, the spawn prescan and, for the GL renderer, its lattices and
+		// atlases. Asked for before anything else here, so it runs under the rest
+		// of this function instead of in it.
+		let terrainJob = null;
+		if (tiles && this.terrainWorkers && !this.terrainWorkers.failed) {
+			const spec = this.terrainJobSpec(seedVal, ngVal, this.gameMode);
+			// The job asked for at startup, when it is this very one.
+			const early = this.earlyTerrainJob;
+			this.earlyTerrainJob = null;
+			terrainJob = early?.key === JSON.stringify(spec) ? early.job : this.terrainWorkers.generate(spec);
+		}
 
 		if (tiles) {
 			// Reset existing tile and spawn data since we're doing a full generation, and we don't want old data hanging around
@@ -2112,34 +2173,58 @@ export const app = {
 		// 1. FULL GENERATION (Only if seed/NG changed)
 		if (tiles) {
 			//const noMoreShuffle = this.perks['noMoreShuffle'] || false;
-			const base = (this.isNGP ? this.baseBiomeMapNGP.data : (this.gameMode === 'nightmare' ? this.baseBiomeMapNightmare.data : this.baseBiomeMapNG0.data));
-			if (!base) {
-				this.setLoading(false);
-				return;
-			}
-
 			this.w = (this.isNGP || this.gameMode === 'nightmare' ? BIOME_CONFIG.W_NGP : BIOME_CONFIG.W_NG0); // This is redundant
 			this.h = (this.isNGP || this.gameMode === 'nightmare' ? BIOME_CONFIG.H_NGP : BIOME_CONFIG.H_NG0); // This is redundant
 
-			this.biomeData = generateBiomeData(seedVal, ngVal, this.gameMode, base, this.w, this.h);
-			this.renderOffscreen();
-			this.renderRecolorMap();
-
-			for (let k in GENERATOR_CONFIG) {
-				if (GENERATOR_CONFIG[k].enabled && !GENERATOR_CONFIG[k].wangData && GENERATOR_CONFIG[k].wangFile) {
-					GENERATOR_CONFIG[k].wangData = await loadPNG(GENERATOR_CONFIG[k].wangFile);
+			let generated = null;
+			if (terrainJob) {
+				try {
+					const [biome, tileLayers, tileSpawns, terrainResources] = await Promise.all(
+						[terrainJob.biome, terrainJob.layers, terrainJob.spawns, terrainJob.terrain]);
+					generated = { biomeData: biome.biomeData, tileLayers, tileSpawns, terrainResources };
+				} catch (err) {
+					// A newer generate() replaced this one's job: the page is its now.
+					if (err.superseded) return;
+					console.warn('Terrain workers failed, generating on the page:', err);
 				}
 			}
 
-			// generateBiomeTiles now returns layers with empty poisByPW caches
-			let global_extra_rerolls = 0;
-			if (document.getElementById('debug-extra-rerolls').value > 0) global_extra_rerolls = parseInt(document.getElementById('debug-extra-rerolls').value);
-			this.tileLayers = await generateBiomeTiles(
-				this.biomeData.pixels, this.w, this.h, 
-				GENERATOR_CONFIG, seedVal, ngVal,
-				global_extra_rerolls,
-				this.gameMode,
-			);
+			if (generated) {
+				this.biomeData = generated.biomeData;
+				this.renderOffscreen();
+				this.renderRecolorMap();
+				this.tileLayers = generated.tileLayers;
+			} else {
+				await this.loadBaseMaps();
+				const base = (this.isNGP ? this.baseBiomeMapNGP?.data : (this.gameMode === 'nightmare' ? this.baseBiomeMapNightmare?.data : this.baseBiomeMapNG0?.data));
+				if (!base) {
+					this.setLoading(false);
+					return;
+				}
+
+				this.biomeData = generateBiomeData(seedVal, ngVal, this.gameMode, base, this.w, this.h);
+				this.renderOffscreen();
+				this.renderRecolorMap();
+
+				for (let k in GENERATOR_CONFIG) {
+					if (GENERATOR_CONFIG[k].enabled && !GENERATOR_CONFIG[k].wangData && GENERATOR_CONFIG[k].wangFile) {
+						GENERATOR_CONFIG[k].wangData = await loadPNG(GENERATOR_CONFIG[k].wangFile, { bitmap: false });
+					}
+				}
+
+				// generateBiomeTiles now returns layers with empty poisByPW caches
+				let global_extra_rerolls = 0;
+				if (document.getElementById('debug-extra-rerolls').value > 0) global_extra_rerolls = parseInt(document.getElementById('debug-extra-rerolls').value);
+				this.tileLayers = await generateBiomeTiles(
+					this.biomeData.pixels, this.w, this.h, 
+					GENERATOR_CONFIG, seedVal, ngVal,
+					global_extra_rerolls,
+					this.gameMode,
+				);
+			}
+			// The GL terrain's CPU resources, when the workers built them with
+			// the world (drawTerrainGL hands them to the view).
+			this.terrainResources = generated?.terrainResources ?? null;
 
 			// No longer used
 			for (let layer of this.tileLayers) {
@@ -2160,7 +2245,7 @@ export const app = {
 			this.buildUnpaintedMask();
 
 			// Prescan spawn functions for generated tiles, only needs to be done once per seed/NG+ combination, not every time PW or perks change
-			this.tileSpawns = prescanSpawnFunctions(this.tileLayers, this.isNGP, this.gameMode);
+			this.tileSpawns = generated?.tileSpawns ?? prescanSpawnFunctions(this.tileLayers, this.isNGP, this.gameMode);
 			// Reset spawns
 			this.pixelScenesByPW = {};
 			this.poisByPW = {};
@@ -2997,15 +3082,19 @@ export const app = {
 	// the CPU bake then draws everything, unchanged.
 	// With `scenes` (layer 5 enabled), the pixel scenes are drawn into the terrain
 	// canvas before the blit (js/gl/scene_renderer.js); this.scenesOnGL says so.
-	drawTerrainGL(scenes, prof) {
-		// The terrain view (js/terrain_view.js) owns both GL passes; glTerrain and
-		// glScenes stay as names for the code that asks the passes directly.
+	// The terrain view (js/terrain_view.js) owns the GL passes; glTerrain and
+	// glScenes stay as names for the code that asks the passes directly.
+	ensureTerrainView() {
 		if (!this.terrainView) {
 			this.terrainView = new TerrainView();
 			this.glTerrain = this.terrainView.terrain;
 			this.glScenes = this.terrainView.scenes;
 		}
-		const view = this.terrainView;
+		return this.terrainView;
+	},
+
+	drawTerrainGL(scenes, prof) {
+		const view = this.ensureTerrainView();
 		const terrain = this.glTerrain;
 		// Nothing to do if every world in view is one the GL pass does not cover.
 		let anyCovered = false;
@@ -3021,6 +3110,7 @@ export const app = {
 			gameMode: this.gameMode,
 			tileLayers: this.tileLayers,
 			biomeData: this.biomeData,
+			terrainResources: this.terrainResources,
 			generatorConfig: GENERATOR_CONFIG,
 			scenes: this.pixelScenesByPW,
 		});

@@ -1387,6 +1387,9 @@
         </div>
     </div>
 
+    <!-- Starts the terrain workers while app.js's module graph is still
+         loading (js/prespawn.js); app.js then takes them. -->
+    <script type="module">import { prespawnWorkers } from './js/prespawn.js'; prespawnWorkers();</script>
     <script type="module" src="./js/app.js"></script>
 </body>
 </html>

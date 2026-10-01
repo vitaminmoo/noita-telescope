@@ -17,6 +17,12 @@
 <body>
 <canvas id="view"></canvas>
 <pre id="status">loading</pre>
+<!-- The terrain workers start while host.js's module graph is still loading (js/prespawn.js). -->
+<script type="module">
+	import { defaultTerrainWorkerCount, prespawnWorkers } from '../../js/prespawn.js';
+	const p = new URLSearchParams(location.search);
+	prespawnWorkers({ terrain: p.get('gen') === 'main' ? 0 : Number(p.get('terrainWorkers') ?? defaultTerrainWorkerCount()) });
+</script>
 <script type="module" src="./host.js"></script>
 </body>
 </html>

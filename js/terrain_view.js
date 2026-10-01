@@ -42,6 +42,7 @@ import { GLDecalRenderer } from './gl/decal_renderer.js';
 import { initMaterialAtlas } from './gl/material_atlas.js';
 import { GLSceneRenderer } from './gl/scene_renderer.js';
 import { GLTerrainRenderer } from './gl/terrain_renderer.js';
+import { maxTextureSize } from './gl/textures.js';
 import {
 	getPixelSceneCacheStats, initPixelSceneTextures, pendingPixelSceneBitmaps, pixelSceneMipLevel,
 } from './pixel_scene_generation.js';
@@ -133,12 +134,34 @@ export class TerrainView {
 	 *   seed, ngPlusCount, isNGP, gameMode
 	 *   tileLayers       generateBiomeTiles' layers (PW 0; shared by every PW)
 	 *   biomeData        generateBiomeData's result
+	 *   terrainResources the renderer's CPU resources, when they were built with
+	 *                    the world (generateTerrainWorld's `build`); without
+	 *                    them, or when a setting they depend on has changed
+	 *                    since, the first frame builds them on this thread
 	 *   generatorConfig  GENERATOR_CONFIG by default
 	 *   scenes           { 'pwX,pwY': placement list } -- may gain worlds later;
 	 *                    a world without a list draws terrain only
 	 */
 	setWorld(world) {
 		this.world = world;
+	}
+
+	/**
+	 * What a build of the renderer's CPU resources away from this thread has to
+	 * match: pass it as generateTerrainWorld's `build`. Creates the context (the
+	 * texture size limit is the context's). Null when GL is unavailable.
+	 * @param {object} [opts]  engineTerrain: as in render() (default: the setting)
+	 */
+	buildOptions(opts = {}) {
+		if (!this.terrain.initContext()) return null;
+		return {
+			maxTextureSize: maxTextureSize(this.terrain.gl),
+			lut: {
+				recolorMaterials: appSettings.recolorMaterials,
+				clearSpawnPixels: appSettings.clearSpawnPixels,
+			},
+			engineTerrain: opts.engineTerrain ?? appSettings.engineTerrain,
+		};
 	}
 
 	/**
@@ -219,6 +242,7 @@ export class TerrainView {
 			engineTerrain: opts.engineTerrain ?? appSettings.engineTerrain,
 			seed: w.seed,
 			generatorConfig: w.generatorConfig ?? GENERATOR_CONFIG,
+			prebuilt: w.terrainResources,
 		});
 		this.builtThisCall = ok && terrain.buildTimings !== before;
 		if (this.builtThisCall) {
@@ -234,9 +258,11 @@ export class TerrainView {
 	 * The parallel worlds a camera can see, as 'pwX,pwY' keys.
 	 * @param {number} [margin]  < 1 widens the area (0.75 = a third further out),
 	 *        for a host that generates worlds before they scroll into view
+	 * @param {object} [world]   the world to answer for, when it is not set yet
+	 *        (only isNGP and gameMode are read)
 	 */
-	worldsInView(view, margin = 1) {
-		const w = this.world;
+	worldsInView(view, margin = 1, world = this.world) {
+		const w = world;
 		if (!w) return [];
 		const worldWidth = getWorldSize(w.isNGP, w.gameMode) * CHUNK_SIZE;
 		const pw = view.pw ?? 0, pwVertical = view.pwVertical ?? 0;

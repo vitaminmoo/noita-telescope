@@ -26,10 +26,7 @@
 import { CHUNK_SIZE, WORLD_CHUNK_CENTER_Y } from '../constants.js';
 import { getWorldCenter, getWorldSize } from '../utils.js';
 import { renderHud } from '../render_hud.js';
-import { buildChunkTextures, buildNoiseTable512 } from './chunk_textures.js';
-import {
-    buildEngineResources, buildEngineTable, buildMatColorTable, buildSinHashAndGrids, surfaceNoisePhase,
-} from './engine_resources.js';
+import { buildMatColorTable } from './engine_resources.js';
 import { BIOME_MAP_HEIGHT } from './indirection.js';
 import {
     buildFillMaterialTable, buildPaletteMaterialTable, getMaterialAtlas, initMaterialAtlas,
@@ -44,7 +41,7 @@ import {
     createPaletteTexture, createR32FTexture, createRegionAtlasTexture, createRegionMetaTexture,
     deleteTerrainTextures, maxTextureSize, updatePaletteTexture,
 } from './textures.js';
-import { buildTerrainResources } from './terrain_resources.js';
+import { buildTerrainCpuResources } from './terrain_cpu_resources.js';
 
 const UNIFORM_NAMES = [
     'u_chunkTex', 'u_fgTex', 'u_noiseTex', 'u_indirTex', 'u_regionTex', 'u_atlasTex', 'u_paletteTex',
@@ -284,6 +281,7 @@ export class GLTerrainRenderer {
                     isNGP, gameMode, lut: opts.lut,
                     engineTerrain: !!opts.engineTerrain, seed: opts.seed ?? 0,
                     GENERATOR_CONFIG: opts.generatorConfig,
+                    prebuilt: opts.prebuilt,
                 });
             } catch (err) {
                 this.failed = String(err && err.message ? err.message : err);
@@ -301,6 +299,11 @@ export class GLTerrainRenderer {
         return true;
     }
 
+    /**
+     * `opts.prebuilt`: the CPU half already built elsewhere (the terrain
+     * worker, gl/terrain_cpu_resources.js). It is used when it was built for
+     * this seed, mode and settings; otherwise the build runs here.
+     */
     buildAndUpload(layers, biomeData, opts) {
         const gl = this.gl;
         const t0 = performance.now();
@@ -314,29 +317,23 @@ export class GLTerrainRenderer {
             return r;
         };
         const mapWidth = getWorldSize(opts.isNGP, opts.gameMode);
-        const resources = timed('regionAtlas', () => buildTerrainResources(layers, biomeData, {
-            isNGP: opts.isNGP,
-            gameMode: opts.gameMode,
-            maxTextureSize: maxTextureSize(gl),
-            lut: opts.lut,
-        }));
-        const chunkTextures = timed('chunkTextures', () => buildChunkTextures(biomeData, mapWidth));
+        const maxTex = maxTextureSize(gl);
+        let cpu = opts.prebuilt;
+        const usable = cpu && cpu.seed === opts.seed && cpu.isNGP === !!opts.isNGP && cpu.gameMode === opts.gameMode
+            && cpu.engineTerrain === !!opts.engineTerrain && cpu.maxTextureSize === maxTex
+            && cpu.recolorMaterials === (opts.lut?.recolorMaterials !== false);
+        if (!usable) {
+            cpu = buildTerrainCpuResources(layers, biomeData, {
+                isNGP: !!opts.isNGP, gameMode: opts.gameMode, seed: opts.seed, maxTextureSize: maxTex, lut: opts.lut,
+                engineTerrain: opts.engineTerrain, generatorConfig: opts.GENERATOR_CONFIG,
+            });
+            Object.assign(timings, cpu.timings);
+        }
+        this.builtFromPrebuilt = !!usable;
+        const { resources, chunkTextures, engine, engTable, sinHash, noiseTable } = cpu;
         // Null until the atlas fetch lands; the sourceKey then forces a rebuild.
         const matAtlas = getMaterialAtlas();
-
-        // Engine resolve mode: the game's own 1/10 lattices + per-biome tables,
-        // built from the same layers (lattice_builder.js, bit-exact vs COVDUMP).
-        let engine = null, engTable = null, sinHash = null;
-        // The per-biome band table also serves the pixel-scene material pass
-        // (scene_renderer.js), whatever the terrain mode.
-        if (opts.engineTerrain || matAtlas) engTable = timed('engineTable', () => buildEngineTable(opts.seed ?? 0));
-        if (opts.engineTerrain) {
-            const { GENERATOR_CONFIG } = opts;
-            engine = timed('engineLattice', () => buildEngineResources(layers, biomeData, GENERATOR_CONFIG ?? {}, mapWidth));
-            // sin-hash rows + the seed's BitmapCaves modifier grids (one texture)
-            sinHash = timed('sinHashGrids', () => buildSinHashAndGrids(opts.seed ?? 0));
-            this.surfacePhase = surfaceNoisePhase(opts.seed ?? 0);
-        }
+        this.surfacePhase = cpu.surfacePhase;
         // Kept for the unpainted-checkerboard mask: chunks the engine pass
         // resolves itself (mode != fallback, bits 8-9) ARE painted — including
         // the ones whose whole answer is air (sky, holy-mountain interiors).
@@ -348,7 +345,6 @@ export class GLTerrainRenderer {
             palette: buildPaletteMaterialTable(matAtlas, resources.palette),
             fill: buildFillMaterialTable(matAtlas, biomeData, mapWidth),
         }));
-        const noiseTable = timed('noiseTable', () => buildNoiseTable512());
 
         timed('upload', () => {
             deleteTerrainTextures(gl, this.textures);
@@ -367,8 +363,10 @@ export class GLTerrainRenderer {
                 cov: engine && createCoverageLatticeTexture(gl, engine.lattice),
                 latMat: engine && createMaterialLatticeTexture(gl, engine.lattice),
                 engChunk: engine && createEngineChunkTexture(gl, engine),
-                engTable: engTable && createFloatTableTexture(gl, engTable),
-                sinHash: engine && createR32FTexture(gl, sinHash),
+                // The band table also serves the pixel-scene material pass
+                // (scene_renderer.js), whatever the terrain mode.
+                engTable: (engine || matAtlas) && createFloatTableTexture(gl, engTable),
+                sinHash: engine && sinHash && createR32FTexture(gl, sinHash),
             };
         });
         this.resources = resources;
@@ -380,7 +378,7 @@ export class GLTerrainRenderer {
         this.buildMs = performance.now() - t0;
         this.buildTimings = timings;
         this.stats = resources.stats;
-        console.log(`[GL terrain] resources built in ${this.buildMs.toFixed(1)} ms`, resources.stats);
+        console.log(`[GL terrain] resources ${usable ? 'uploaded' : 'built'} in ${this.buildMs.toFixed(1)} ms`, resources.stats);
     }
 
     /** Re-uploads the 1 KiB LUT when a color setting changed (no atlas rebuild). */

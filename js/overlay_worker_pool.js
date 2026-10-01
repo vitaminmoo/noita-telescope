@@ -15,20 +15,27 @@
 // one pool per realm; starting it twice returns the same workers.
 import { frameSlo } from './frame_slo.js';
 import { PIXEL_SCENE_DATA, putPixelSceneBitmaps, putSceneMaterialMap, setPixelSceneBitmapRequester } from './pixel_scene_generation.js';
+import { defaultOverlayWorkerCount, takeWorker } from './prespawn.js';
 import { renderTrace } from './render_hud.js';
 
-/** Telescope's default: leave two cores for the page and the overlay worker. */
-export function defaultOverlayWorkerCount() {
-	return Math.max(1, Math.min(4, (globalThis.navigator?.hardwareConcurrency || 4) - 2));
-}
+export { defaultOverlayWorkerCount };
 
 let workers = null;
 const sceneListeners = new Set();
 const replyHandlers = new Map();   // message type -> fn(msg)
 let syncedBiomeData = null;
 
+// Which worker last built from each scene. A worker decodes a scene's PNG the
+// first time it is asked for it and keeps the pixels, so a scene's next job --
+// its material map after its bitmaps, another variant of it -- costs a decode
+// less on the worker that has them.
+const sceneWorker = new Map();   // scene key -> worker
+// How much busier than the idlest worker the one holding the scene may be
+// before the job goes to the idlest instead.
+const AFFINITY_SLACK = 2;
+
 function post(w, msg, transfer) {
-	if (w.ready) w.postMessage(msg, transfer ?? []);
+	if (w.ready && w.worker) w.worker.postMessage(msg, transfer ?? []);
 	else w.queue.push([msg, transfer ?? []]);
 }
 
@@ -42,19 +49,17 @@ function post(w, msg, transfer) {
 export function startOverlayWorkerPool({ count = defaultOverlayWorkerCount() } = {}) {
 	if (workers) return workers;
 	workers = Array.from({ length: Math.max(1, count) }, (_, i) => {
-		const w = new Worker(new URL('./overlay_worker.js', import.meta.url), { type: 'module', name: `overlay-pool-${i}` });
-		w.addEventListener('error', (e) =>
-			console.error(`overlay pool worker ${i} failed:`, e.message ?? '(no message)', e.filename ?? '', e.lineno ?? ''));
-		w.inflight = 0;
-		// Held until the worker says its module has loaded (overlay_worker.js READY).
-		w.ready = false;
-		w.queue = [];
-		w.onmessage = (e) => {
-			const msg = e.data;
+		// Held until the worker says its module has loaded (overlay_worker.js
+		// READY) -- which a worker the page prespawned (prespawn.js) may already
+		// have said: takeWorker replays it into the handler before `worker` is set.
+		const w = { worker: null, inflight: 0, ready: false, queue: [] };
+		const onMessage = (msg) => {
 			if (msg.type === 'READY') {
 				w.ready = true;
-				for (const [m, transfer] of w.queue) w.postMessage(m, transfer);
-				w.queue = [];
+				if (w.worker) {
+					for (const [m, transfer] of w.queue) w.worker.postMessage(m, transfer);
+					w.queue = [];
+				}
 			}
 			else if (msg.type === 'JOB_START') renderTrace.stage(msg.traceId, 'running');
 			else if (msg.type === 'JOB_DONE') renderTrace.end(msg.traceId, { workerMs: msg.ms });
@@ -73,6 +78,9 @@ export function startOverlayWorkerPool({ count = defaultOverlayWorkerCount() } =
 				replyHandlers.get(msg.type)(msg);
 			}
 		};
+		w.worker = takeWorker('overlay', i, onMessage);
+		w.worker.addEventListener('error', (e) =>
+			console.error(`overlay pool worker ${i} failed:`, e.message ?? '(no message)', e.filename ?? '', e.lineno ?? ''));
 		return w;
 	});
 	setPixelSceneBitmapRequester((request) => {
@@ -83,12 +91,19 @@ export function startOverlayWorkerPool({ count = defaultOverlayWorkerCount() } =
 	return workers;
 }
 
-/** Posts one job to the least-loaded worker. Its reply (a message type that
- *  has a handler, see onOverlayPoolReply) frees the slot. */
+/** Posts one job to the least-loaded worker -- or, for a job on one scene
+ *  (`msg.key`), to the worker that already holds that scene's pixels unless it
+ *  is much the busier. Its reply (a message type that has a handler, see
+ *  onOverlayPoolReply) frees the slot. */
 export function postOverlayPoolJob(msg, transfer) {
 	const pool = startOverlayWorkerPool();
 	let w = pool[0];
 	for (const s of pool) if (s.inflight < w.inflight) w = s;
+	if (msg.key) {
+		const holder = sceneWorker.get(msg.key);
+		if (holder && holder.inflight <= w.inflight + AFFINITY_SLACK) w = holder;
+		else sceneWorker.set(msg.key, w);
+	}
 	w.inflight++;
 	post(w, msg, transfer);
 }
