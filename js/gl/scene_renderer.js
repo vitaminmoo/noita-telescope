@@ -25,6 +25,7 @@ import {
     getPixelSceneDrawable, PIXEL_SCENE_DATA, PIXEL_SCENE_MAX_MIP, pixelSceneBitmapVersion,
     pixelSceneCacheEpoch, pixelSceneCacheKeys, pixelScenesTexturedAt, warmPixelScene,
 } from '../pixel_scene_generation.js';
+import { frameSlo } from '../frame_slo.js';
 import { pixelFilterGLSL } from './shaders.js';
 
 const VS = `#version 300 es
@@ -242,6 +243,8 @@ export class GLSceneRenderer {
         gl.texSubImage2D(gl.TEXTURE_2D, 0, at.x, at.y, gl.RGBA, gl.UNSIGNED_BYTE, bitmap);
         at.page.keys.push(slotKey);
         this.uploadedBytes += bitmap.width * bitmap.height * 4;
+        frameSlo.count('sceneUploads');
+        frameSlo.count('sceneUploadKb', bitmap.width * bitmap.height * 4 / 1024);
         return at;
     }
 

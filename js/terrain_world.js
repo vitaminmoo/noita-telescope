@@ -15,6 +15,7 @@
 // load-time benchmark can name the part a change moved, and every part that is
 // optional can be left out.
 import { BIOME_CONFIG, generateBiomeData } from './biome_generator.js';
+import { frameSlo } from './frame_slo.js';
 import { GENERATOR_CONFIG } from './generator_config.js';
 import { loadPixelSceneData } from './pixel_scene_generation.js';
 import { loadPNG } from './png_sanitizer.js';
@@ -47,6 +48,17 @@ async function timed(timings, name, fn) {
 	const t0 = performance.now();
 	const r = await fn();
 	timings[name] = (timings[name] || 0) + (performance.now() - t0);
+	return r;
+}
+
+// Generation steps run on the calling thread from start to finish; the frame
+// log (frame_slo.js) should say so when one of them is what held a frame up.
+function timedSync(timings, name, fn) {
+	const t0 = performance.now();
+	const r = fn();
+	const ms = performance.now() - t0;
+	timings[name] = (timings[name] || 0) + ms;
+	frameSlo.work(`generate:${name}`, ms);
 	return r;
 }
 
@@ -101,12 +113,15 @@ export async function generateTerrainWorld({ seed, ngPlusCount = 0, gameMode = '
 			if (conf.enabled && !conf.wangData && conf.wangFile) conf.wangData = await loadPNG(conf.wangFile);
 		}
 	});
-	const biomeData = await timed(timings, 'biomeMap', () =>
+	const biomeData = timedSync(timings, 'biomeMap', () =>
 		generateBiomeData(seed, ngPlusCount, gameMode, base.data, mapWidth, mapHeight));
-	const tileLayers = await timed(timings, 'wangTiles', () =>
-		generateBiomeTiles(biomeData.pixels, mapWidth, mapHeight, GENERATOR_CONFIG, seed, ngPlusCount, extraRerolls, gameMode));
+	// generateBiomeTiles is async in name only: it never yields.
+	const t0 = performance.now();
+	const tileLayers = await generateBiomeTiles(biomeData.pixels, mapWidth, mapHeight, GENERATOR_CONFIG, seed, ngPlusCount, extraRerolls, gameMode);
+	timings.wangTiles = performance.now() - t0;
+	frameSlo.work('generate:wangTiles', timings.wangTiles);
 	const tileSpawns = prescan
-		? await timed(timings, 'spawnPrescan', () => prescanSpawnFunctions(tileLayers, isNGP, gameMode)) : null;
+		? timedSync(timings, 'spawnPrescan', () => prescanSpawnFunctions(tileLayers, isNGP, gameMode)) : null;
 
 	return {
 		seed, ngPlusCount, isNGP, gameMode, mapWidth, mapHeight,
@@ -141,6 +156,7 @@ export function scanTerrainWorld(world, pw = 0, pwVertical = 0, { perks = {}, is
 	world.bgSprites[key] = scan.backgroundSprites;
 	const ms = performance.now() - t0;
 	world.timings[`scan ${key}`] = ms;
+	frameSlo.work('generate:scan', ms, { world: key });
 	return ms;
 }
 
@@ -157,6 +173,7 @@ export async function scanTerrainWorlds(world, keys, { pool, perks = {}, isDaily
 	if (!world.tileSpawns) throw new Error('scanTerrainWorlds: the world was generated with prescan: false');
 	if (pool.syncedWorld !== world) {
 		world.timings.scanSync = pool.sync({ biomeData: world.biomeData, tileSpawns: world.tileSpawns });
+		frameSlo.work('generate:scanSync', world.timings.scanSync);
 		pool.syncedWorld = world;
 	}
 	await Promise.all(keys.map(async (key) => {

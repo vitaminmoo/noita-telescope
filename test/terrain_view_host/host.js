@@ -17,6 +17,8 @@
 //      &worldWorkers=N &sceneWorkers=N   pool sizes (default: what the modules pick)
 //      &scenes=0  &terrain=0  &engine=0  &textures=0  &edgenoise=0   switch an operation off
 //      &auto=0               do not load on arrival; a driver calls terrainHost.load()
+//      &framelog=1           log every frame over the 60 fps budget (js/frame_slo.js)
+import { frameSlo } from '../../js/frame_slo.js';
 import { onSceneBitmaps, sceneBitmapPoolStats, startSceneBitmapPool } from '../../js/scene_bitmap_pool.js';
 import { applyTerrainSettings, drawSpace, TerrainView } from '../../js/terrain_view.js';
 import { generateTerrainWorld, loadTerrainAssets, scanTerrainWorld, scanTerrainWorlds } from '../../js/terrain_world.js';
@@ -81,6 +83,7 @@ host.draw = () => {
 	});
 	host.lastFrame = { ms: performance.now() - t0, complete: !!r?.complete, drawn: !!r };
 	host.frames++;
+	frameSlo.drew(host.lastFrame.ms, host.view.timings.frame);
 	if (r && host.ops.scenes) host.ensureWorlds();
 	if (r && r.redrawInMs != null && !redrawTimer) {
 		redrawTimer = setTimeout(() => { redrawTimer = 0; host.requestDraw(); }, Math.max(0, r.redrawInMs));
@@ -351,6 +354,7 @@ function showStatus() {
 		`settle ${ms(T.settle?.total)}`,
 		`frame ${host.lastFrame ? host.lastFrame.ms.toFixed(2) : '-'} ms  zoom ${host.cam.z.toFixed(4)}`,
 		`pending: ${p.sceneBitmaps} scene builds, ${p.sceneWorlds} worlds`,
+		frameSlo.enabled ? `frames over 60 fps: ${frameSlo.missed}` : '',
 		host.view.failed ? `GL unavailable: ${host.view.failed}` : '',
 	].filter(Boolean).join('\n');
 }
@@ -381,6 +385,11 @@ canvas.addEventListener('wheel', (e) => {
 	host.requestDraw();
 }, { passive: false });
 window.addEventListener('resize', () => { resize(); host.requestDraw(); });
+
+frameSlo.addState('view', () => ({
+	x: Math.round(host.cam.x), y: Math.round(host.cam.y), z: +host.cam.z.toFixed(4),
+	canvas: [host.size.width, host.size.height], loading: !!host.loading, dragging: !!drag,
+}));
 
 resize();
 mark('hostReady');

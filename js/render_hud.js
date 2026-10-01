@@ -1,6 +1,6 @@
 // Render HUD (debug panel "Render HUD"): a bottom-right overlay showing where
-// wall time goes, what asynchronous render work is outstanding, and what
-// recently finished.
+// wall time goes, what asynchronous render work is outstanding, and which
+// frames missed the 60 fps budget (frame_slo.js).
 //
 // Three places time is spent, measured three different ways:
 //   main   -- drawNow's per-layer buckets (the markLayer profiler in app.js),
@@ -14,13 +14,15 @@
 //
 // Traced items ("rendering items") are worker jobs and GPU resolves: posted,
 // staged (gpu -> queued -> running), finished. Tracing only happens while the
-// HUD is on; nothing here touches the DOM until it is switched on, because the
-// overlay worker and the Node GL tests import modules that import this one.
+// HUD is on or the frame log (frame_slo.js) asked for it; nothing here touches
+// the DOM until the HUD is switched on, because the overlay worker and the Node
+// GL tests import modules that import this one.
 
 const WINDOW_MS = 2000;      // utilization window for the bars
 const STRIP_MS = 30000;      // history strip span
 const TICK_MS = 250;
-const HISTORY_MAX = 14;
+const FINISHED_MAX = 256;    // finished items kept for the frame log and late GPU shares
+const MISS_ROWS = 10;
 const QUEUE_ROWS = 12;
 const STALE_MS = 60000;      // a traced item never answered is dropped after this
 
@@ -39,12 +41,14 @@ const samples = [];          // { t, sys, lane, ms }
 const strip = [];            // { t, main, worker, gpu } utilization % per tick
 const frames = [];           // { t, ms } drawNow wall time
 const active = new Map();    // id -> item
-const history = [];
+const finished = [];         // newest last
 const pollers = [];
 const statSources = new Map();   // name -> () => string, one line (or lines) under Caches
 let nextId = 1;
 let on = false;
-let root = null, barsCanvas = null, stripCanvas = null, headEl = null, totalEl = null, queueEl = null, cachesEl = null, historyEl = null;
+let tracing = false;         // items are traced with the HUD off (frame_slo.js)
+let missSource = null;       // () => string[], newest first: the frames that missed the budget
+let root = null, barsCanvas = null, stripCanvas = null, headEl = null, totalEl = null, queueEl = null, cachesEl = null, missEl = null;
 let timer = 0;
 let pendingSource = null;    // () => number of async render items in flight (traced or not)
 let gpuTimerState = 'unknown';
@@ -67,10 +71,19 @@ export const renderHud = {
 			timer = 0;
 			root?.remove();
 			root = null;
-			samples.length = strip.length = frames.length = history.length = 0;
-			active.clear();
+			samples.length = strip.length = frames.length = 0;
+			if (!tracing) { active.clear(); finished.length = 0; }
 		}
 	},
+
+	/** Trace render items even while the HUD is off (the frame log reads them). */
+	setTracing(enabled) {
+		tracing = !!enabled;
+		if (!tracing && !on) { active.clear(); finished.length = 0; }
+	},
+
+	/** The frame log's lines for the Missed frames section, newest first. */
+	setMissSource(fn) { missSource = fn; },
 
 	/** Count of async render work in flight, including work posted before the HUD was on. */
 	setPendingSource(fn) { pendingSource = fn; },
@@ -110,9 +123,11 @@ export const renderHud = {
  */
 export const renderTrace = {
 	begin(kind, label, sys, stage = 'queued') {
-		if (!on) return 0;
+		if (!on && !tracing) return 0;
 		const id = nextId++;
 		const t = now();
+		// Only the HUD's tick prunes items that never answered; without it, cap here.
+		if (active.size > 2048) for (const [k, item] of active) if (t - item.t0 > STALE_MS) active.delete(k);
 		active.set(id, { id, kind, label, sys, t0: t, stage, stages: [{ name: stage, t }], workerMs: 0, gpuMs: null, gpuBatch: 0, cpuMs: 0 });
 		return id;
 	},
@@ -127,7 +142,7 @@ export const renderTrace = {
 	/** A share of a batched GPU pass; may arrive before or after the item ends. */
 	gpu(id, ms, batch) {
 		if (!id) return;
-		const item = active.get(id) || history.find((h) => h.id === id);
+		const item = active.get(id) || finished.findLast((h) => h.id === id);
 		if (!item) return;
 		item.gpuMs = (item.gpuMs || 0) + ms;
 		item.gpuBatch = batch;
@@ -144,17 +159,29 @@ export const renderTrace = {
 		pushHistory(item);
 	},
 
-	/** A synchronous main-thread item (bakes): straight into the history. */
+	/** A synchronous main-thread item (bakes): straight into the finished items. */
 	done(kind, label, sys, cpuMs) {
-		if (!on) return;
+		if (!on && !tracing) return;
 		const t = now();
 		pushHistory({ id: nextId++, kind, label, sys, t0: t - cpuMs, t1: t, stages: [{ name: 'run', t: t - cpuMs }], workerMs: 0, gpuMs: null, cpuMs });
+	},
+
+	/** Items posted and not finished, oldest first. */
+	activeItems() {
+		return [...active.values()].sort((a, b) => a.t0 - b.t0);
+	},
+
+	/** Items that finished at or after `t` (performance.now() time), oldest first. */
+	finishedSince(t) {
+		let i = finished.length;
+		while (i > 0 && finished[i - 1].t1 >= t) i--;
+		return finished.slice(i);
 	},
 };
 
 function pushHistory(item) {
-	history.unshift(item);
-	if (history.length > HISTORY_MAX) history.length = HISTORY_MAX;
+	finished.push(item);
+	if (finished.length > FINISHED_MAX) finished.shift();
 }
 
 // ---------------------------------------------------------------------------
@@ -196,13 +223,13 @@ function buildDom(container) {
 		return { h, pre };
 	};
 	queueEl = section('Queue');
-	historyEl = section('Recently completed — ms; wkr = worker time, gpu = its share of a batched GPU pass');
+	missEl = section('Missed frames');
 	cachesEl = section('Caches');
 	// The HUD is anchored bottom-right, so the fixed-height parts (the graphs
-	// and the cache lines) go last: they stay put while the queue and history
-	// above them grow and shrink.
+	// and the cache lines) go last: they stay put while the queue and the
+	// missed frames above them grow and shrink.
 	Object.assign(legend.style, { marginTop: '6px', borderTop: `1px solid ${GRID}`, paddingTop: '4px' });
-	root.append(headEl, queueEl.h, queueEl.pre, historyEl.h, historyEl.pre,
+	root.append(headEl, queueEl.h, queueEl.pre, missEl.h, missEl.pre,
 		legend, barsCanvas, totalEl, stripCanvas, cachesEl.h, cachesEl.pre);
 	container.appendChild(root);
 }
@@ -244,7 +271,7 @@ function tick() {
 	drawStrip(t);
 	renderQueue(t);
 	renderCaches();
-	renderHistory();
+	renderMisses();
 }
 
 function setupCanvas(canvas, cssH) {
@@ -390,21 +417,13 @@ function renderCaches() {
 	cachesEl.pre.textContent = lines.length ? lines.join('\n') : '(none)';
 }
 
-function renderHistory() {
-	if (!history.length) { historyEl.pre.textContent = '(nothing yet)'; return; }
-	historyEl.pre.textContent = history.map((i) => {
-		const parts = [];
-		if (i.cpuMs) parts.push(`cpu ${ms(i.cpuMs)}`);
-		// Latency by stage: resolve (GPU pass + async readback), wait (in the
-		// worker's FIFO); the run itself is the worker's own time.
-		for (let k = 0; k < i.stages.length; k++) {
-			const name = i.stages[k].name;
-			if (name !== 'gpu' && name !== 'queued') continue;
-			const next = k + 1 < i.stages.length ? i.stages[k + 1].t : i.t1;
-			parts.push(`${name === 'gpu' ? 'resolve' : 'wait'} ${ms(next - i.stages[k].t)}`);
-		}
-		if (i.workerMs) parts.push(`wkr ${ms(i.workerMs)}`);
-		if (i.gpuMs != null) parts.push(`gpu ${i.gpuMs.toFixed(2)}`);
-		return `${pad(i.kind, 7)} ${pad(i.label, 22)} ${ms(i.t1 - i.t0).padStart(6)}  ${parts.join(' · ')}`;
-	}).join('\n');
+// Frames that took longer than the 60 fps budget, newest first, each with what
+// the main thread spent the interval on and what was queued (frame_slo.js). The
+// full records go to the console and the frame log.
+function renderMisses() {
+	const lines = missSource ? missSource(MISS_ROWS) : null;
+	if (!lines) { missEl.pre.textContent = '(frame log off)'; return; }
+	missEl.h.textContent = 'Missed frames — over 60 fps; ms over, what ran, what was queued (full records: console / frame log)';
+	const w = Math.max(40, Math.floor((root.clientWidth - 20) / 6.7));
+	missEl.pre.textContent = lines.length ? lines.map((l) => (l.length > w ? l.slice(0, w - 1) + '…' : l)).join('\n') : '(none yet)';
 }

@@ -20,6 +20,7 @@ import { debugBiomeEdgeNoise } from './edge_noise.js';
 import { drawBiomeBoundaryContour } from './biome_boundary.js';
 import { GLBackdropRenderer } from './gl/backdrop_renderer.js';
 import { MATERIAL_DETAIL_MIN_ZOOM, TerrainView } from './terrain_view.js';
+import { frameSlo } from './frame_slo.js';
 import { getPixelSceneAirMask, getPixelSceneCacheStats, getPixelSceneCanvas, pendingPixelSceneBitmaps, PIXEL_SCENE_MAX_MIP, pixelSceneBitmapVersion, pixelSceneMipLevel, loadPixelSceneData, reloadPixelSceneCache, PIXEL_SCENE_DATA, setScenePixelsListener, warmPixelScene } from './pixel_scene_generation.js';
 import { addStaticPixelScenes } from './static_spawns.js';
 import { NollaPrng } from './nolla_prng.js';
@@ -346,6 +347,7 @@ export const app = {
 	// Same for the decal texel (decalTexelAt); keyed on the frame it was read in.
 	decalProbe: { x: NaN, y: NaN, frame: -1, value: null, wantX: 0, wantY: 0, timer: 0 },
 	frameSerial: 0,
+	frameLogFromURL: new URLSearchParams(location.search).get('framelog') === '1',
 	lastHoverEvent: null,
 	copyFlashTimer: 0,
 	pw: 0,
@@ -668,6 +670,7 @@ export const app = {
 		document.getElementById('debug-biome-boundary-contour').onchange = () => {this.saveSettings(); this.draw();};
 		document.getElementById('debug-layer-timings').onchange = () => {this.saveSettings(); this.draw();};
 		document.getElementById('debug-render-hud').onchange = () => {this.saveSettings(); this.draw();};
+		document.getElementById('debug-frame-log').onchange = () => {this.saveSettings(); this.draw();};
 		document.getElementById('debug-render-everything').onchange = () => {this.saveSettings(); this.draw();};
 		document.getElementById('debug-run-benchmark').onclick = async () => {
 			const status = document.getElementById('debug-benchmark-status');
@@ -1168,7 +1171,7 @@ export const app = {
 				this.draw();
 			}
 			//if (!this.pinnedTooltip) 
-			this.hover(e);
+			frameSlo.time('hover', () => this.hover(e));
 		};
 
 		// Init search filters
@@ -2272,6 +2275,7 @@ export const app = {
 
 		const t1 = performance.now();
 		console.log(`Generation completed in ${(t1 - t0) / 1000} seconds.`);
+		frameSlo.work('generate', t1 - t0, { tiles: !!tiles, rescan: !!rescan });
 		
 		this.checkBounds();
 		this.draw();
@@ -2829,7 +2833,7 @@ export const app = {
 	// Returns a profiling handle for this frame, or null when neither
 	// debug-layer-timings nor the render HUD wants it.
 	startLayerProfile() {
-		if (!appSettings.debugLayerTimings && !renderHud.on) {
+		if (!appSettings.debugLayerTimings && !renderHud.on && !frameSlo.enabled) {
 			removeDrawCounter();
 			this.layerProfile = null;
 			return null;
@@ -2853,6 +2857,7 @@ export const app = {
 		prof.frames++;
 		const now = performance.now();
 		renderHud.frame(prof.frameLayers, now - prof.frameT0);
+		frameSlo.drew(now - prof.frameT0, prof.frameLayers);
 		if (now - prof.lastReport < 1000) return;
 		if (!appSettings.debugLayerTimings) {
 			prof.buckets.clear();
@@ -3567,6 +3572,17 @@ export const app = {
 					+ (g ? `\n         GL scene atlas: ${g.pages} pages · ${(g.bytes / 1048576).toFixed(0)} MB · ${g.slots} images` : '');
 			});
 			renderHud.setEnabled(appSettings.debugRenderHud, document.getElementById('view'));
+		}
+		// The frame log runs with the HUD, with its own option, or by ?framelog=1.
+		const frameLog = !!(appSettings.debugRenderHud || appSettings.debugFrameLog) || this.frameLogFromURL;
+		if (frameSlo.enabled !== frameLog) {
+			frameSlo.addState('view', () => ({
+				x: Math.round(this.cam.x), y: Math.round(this.cam.y), z: +this.cam.z.toFixed(4),
+				pw: this.pw, pwVertical: this.pwVertical, canvas: [this.canvas.width, this.canvas.height],
+				worlds: this.worldsInView.size, dragging: this.drag.on,
+			}));
+			frameSlo.addState('overlays', () => overlayQueueStats());
+			frameSlo.setEnabled(frameLog);
 		}
 		const prof = this.startLayerProfile();
 		this.colorProbe.x = -1; // the tooltip's cached readback belongs to the old frame
@@ -4817,6 +4833,7 @@ export const app = {
 			terrainRenderer: document.getElementById('debug-terrain-renderer').value,
 			debugLayerTimings: document.getElementById('debug-layer-timings').checked,
 			debugRenderHud: document.getElementById('debug-render-hud').checked,
+			debugFrameLog: document.getElementById('debug-frame-log').checked,
 			renderEverything: document.getElementById('debug-render-everything').checked,
 			checkerboardUnpainted: document.getElementById('debug-unpainted-checkerboard').checked,
 			biomeBoundaryContour: document.getElementById('debug-biome-boundary-contour').checked,
@@ -4922,6 +4939,7 @@ export const app = {
 				settings.terrainRenderer = document.getElementById('debug-terrain-renderer').value;
 				document.getElementById('debug-layer-timings').checked = settings.debugLayerTimings || false;
 				document.getElementById('debug-render-hud').checked = settings.debugRenderHud || false;
+				document.getElementById('debug-frame-log').checked = settings.debugFrameLog || false;
 				document.getElementById('debug-render-everything').checked = settings.renderEverything || false;
 				settings.renderEverything = document.getElementById('debug-render-everything').checked;
 				document.getElementById('debug-unpainted-checkerboard').checked = settings.checkerboardUnpainted ?? true;

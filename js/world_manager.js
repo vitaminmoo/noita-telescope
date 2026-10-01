@@ -7,6 +7,7 @@ import { appSettings, updateSettingsFromUI } from './settings.js';
 import { TRANSLATIONS } from './translations.js';
 import { unlockedSpells } from './unlocks.js';
 import { buildPixelSceneMetadata } from './world_scan_pool.js';
+import { frameSlo } from './frame_slo.js';
 
 // Other modules import it from here.
 export { buildPixelSceneMetadata };
@@ -56,7 +57,9 @@ worldWorker.onmessage = async (e) => {
 
 		// Recolor pixel scenes from this PW. The world worker returns placements only
 		// (key + variantKey + rect); every recolored image comes from the overlay worker.
+		const t0 = performance.now();
 		recolorPixelScenes(msg.pixelScenes);
+		frameSlo.work('worldLanded', performance.now() - t0, { pw: pwKey, scenes: msg.pixelScenes.length });
     }
 };
 

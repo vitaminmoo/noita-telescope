@@ -34,12 +34,15 @@
 // budgets) are realm-wide state in settings.js, shared with the workers; a host
 // without telescope's settings UI sets them through applyTerrainSettings().
 import { CHUNK_SIZE, WORLD_CHUNK_CENTER_Y } from './constants.js';
+import { frameSlo } from './frame_slo.js';
 import { GENERATOR_CONFIG } from './generator_config.js';
 import { initMaterialAtlas } from './gl/material_atlas.js';
 import { GLSceneRenderer } from './gl/scene_renderer.js';
 import { GLTerrainRenderer } from './gl/terrain_renderer.js';
-import { initPixelSceneTextures, pendingPixelSceneBitmaps, pixelSceneMipLevel } from './pixel_scene_generation.js';
-import { syncSceneBitmapPoolSettings } from './scene_bitmap_pool.js';
+import {
+	getPixelSceneCacheStats, initPixelSceneTextures, pendingPixelSceneBitmaps, pixelSceneMipLevel,
+} from './pixel_scene_generation.js';
+import { sceneBitmapPoolStats, syncSceneBitmapPoolSettings } from './scene_bitmap_pool.js';
 import { appSettings, updateSettings } from './settings.js';
 import { getPWLimit, getWorldCenter, getWorldSize } from './utils.js';
 
@@ -88,6 +91,24 @@ export class TerrainView {
 		 *  `frame`: main-thread ms per pass of the last render().
 		 *  `gpu`: last GPU time per pass, when collectGpuTimings is on. */
 		this.timings = { prepare: {}, frame: {}, gpu: {} };
+		// What the frame log (frame_slo.js) records about the view at every
+		// missed frame: what it is waiting for and how full its caches are.
+		frameSlo.addState('terrainView', () => {
+			const c = getPixelSceneCacheStats();
+			const g = this.scenes.stats();
+			return {
+				pending: this.pending(),
+				sceneCache: {
+					entries: c.entries, mb: Math.round(c.bytes / 1048576), budgetMb: Math.round(c.budgetBytes / 1048576),
+					building: c.pending, buildingTextured: c.pendingTextured,
+					requests: c.requests, refetches: c.refetches, evictions: c.evictions, failures: c.failures,
+				},
+				sceneWorkers: sceneBitmapPoolStats().inflight,
+				sceneAtlas: { pages: g.pages, mb: Math.round(g.bytes / 1048576), images: g.slots },
+				gpuMs: this.timings.gpu,
+				failed: this.failed,
+			};
+		});
 	}
 
 	/** The canvas the passes draw into (null before the first context). */
@@ -190,7 +211,12 @@ export class TerrainView {
 			generatorConfig: w.generatorConfig ?? GENERATOR_CONFIG,
 		});
 		this.builtThisCall = ok && terrain.buildTimings !== before;
-		if (this.builtThisCall) this.timings.prepare = { ...this.timings.prepare, ...terrain.buildTimings };
+		if (this.builtThisCall) {
+			this.timings.prepare = { ...this.timings.prepare, ...terrain.buildTimings };
+			const steps = {};
+			for (const [k, v] of Object.entries(terrain.buildTimings)) if (v >= 0.5) steps[k] = Math.round(v);
+			frameSlo.work('terrainResources', terrain.buildMs, steps);
+		}
 		return ok;
 	}
 

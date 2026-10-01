@@ -13,6 +13,7 @@
 // feeds is module state of pixel_scene_generation.js, so there is one pool per
 // realm; starting it twice returns the same workers.
 import { PIXEL_SCENE_DATA, putPixelSceneBitmaps, setPixelSceneBitmapRequester } from './pixel_scene_generation.js';
+import { frameSlo } from './frame_slo.js';
 import { renderTrace } from './render_hud.js';
 
 /** Telescope's default: leave two cores for the page and the overlay worker. */
@@ -51,7 +52,9 @@ export function startSceneBitmapPool({ count = defaultSceneWorkerCount() } = {})
 			else if (msg.type === 'JOB_DONE') renderTrace.end(msg.traceId, { workerMs: msg.ms });
 			else if (msg.type === 'SCENE_BITMAPS') {
 				w.inflight = Math.max(0, w.inflight - 1);
+				const t0 = performance.now();
 				if (putPixelSceneBitmaps(msg)) for (const fn of listeners) fn(msg);
+				frameSlo.work('sceneBitmapsLanded', performance.now() - t0);
 			}
 		};
 		return w;
