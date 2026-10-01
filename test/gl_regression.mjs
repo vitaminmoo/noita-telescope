@@ -10,6 +10,14 @@
 //   systemd-run --user --quiet --collect --pipe --wait --slice=claude-limit.slice \
 //     -p MemoryMax=10G --working-directory=/home/vitaminmoo/repos/noita-telescope \
 //     /usr/bin/node test/gl_regression.mjs [names...] [--rebaseline] [--margin=0.5] [--png DIR]
+//     [--host=view]
+//
+// --host=view renders the same fixtures through the minimal terrain view host
+// (test/terrain_view_host/) instead of telescope's page: js/terrain_view.js
+// with no app around it, which is what an embedding viewer runs. It draws the
+// world's cells only -- terrain and pixel scenes -- so a fixture whose
+// baseline includes the edge-decal layer app.js draws on top can read lower
+// there. The thresholds are the app page's, and --rebaseline is refused.
 //
 // (plain `node` makes headless Chrome SIGTRAP in this environment.)
 //
@@ -18,7 +26,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import UPNG from 'upng-js';
-import { startServer, drive, sleep } from './helpers/drive.mjs';
+import { startServer, drive, openPage, sleep } from './helpers/drive.mjs';
 import {
 	FIXTURE_DIR, fixtureNames, loadFixture, expectedAirMask, agreement, rgbAgreement, verdict,
 } from './helpers/fixtures.mjs';
@@ -32,6 +40,9 @@ const flagVal = (n, d) => {
 const REBASELINE = argv.includes('--rebaseline');
 const MARGIN = Number(flagVal('margin', '0.5'));
 const PNG_DIR = flagVal('png', null);
+const HOST = flagVal('host', 'app');
+if (HOST !== 'app' && HOST !== 'view') { console.error(`unknown --host=${HOST}`); process.exit(1); }
+if (HOST === 'view' && REBASELINE) { console.error('--rebaseline records the app page; it cannot be combined with --host=view'); process.exit(1); }
 const only = argv.filter(a => !a.startsWith('-'));
 const names = only.length ? only : fixtureNames();
 if (!names.length) { console.error('no fixtures'); process.exit(1); }
@@ -81,10 +92,17 @@ const BASE_LAYERS = {
  */
 async function artMaskFor(d, f) {
 	const { x, y, w, h } = f.world;
+	// The app page draws its current world's scenes; the view host draws those
+	// of every world it has scanned (scene positions are absolute).
+	const sceneList = HOST === 'view'
+		? `Object.values(window.terrainHost.world.scenes).flat()`
+		: `await (async () => {
+			const m = await import('/js/app.js');
+			return m.app.pixelScenesByPW?.[\`\${m.app.pw},\${m.app.pwVertical}\`] ?? [];
+		})()`;
 	const covered = await d.evalIn(`(async () => {
-		const m = await import('/js/app.js');
 		const g = await import('/js/pixel_scene_generation.js');
-		const scenes = m.app.pixelScenesByPW?.[\`\${m.app.pw},\${m.app.pwVertical}\`] ?? [];
+		const scenes = ${sceneList};
 		const hits = [];
 		for (const s of scenes) {
 			if (s.type !== 'pixel_scene') continue;
@@ -122,66 +140,101 @@ const seeds = new Set(fixtures.map(f => `${f.seed}|${f.ngPlus ?? 0}`));
 if (seeds.size !== 1) throw new Error(`fixtures span several worlds (${[...seeds]}); run them per seed`);
 const [seed, ng] = [...seeds][0].split('|').map(Number);
 
+/** One fixture's rect at 1:1 through telescope's page, as a PNG. */
+async function renderApp(d, f) {
+	const layers = { ...BASE_LAYERS, ...(f.tier2?.render?.layers ?? {}) };
+	const { x, y, w, h } = f.world;
+	await d.evalIn(`(async () => {
+		for (const [id, on] of ${JSON.stringify(Object.entries(layers))}) {
+			const el = document.getElementById(id);
+			if (el && el.checked !== on) { el.checked = on; el.dispatchEvent(new Event('change')); }
+		}
+		const m = await import('/js/app.js');
+		const u = await import('/js/utils.js');
+		// Scene texturing is a one-time async load that the first draw only
+		// *starts*; until it lands scenes paint flat colours. Await it so a
+		// fixture renders the same whether it runs alone or late in the suite
+		// (pyramid_right_rgb measured 89.6 % solo vs 82.4 % in the full run).
+		await (await import('/js/pixel_scene_generation.js')).initPixelSceneTextures();
+		m.app.canvas.width = ${w}; m.app.canvas.height = ${h};
+		m.app.cam.x = ${x + w / 2} + 512 * u.getWorldCenter(m.app.isNGP, m.app.gameMode);
+		m.app.cam.y = ${y + h / 2} + 512 * 14;
+		m.app.cam.z = 1;
+		m.app.drawNow();
+		return true;
+	})()`);
+	await sleep(2500);
+	// Edge decal tiles (the surface decal band) load asynchronously and each
+	// draw only requests a few; keep drawing until none are in flight so the
+	// render does not depend on how many landed during the sleep.
+	for (let i = 0; i < 40; i++) {
+		const pending = await d.evalIn(`(async () => {
+			const m = await import('/js/app.js');
+			m.app.drawNow();
+			await new Promise(r => setTimeout(r, 250));
+			return m.app.edgeDecalsPending();
+		})()`);
+		if (!pending) break;
+	}
+	const dataUrl = await d.evalIn(`(async () => {
+		const m = await import('/js/app.js');
+		m.app.drawNow();
+		await new Promise(r => setTimeout(r, 400));
+		return m.app.canvas.toDataURL('image/png');
+	})()`);
+	return Buffer.from(dataUrl.split(',')[1], 'base64');
+}
+
+/** The same rect through the terrain view host. The view's canvas is
+ *  transparent where the world is air; the app page paints #050505 behind the
+ *  terrain, so the comparison composites over the same colour. */
+async function renderView(d, f) {
+	const dataUrl = await d.evalIn(`window.terrainHost.renderRect(${JSON.stringify(f.world)})`);
+	const img = UPNG.decode(Buffer.from(dataUrl.split(',')[1], 'base64'));
+	const rgba = new Uint8Array(UPNG.toRGBA8(img)[0]);
+	for (let i = 0; i < rgba.length; i += 4) {
+		const a = rgba[i + 3] / 255;
+		for (let c = 0; c < 3; c++) rgba[i + c] = Math.round(rgba[i + c] * a + 5 * (1 - a));
+		rgba[i + 3] = 255;
+	}
+	return Buffer.from(UPNG.encode([rgba.buffer], img.width, img.height, 0));
+}
+
 const server = await startServer();
 let d = null;
 try {
-	d = await drive({ port: server.port, seed, ng });
-	await d.evalIn(`(async () => {
-		const s = await import('/js/settings.js');
-		s.appSettings.terrainRenderer = 'gl';
-		s.appSettings.engineTerrain = true;
-		s.appSettings.checkerboardUnpainted = false;
-		const cb = document.getElementById('debug-unpainted-checkerboard');
-		if (cb && cb.checked) { cb.checked = false; cb.dispatchEvent(new Event('change')); }
-		return true;
-	})()`);
+	if (HOST === 'view') {
+		d = await openPage({ port: server.port, path: '/test/terrain_view_host/index.html?auto=0' });
+		for (let i = 0; i < 100; i++) {
+			if (await d.evalIn('!!window.terrainHost').catch(() => false)) break;
+			await sleep(200);
+		}
+		await d.evalIn(`(async () => {
+			const h = window.terrainHost;
+			await h.load({ seed: ${seed}, ng: ${ng}, pws: ['0,0'], fit: 0, settle: false, scan: 'main' });
+			await (await import('/js/pixel_scene_generation.js')).initPixelSceneTextures();
+			return true;
+		})()`);
+	} else {
+		d = await drive({ port: server.port, seed, ng });
+		await d.evalIn(`(async () => {
+			const s = await import('/js/settings.js');
+			s.appSettings.terrainRenderer = 'gl';
+			s.appSettings.engineTerrain = true;
+			s.appSettings.checkerboardUnpainted = false;
+			const cb = document.getElementById('debug-unpainted-checkerboard');
+			if (cb && cb.checked) { cb.checked = false; cb.dispatchEvent(new Event('change')); }
+			return true;
+		})()`);
+	}
 
 	const rows = [];
 	let failures = 0;
 	if (PNG_DIR) mkdirSync(PNG_DIR, { recursive: true });
 
 	for (const f of fixtures) {
-		const layers = { ...BASE_LAYERS, ...(f.tier2?.render?.layers ?? {}) };
-		const { x, y, w, h } = f.world;
-		await d.evalIn(`(async () => {
-			for (const [id, on] of ${JSON.stringify(Object.entries(layers))}) {
-				const el = document.getElementById(id);
-				if (el && el.checked !== on) { el.checked = on; el.dispatchEvent(new Event('change')); }
-			}
-			const m = await import('/js/app.js');
-			const u = await import('/js/utils.js');
-			// Scene texturing is a one-time async load that the first draw only
-			// *starts*; until it lands scenes paint flat colours. Await it so a
-			// fixture renders the same whether it runs alone or late in the suite
-			// (pyramid_right_rgb measured 89.6 % solo vs 82.4 % in the full run).
-			await (await import('/js/pixel_scene_generation.js')).initPixelSceneTextures();
-			m.app.canvas.width = ${w}; m.app.canvas.height = ${h};
-			m.app.cam.x = ${x + w / 2} + 512 * u.getWorldCenter(m.app.isNGP, m.app.gameMode);
-			m.app.cam.y = ${y + h / 2} + 512 * 14;
-			m.app.cam.z = 1;
-			m.app.drawNow();
-			return true;
-		})()`);
-		await sleep(2500);
-		// Edge decal tiles (the surface decal band) load asynchronously and each
-		// draw only requests a few; keep drawing until none are in flight so the
-		// render does not depend on how many landed during the sleep.
-		for (let i = 0; i < 40; i++) {
-			const pending = await d.evalIn(`(async () => {
-				const m = await import('/js/app.js');
-				m.app.drawNow();
-				await new Promise(r => setTimeout(r, 250));
-				return m.app.edgeDecalsPending();
-			})()`);
-			if (!pending) break;
-		}
-		const dataUrl = await d.evalIn(`(async () => {
-			const m = await import('/js/app.js');
-			m.app.drawNow();
-			await new Promise(r => setTimeout(r, 400));
-			return m.app.canvas.toDataURL('image/png');
-		})()`);
-		const png = Buffer.from(dataUrl.split(',')[1], 'base64');
+		const { w, h } = f.world;
+		const png = HOST === 'view' ? await renderView(d, f) : await renderApp(d, f);
 		if (PNG_DIR) writeFileSync(`${PNG_DIR}/${f.name}.png`, png);
 		const img = UPNG.decode(png);
 		if (img.width !== w || img.height !== h) throw new Error(`${f.name}: rendered ${img.width}x${img.height}, want ${w}x${h}`);
@@ -268,7 +321,8 @@ try {
 		console.log(r.slice(0, 4).map((c, i) => String(c).padEnd(wid[i])).join('  ') + (r[4] ? `  ${r[4]}` : ''));
 	}
 	if (d.errors.length) console.log(`\npage errors: ${d.errors.length}\n  ${d.errors.slice(0, 3).join('\n  ')}`);
-	console.log(`\n${rows.length} checks, ${failures} failing${REBASELINE ? ' (thresholds rewritten)' : ''}`);
+	console.log(`\n${rows.length} checks, ${failures} failing${REBASELINE ? ' (thresholds rewritten)' : ''}`
+		+ (HOST === 'view' ? '  [terrain view host: cells only, no edge decals; thresholds are the app page\'s]' : ''));
 	if (failures) process.exitCode = 1;
 } finally {
 	if (d) d.close();

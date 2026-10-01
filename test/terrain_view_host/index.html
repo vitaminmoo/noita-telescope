@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Terrain view host</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+	html, body { margin: 0; height: 100%; background: #050505; overflow: hidden; }
+	#view { display: block; width: 100vw; height: 100vh; image-rendering: pixelated; cursor: grab; }
+	#status {
+		position: fixed; left: 8px; top: 8px; margin: 0; padding: 6px 8px; max-width: 46ch;
+		font: 12px/1.35 ui-monospace, monospace; color: #e8e8e6; background: rgba(20, 20, 20, 0.82);
+		white-space: pre-wrap; pointer-events: none;
+	}
+</style>
+</head>
+<body>
+<canvas id="view"></canvas>
+<pre id="status">loading</pre>
+<script type="module" src="./host.js"></script>
+</body>
+</html>
