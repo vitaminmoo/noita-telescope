@@ -122,6 +122,9 @@ function variantPixels(key, variantKey) {
 async function buildSceneBitmapsWorker(req) {
 	const { epoch, cacheKey, key, variantKey, x, y, textured, erase, texturedAlphas, maxLevel } = req;
 	const buildLevel = textured ? (req.level ?? 0) : 0;
+	// The first level worth a bitmap: the build's own, or later when the
+	// requester will never draw the finer ones (the shared build, `keepFrom`).
+	const keepFrom = Math.max(buildLevel, req.keepFrom ?? 0);
 	// Every request must be answered: the main thread holds cacheKey as pending
 	// until a reply lands, and a textured request that never answers occupies
 	// one of its few in-flight slots for good.
@@ -187,7 +190,7 @@ async function buildSceneBitmapsWorker(req) {
 		const levels = [], airMasks = [];
 		const keep = (list, l, w, h, px) => {
 			list[l] = null;
-			if (l >= buildLevel) pending.push(toBitmap(w, h, px).then((b) => { list[l] = b; }));
+			if (l >= keepFrom) pending.push(toBitmap(w, h, px).then((b) => { list[l] = b; }));
 		};
 		keep(levels, 0, width, height, pixels);
 		if (airMask) keep(airMasks, 0, width, height, airMask);

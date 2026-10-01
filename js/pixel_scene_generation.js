@@ -214,6 +214,8 @@ function requestSceneBitmaps(pixelScene, cacheKey, textured, level = 0) {
 	inflightWeight[kind] += weight;
 	sceneBitmapCounters.requests++;
 	if (deliveredSceneBitmaps.has(cacheKey)) sceneBitmapCounters.refetches++;
+	const maxLevel = sceneMaxMipLevel(data.width, data.height);
+	const erase = !textured && cacheKey.endsWith(FLAT_ERASE_SUFFIX);
 	sceneBitmapRequester({
 		cmd: 'BUILD_SCENE_BITMAPS',
 		epoch: sceneBitmapEpoch,
@@ -224,9 +226,16 @@ function requestSceneBitmaps(pixelScene, cacheKey, textured, level = 0) {
 		y: pixelScene.y,
 		textured,
 		level: textured ? level : 0,
-		erase: !textured && cacheKey.endsWith(FLAT_ERASE_SUFFIX),
-		texturedAlphas: !textured && cacheKey.endsWith(FLAT_ERASE_SUFFIX) ? texturedFlatAlphas() : null,
-		maxLevel: sceneMaxMipLevel(data.width, data.height),
+		erase,
+		texturedAlphas: erase ? texturedFlatAlphas() : null,
+		maxLevel,
+		// With material textures on, the shared build is what scenes draw from
+		// only past SCENE_INSTANCE_MAX_LEVEL -- nearer than that they are
+		// textured per placement (on the GPU from a material map, or from an
+		// instance build), and this is at most a stand-in. Its finer levels are
+		// four fifths of its pixels and of the bitmaps the worker would make,
+		// so they are not made.
+		keepFrom: erase ? Math.min(SCENE_INSTANCE_MAX_LEVEL + 1, maxLevel) : 0,
 	}, data);
 }
 
@@ -859,7 +868,8 @@ export function pixelSceneCacheEpoch() {
 export function getPixelSceneAirMask(pixelScene, level = 0) {
 	const entry = pixelSceneEntry(pixelScene, level);
 	if (!entry) return null;
-	return entry.airMasks[level > entry.maxLevel ? entry.maxLevel : level] ?? null;
+	// The same level getPixelSceneDrawable draws: a build has none finer than its own.
+	return entry.airMasks[Math.max(entry.minLevel, level > entry.maxLevel ? entry.maxLevel : level)] ?? null;
 }
 
 function getBiomeAlias(biomeName) {
