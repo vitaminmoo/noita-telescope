@@ -1,3 +1,4 @@
+import { loadBitmaps } from './bitmap_loader.js';
 import { fetchSafeJson } from "./utils.js";
 import { snapDrawImage } from "./snap.js";
 import { BG_SPRITE_FILES } from "./spawn_functions.js";
@@ -152,12 +153,10 @@ let edgeMaskPromise = null;
 // arrived yet, so it never blocks generation or the first frames.
 export function loadBackgroundEdgeMasks() {
 	return edgeMaskPromise ??= (async () => {
-		const { loadPNGBitmap } = await import('./png_sanitizer.js');
 		const paths = [...new Set(Object.values(data.edgeMasks))];
-		await Promise.all(paths.map(async (p) => {
-			try { EDGE_MASK_BITMAPS.set(p, await loadPNGBitmap('../' + p)); }
-			catch (e) { console.warn('Background edge mask failed to load:', p, e); }
-		}));
+		const { bitmaps, errors } = await loadBitmaps(paths.map(p => '../' + p), 'backgroundEdgeMasks');
+		paths.forEach((p, i) => { if (bitmaps[i]) EDGE_MASK_BITMAPS.set(p, bitmaps[i]); });
+		for (const e of errors) console.warn('Background edge mask failed to load:', e);
 	})();
 }
 
@@ -307,7 +306,6 @@ let artPromise = null;
 
 export function loadBackgroundArt() {
 	return artPromise ??= (async () => {
-		const { loadPNGBitmap } = await import('./png_sanitizer.js');
 		artData = await fetchSafeJson('../data/background_data.json');
 		const wanted = new Set();
 		// backdrops + real edge strips (per-biome paths, shipped verbatim)
@@ -337,10 +335,11 @@ export function loadBackgroundArt() {
 		for (const rec of Object.values(data.limitArt ?? {})) {
 			for (const p of Object.values(rec)) wanted.add(p);
 		}
-		await Promise.all([...wanted].map(async (p) => {
-			try { ART_BITMAPS.set(p, await loadPNGBitmap('../' + p)); }
-			catch (e) { console.warn('Background art failed to load:', p, e); }
-		}));
+		// Decoded in a worker (js/bitmap_loader.js): a few hundred files.
+		const paths = [...wanted];
+		const { bitmaps, errors } = await loadBitmaps(paths.map(p => '../' + p), 'backgroundArt');
+		paths.forEach((p, i) => { if (bitmaps[i]) ART_BITMAPS.set(p, bitmaps[i]); });
+		for (const e of errors) console.warn('Background art failed to load:', e);
 		artLoaded = true;
 		return artData;
 	})();
@@ -695,7 +694,8 @@ export function loadStaticTileBackgroundMasks() {
 		const { loadPNG } = await import('./png_sanitizer.js');
 		await Promise.all(Object.entries(STATIC_TILE_BACKGROUNDS).map(async ([name, rec]) => {
 			try {
-				const png = await loadPNG('../' + rec.mask);
+				// Pixels only: no bitmap to decode, and the asset pack has them.
+				const png = await loadPNG('../' + rec.mask, { bitmap: false });
 				const m = buildStaticTileMask(png.data, png.width, png.height, MASK_TILE, MASK_MARGIN);
 				const canvas = document.createElement('canvas');
 				canvas.width = m.width;

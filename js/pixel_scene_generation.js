@@ -168,7 +168,12 @@ let sceneBitmapEpoch = 0;
 // build) ahead of the ones actually on screen. Misses past the cap are simply
 // asked again on the next draw, which is what keeps requests tracking the view.
 const MAX_INFLIGHT_TEXTURED = 6;
-const MAX_INFLIGHT_FLAT = 48;
+// The shared builds are one per scene variant, a few hundred for everything a
+// seed places, and an overview wants all of them: the cap is there for a
+// runaway, not to pace them. (At 48 an overview's builds went out in rounds,
+// each waiting for a draw after the last had landed, and took three times as
+// long as the workers needed.)
+const MAX_INFLIGHT_FLAT = 512;
 // Zoomed-out per-instance builds (see pixelSceneEntry): ~4^-level of a textured
 // build's chooser work, so more of them can be in flight.
 const MAX_INFLIGHT_RESOLVED = 16;
@@ -178,7 +183,7 @@ const MAX_INFLIGHT_RESOLVED = 16;
 // time, one round trip per six, ~9 s to fill a view that changes nothing
 // visible. MAX_INFLIGHT_COUNT still bounds the messages in flight.
 const SLOT_AREA = 128 * 128;
-const MAX_INFLIGHT_COUNT = 96;
+const MAX_INFLIGHT_COUNT = 640;
 function sceneBuildWeight(data) {
 	return Math.min(1, (data.width * data.height) / SLOT_AREA);
 }

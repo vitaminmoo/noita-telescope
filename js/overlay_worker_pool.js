@@ -31,9 +31,19 @@ let syncedBiomeData = null;
 // its material map after its bitmaps, another variant of it -- costs a decode
 // less on the worker that has them.
 const sceneWorker = new Map();   // scene key -> worker
-// How much busier than the idlest worker the one holding the scene may be
-// before the job goes to the idlest instead.
-const AFFINITY_SLACK = 2;
+// Work is counted in pixels, not jobs: a scene build costs about its area, and
+// the scenes of one world run from 10x10 to 2560x2392. Counted in jobs, two of
+// the largest landed on one worker and held up everything queued behind them
+// for most of a second while other workers sat idle.
+const jobWeight = (msg) => {
+	const data = msg.key ? PIXEL_SCENE_DATA[msg.key] : null;
+	return data ? Math.max(32 * 32, data.width * data.height) : OTHER_JOB_WEIGHT;
+};
+/** A job that is not a scene build (a decal tile: a 320x320 stamp). */
+const OTHER_JOB_WEIGHT = 320 * 320;
+// How much more pending work than the idlest worker the one holding the scene
+// may have before the job goes to the idlest instead.
+const AFFINITY_SLACK = 256 * 256;
 
 function post(w, msg, transfer) {
 	if (w.ready && w.worker) w.worker.postMessage(msg, transfer ?? []);
@@ -53,7 +63,12 @@ export function startOverlayWorkerPool({ count = defaultOverlayWorkerCount() } =
 		// Held until the worker says its module has loaded (overlay_worker.js
 		// READY) -- which a worker the page prespawned (prespawn.js) may already
 		// have said: takeWorker replays it into the handler before `worker` is set.
-		const w = { worker: null, inflight: 0, ready: false, queue: [] };
+		const w = { worker: null, inflight: 0, load: 0, ready: false, queue: [] };
+		// A reply frees its job's share of the load (jobWeight is the same both ways).
+		const done = (msg) => {
+			w.inflight = Math.max(0, w.inflight - 1);
+			w.load = w.inflight ? Math.max(0, w.load - jobWeight(msg)) : 0;
+		};
 		const onMessage = (msg) => {
 			loadTimeline.add(msg.spans);
 			if (msg.type === 'READY') {
@@ -66,17 +81,17 @@ export function startOverlayWorkerPool({ count = defaultOverlayWorkerCount() } =
 			else if (msg.type === 'JOB_START') renderTrace.stage(msg.traceId, 'running');
 			else if (msg.type === 'JOB_DONE') renderTrace.end(msg.traceId, { workerMs: msg.ms });
 			else if (msg.type === 'SCENE_BITMAPS') {
-				w.inflight = Math.max(0, w.inflight - 1);
+				done(msg);
 				const t0 = performance.now();
 				if (putPixelSceneBitmaps(msg)) for (const fn of sceneListeners) fn(msg);
 				frameSlo.work('sceneBitmapsLanded', performance.now() - t0);
 			}
 			else if (msg.type === 'SCENE_MATERIALS') {
-				w.inflight = Math.max(0, w.inflight - 1);
+				done(msg);
 				if (putSceneMaterialMap(msg)) for (const fn of sceneListeners) fn(msg);
 			}
 			else if (replyHandlers.has(msg.type)) {
-				w.inflight = Math.max(0, w.inflight - 1);
+				done({});
 				replyHandlers.get(msg.type)(msg);
 			}
 		};
@@ -93,20 +108,21 @@ export function startOverlayWorkerPool({ count = defaultOverlayWorkerCount() } =
 	return workers;
 }
 
-/** Posts one job to the least-loaded worker -- or, for a job on one scene
- *  (`msg.key`), to the worker that already holds that scene's pixels unless it
- *  is much the busier. Its reply (a message type that has a handler, see
- *  onOverlayPoolReply) frees the slot. */
+/** Posts one job to the worker with the least pending work -- or, for a job on
+ *  one scene (`msg.key`), to the worker that already holds that scene's pixels
+ *  unless it has much more to do. Its reply (a message type that has a handler,
+ *  see onOverlayPoolReply) frees its share. */
 export function postOverlayPoolJob(msg, transfer) {
 	const pool = startOverlayWorkerPool();
 	let w = pool[0];
-	for (const s of pool) if (s.inflight < w.inflight) w = s;
+	for (const s of pool) if (s.load < w.load) w = s;
 	if (msg.key) {
 		const holder = sceneWorker.get(msg.key);
-		if (holder && holder.inflight <= w.inflight + AFFINITY_SLACK) w = holder;
+		if (holder && holder.load <= w.load + AFFINITY_SLACK) w = holder;
 		else sceneWorker.set(msg.key, w);
 	}
 	w.inflight++;
+	w.load += jobWeight(msg);
 	post(w, msg, transfer);
 }
 

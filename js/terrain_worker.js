@@ -187,6 +187,15 @@ self.onmessage = (e) => {
 	});
 };
 
+// The generating instance (the first: js/terrain_workers.js names them) starts
+// on the templates and the usual base map at once, rather than when the page
+// has loaded far enough to ask: on a first visit that is when it would
+// otherwise sit idle.
+if ((self.name || '').endsWith('-0')) {
+	loadBaseMap('normal').catch(() => {});
+	loadTemplates().catch((err) => { templates = null; console.error('[terrain worker] wang templates failed to load:', err); });
+}
+
 // See overlay_worker.js: a module worker can be handed messages before this
 // module has finished evaluating; the page holds them until this arrives.
 loadTimeline.started('modules');

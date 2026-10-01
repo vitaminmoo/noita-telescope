@@ -421,9 +421,9 @@ export const app = {
 		this.recolorOffscreenHell = document.createElement('canvas');
 		// Background boundary art. Fire and forget: the draw path skips strips whose
 		// mask has not arrived yet, and redraws pick them up once it has.
-		loadBackgroundEdgeMasks().then(() => this.draw());
-		loadBackgroundArt().then(() => this.draw());
-		loadStaticTileBackgroundMasks().then(() => this.draw());
+		loadTimeline.time('backgroundEdgeMasks', () => loadBackgroundEdgeMasks()).then(() => this.draw());
+		loadTimeline.time('backgroundArt', () => loadBackgroundArt()).then(() => this.draw());
+		loadTimeline.time('staticTileMasks', () => loadStaticTileBackgroundMasks()).then(() => this.draw());
 		const vp = document.getElementById('view');
 
 		const resize = () => {
@@ -4754,22 +4754,34 @@ export const app = {
 		const t0 = performance.now();
 		const timeLeft = () => (superseded() ? 0 : timeoutMs - (performance.now() - t0));
 		const tick = () => new Promise((r) => setTimeout(r, 50));
-		while (!backgroundArtLoaded() && timeLeft() > 0) await tick();
-		this.ensureChunkSprites();
-		this.prebuildBakes();
-		// Draws issue the scene and decal requests; wait until draws ask for
-		// nothing new and nothing is in flight. Idle has to hold across two checks
-		// a few ticks apart: requests go out in capped rounds, so the moment one
-		// round lands reads as idle, and the GL scene pass defers its requery by
-		// up to ~70 ms after a bitmap arrives.
-		let idleChecks = 0;
-		while (idleChecks < 2 && timeLeft() > 0) {
-			this.drawNow();
-			if (this.asyncRenderPending()) idleChecks = 0;
-			else idleChecks++;
-			await tick();
-			if (idleChecks) await tick();
-		}
+		// The background art and the scenes do not wait for each other: the art
+		// is decoded in its own worker (js/bitmap_loader.js) while the scene
+		// workers build, so the two waits run side by side.
+		const art = loadTimeline.time('awaitBackgroundArt', async () => { while (!backgroundArtLoaded() && timeLeft() > 0) await tick(); })
+			.then(() => {
+				loadTimeline.time('chunkSprites', () => this.ensureChunkSprites());
+				loadTimeline.time('backdropBakes', () => this.prebuildBakes());
+			});
+		// Draws issue the scene and decal requests; wait until a draw asks for
+		// nothing new and nothing is in flight. The GL passes say so themselves:
+		// the terrain view's frame is `complete` (terrainCompleteAt) only when
+		// every scene of it is final and no upload was left for a later frame.
+		// Without them, idle has to hold across two checks a few ticks apart: a
+		// round of builds landing reads as idle for a moment.
+		const scenes = loadTimeline.time('awaitScenes', async () => {
+			let idleChecks = 0;
+			while (idleChecks < 2 && timeLeft() > 0) {
+				this.drawNow();
+				if (this.scenesOnGL && this.terrainCompleteAt && !this.asyncRenderPending()) break;
+				if (this.asyncRenderPending()) idleChecks = 0;
+				else idleChecks++;
+				await new Promise((r) => setTimeout(r, this.scenesOnGL ? 16 : 50));
+				if (idleChecks && !this.scenesOnGL) await tick();
+			}
+		});
+		await Promise.all([art, scenes]);
+		// One frame with both in it before the overlay lifts.
+		this.drawNow();
 		// The view is complete here; the rehearsal below is not part of the load.
 		// (The idle checks above add ~150 ms of waiting to it.)
 		if (!this.pageLoadReported && !superseded()) {
