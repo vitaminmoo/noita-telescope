@@ -487,8 +487,8 @@ if (!this.tileOverlaysByPW[`${pwX},${pwY}`]) {
 
 // A module worker's message port can start delivering before this module has
 // finished evaluating (its imports await their data), and a message that lands
-// before `onmessage` is assigned is dropped without a trace. A pool that posts
-// to a worker it has only just created (overlay_worker_pool.js,
-// world_scan_pool.js) holds its messages until this arrives.
+// before `onmessage` is assigned is dropped without a trace. Whoever posts to
+// a worker it has only just created (the pools, js/worker_ready.js) holds its
+// messages until this arrives.
 loadTimeline.started('modules');
 self.postMessage({ type: 'READY', spans: loadTimeline.take() });

@@ -484,3 +484,6 @@ function findNextLocalWorker() {
         }
     }
 }
+
+// See js/worker_ready.js: the page holds what it posts until this arrives.
+self.postMessage({ type: 'READY' });

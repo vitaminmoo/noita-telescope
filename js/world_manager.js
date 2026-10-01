@@ -1,6 +1,7 @@
 // world_manager.js
 import { loadTimeline } from './load_timeline.js';
 import { app } from './app.js';
+import { holdUntilReady } from './worker_ready.js';
 import { recolorPixelScenes } from './overlay_manager.js';
 import { PIXEL_SCENE_SPAWN_DATA } from './pixel_scene_generation.js';
 import { continueSearchSequence, syncPW } from './search_manager.js';
@@ -13,7 +14,7 @@ import { frameSlo } from './frame_slo.js';
 // Other modules import it from here.
 export { buildPixelSceneMetadata };
 
-export const worldWorker = new Worker(new URL('./world_worker.js', import.meta.url), { type: 'module', name: 'world' });
+export const worldWorker = holdUntilReady(new Worker(new URL('./world_worker.js', import.meta.url), { type: 'module', name: 'world' }));
 // See overlay_manager.js: a dead worker is silent without this.
 worldWorker.addEventListener('error', (e) =>
 	console.error('world worker failed:', e.message ?? '(no message)', e.filename ?? '', e.lineno ?? ''));

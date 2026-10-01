@@ -30,3 +30,6 @@ self.onmessage = (e) => {
 	}
 	self.postMessage({ id: msg.id, bake, ms: performance.now() - t0 }, bake ? [bake.bitmap] : []);
 };
+
+// See js/worker_ready.js: the page holds what it posts until this arrives.
+self.postMessage({ type: 'READY' });
