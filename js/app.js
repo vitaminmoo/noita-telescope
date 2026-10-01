@@ -4660,6 +4660,12 @@ export const app = {
 			await tick();
 			if (idleChecks) await tick();
 		}
+		// The view is complete here; the rehearsal below is not part of the load.
+		// (The idle checks above add ~150 ms of waiting to it.)
+		if (!this.pageLoadReported) {
+			this.pageLoadReported = true;
+			frameSlo.load('page load', performance.now(), { waitedForArt: t0, settle: performance.now() - t0 });
+		}
 		// Rehearse zooming once in steps of sqrt(2) each way (doubling skipped the
 		// narrower zoom bands of some layers): the first frame past
 		// each zoom-gated layer switch (direct backdrop tiling, scene backgrounds,

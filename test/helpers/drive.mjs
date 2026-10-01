@@ -27,19 +27,24 @@ async function freePort() {
 	});
 }
 
-/** Starts tools/dev_server.py on a free port; returns {port, stop}. */
-export async function startServer() {
+/**
+ * Starts tools/dev_server.py on a free port; returns {port, stop, stats}.
+ * `cache` and `latencyMs` are the server's --cache / --latency-ms (see its
+ * header); `stats(reset)` reads its request counters.
+ */
+export async function startServer({ cache = 'no-cache', latencyMs = 0 } = {}) {
 	const port = await freePort();
-	const proc = spawn('python3', [`${REPO}/tools/dev_server.py`, String(port)],
+	const proc = spawn('python3', [`${REPO}/tools/dev_server.py`, String(port), `--cache=${cache}`, `--latency-ms=${latencyMs}`],
 		{ stdio: ['ignore', 'ignore', 'ignore'] });
 	for (let i = 0; i < 100; i++) {
 		await sleep(100);
 		try {
-			const r = await fetch(`http://127.0.0.1:${port}/index.html`, { method: 'HEAD' });
+			const r = await fetch(`http://127.0.0.1:${port}/__stats?reset=1`);
 			if (r.ok) break;
 		} catch { /* not up yet */ }
 	}
-	return { port, stop: () => { if (proc.pid) proc.kill('SIGTERM'); } };
+	const stats = async (reset = false) => (await fetch(`http://127.0.0.1:${port}/__stats${reset ? '?reset=1' : ''}`)).json();
+	return { port, stats, stop: () => { if (proc.pid) proc.kill('SIGTERM'); } };
 }
 
 /**
@@ -115,10 +120,14 @@ export async function drive({ port, seed = 786433191, ng = 0, settleMs = 8000, q
  *   angle   ANGLE backend: 'swiftshader' (software; deterministic, what the
  *           correctness runs use) or a real one ('vulkan', 'gl') for timing
  *   width, height  window and device metrics
- * @returns {Promise<{evalIn, errors, logs, close}>}
+ *   profile  a user-data dir to reuse, so a second launch finds the first
+ *            one's HTTP and code caches (a return visit); default: a fresh one
+ * @returns {Promise<{evalIn, errors, logs, close, quit}>}  `quit()` closes the
+ *          browser the way a user would, so its caches reach the disk; `close()`
+ *          just kills it
  */
-export async function openPage({ port, path, angle = 'swiftshader', width = 1280, height = 800 } = {}) {
-	const profile = `/tmp/telescope-page-${process.pid}-${Math.random().toString(36).slice(2)}`;
+export async function openPage({ port, path, angle = 'swiftshader', width = 1280, height = 800, profile = null } = {}) {
+	profile ??= `/tmp/telescope-page-${process.pid}-${Math.random().toString(36).slice(2)}`;
 	const gpuArgs = angle === 'swiftshader'
 		? ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader']
 		: ['--use-gl=angle', `--use-angle=${angle}`, '--ignore-gpu-blocklist', '--enable-gpu-rasterization'];
@@ -169,7 +178,13 @@ export async function openPage({ port, path, angle = 'swiftshader', width = 1280
 	await send('Page.enable', {}, sessionId);
 	await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false }, sessionId);
 	await send('Page.navigate', { url: `http://127.0.0.1:${port}${path}` }, sessionId);
-	return { evalIn, errors, logs, close: () => { chrome.kill(); } };
+	const quit = async () => {
+		const exited = new Promise((r) => chrome.once('exit', r));
+		await send('Browser.close').catch(() => {});
+		await Promise.race([exited, sleep(5000)]);
+		chrome.kill();
+	};
+	return { evalIn, errors, logs, quit, close: () => { chrome.kill(); } };
 }
 
 export { sleep };

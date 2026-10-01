@@ -22,6 +22,11 @@
 //   loaf     the browser's own long-animation-frame attribution, when it has
 //            one (Chrome, frames over 50 ms): which script ran for how long
 //
+// The other objective is the load: a returning visitor should see the complete
+// view -- every scene of every world on screen -- within a second. A host
+// reports each load it finishes with frameSlo.load(); it is logged with its
+// steps whether or not the frame log is on.
+//
 // Three ways out, all carrying the same records:
 //   * the console: one line per miss ("[frame] #12 +33 ms ...");
 //   * frameSlo.dump() -- every record since the log was switched on, as
@@ -36,6 +41,8 @@
 import { renderHud, renderTrace } from './render_hud.js';
 
 const BUDGET_MS = 1000 / 60;
+/** A load -- navigation or new seed, to the complete view -- should take no longer. */
+const LOAD_BUDGET_MS = 1000;
 /** An interval over this is a missed frame: one refresh plus timer slack. */
 const MISS_MS = 20;
 /** Records kept for dump(). */
@@ -70,7 +77,7 @@ const r1 = (v) => Math.round(v * 10) / 10;
 function emit(rec) {
 	records.push(rec);
 	if (records.length > RING) records.shift();
-	if (!sinkOk) return;
+	if (!enabled || !sinkOk) return;
 	outbox.push(JSON.stringify(rec));
 	if (!flushTimer) flushTimer = setTimeout(flush, 500);
 }
@@ -310,6 +317,32 @@ export const frameSlo = {
 		if (!enabled) return fn();
 		const t0 = performance.now();
 		try { return fn(); } finally { this.work(kind, performance.now() - t0, detail); }
+	},
+
+	loadBudgetMs: LOAD_BUDGET_MS,
+
+	/**
+	 * A load finished: the view the host opened on is complete. `ms` is the
+	 * time it took (since navigation for the page's first load, since the
+	 * request for a later seed) and `steps` whatever breakdown the host has,
+	 * as { name: ms }. Returns the record.
+	 */
+	load(name, ms, steps = null) {
+		const rec = {
+			type: 'load',
+			name,
+			t: Math.round(performance.now()),
+			ms: Math.round(ms),
+			budgetMs: LOAD_BUDGET_MS,
+			overMs: Math.max(0, Math.round(ms - LOAD_BUDGET_MS)),
+			ok: ms <= LOAD_BUDGET_MS,
+			steps,
+			state: snapshotState(),
+		};
+		emit(rec);
+		const detail = steps ? '  ' + Object.entries(steps).map(([k, v]) => `${k} ${Math.round(v)}`).join(', ') : '';
+		console.info(`[load] ${name}: ${rec.ms} ms, ${rec.ok ? 'within' : `${rec.overMs} ms over`} the ${LOAD_BUDGET_MS} ms budget${detail}`);
+		return rec;
 	},
 
 	/** A named piece of state read at every miss: `fn` returns something JSON-able and small. */

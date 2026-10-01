@@ -51,6 +51,7 @@ const host = {
 	timings: {},
 	lastFrame: null,
 	frames: 0,
+	loads: 0,
 	onFrame: null,
 };
 window.terrainHost = host;
@@ -235,6 +236,14 @@ host.load = async (o = {}) => {
 		const s0 = performance.now();
 		T.settle = { frames: await host.settle(), total: performance.now() - s0 };
 		mark('settled');
+		// The page's first load is timed from navigation; a later seed from its request.
+		const first = host.loads++ === 0;
+		const began = first ? 0 : host.timeline.findLast(m => m.name === 'load:start').t;
+		T.load = frameSlo.load(first ? 'page load' : 'new seed', performance.now() - began, {
+			...(first ? { modules: host.timeline.find(m => m.name === 'hostReady').t } : {}),
+			assets: T.assets.total, generate: T.generate.total, gpuResources: T.prepare.total,
+			scans: T.scan.total, scenes: T.settle.total,
+		});
 	}
 	showStatus();
 	return T;
@@ -351,7 +360,8 @@ function showStatus() {
 		host.world ? `seed ${host.world.seed}  NG+${host.world.ngPlusCount}` : 'no world',
 		`assets ${ms(T.assets?.total)}  generate ${ms(T.generate?.total)}`,
 		`gpu prepare ${ms(T.prepare?.total)}  scans ${ms(T.scan?.total)}`,
-		`settle ${ms(T.settle?.total)}`,
+		`scenes ${ms(T.settle?.total)}`,
+		T.load ? `${T.load.name}: ${T.load.ms} ms (budget ${T.load.budgetMs})` : '',
 		`frame ${host.lastFrame ? host.lastFrame.ms.toFixed(2) : '-'} ms  zoom ${host.cam.z.toFixed(4)}`,
 		`pending: ${p.sceneBitmaps} scene builds, ${p.sceneWorlds} worlds`,
 		frameSlo.enabled ? `frames over 60 fps: ${frameSlo.missed}` : '',

@@ -16,6 +16,11 @@
 // Scenarios (--only, comma separated; default all):
 //   cold      a fresh browser opens the page on a seed: every load step's time,
 //             and when each milestone happened since navigation
+//   return    a browser that has been here before opens the page again (same
+//             profile: HTTP cache and compiled code on disk), under each cache
+//             policy the server can stand in for and with a round trip of
+//             latency per request. This is the load the 1 s objective is
+//             about: complete view, every scene, three worlds
 //   reseed    the same page loads other seeds: what a seed costs once assets,
 //             workers and the GL program are warm
 //   moving    scripted pan and zoom on the loaded world: frame intervals and
@@ -29,8 +34,9 @@
 //             thread, no translations): what each adds to a load
 //
 // Flags: --seed=786433191 --w=1920 --h=1080 --angle=vulkan (or gl, swiftshader)
-//        --runs=3 (cold and reseed repeats)  --fit=3 (parallel worlds framed)
-import { writeFileSync } from 'node:fs';
+//        --runs=3 (cold, return and reseed repeats)  --fit=3 (parallel worlds framed)
+//        --latency=20 (ms per request in the return scenario's second pass)
+import { rmSync, writeFileSync } from 'node:fs';
 import { openPage, sleep, startServer } from './helpers/drive.mjs';
 
 const argv = process.argv.slice(2);
@@ -41,7 +47,10 @@ const ANGLE = flag('angle', 'vulkan');
 const RUNS = Number(flag('runs', '3'));
 const FIT = Number(flag('fit', '3'));
 const JSON_OUT = flag('json', null);
-const ONLY = flag('only', 'cold,reseed,moving,loading,ops,steps').split(',');
+const LATENCY = Number(flag('latency', '20'));
+const ONLY = flag('only', 'cold,return,reseed,moving,loading,ops,steps').split(',');
+const LOAD_BUDGET_MS = 1000;
+const verdict = (ms) => (ms <= LOAD_BUDGET_MS ? 'within' : `${f0(ms - LOAD_BUDGET_MS)} ms over`);
 
 const HOST = '/test/terrain_view_host/index.html';
 
@@ -103,7 +112,7 @@ function milestones(timeline, origin) {
 
 const result = { seed: SEED, width: W, height: H, angle: ANGLE, fit: FIT, when: new Date().toISOString() };
 const server = await startServer();
-const open = (query) => openPage({ port: server.port, path: `${HOST}?${query}`, angle: ANGLE, width: W, height: H });
+const open = (query, opts = {}) => openPage({ port: server.port, path: `${HOST}?${query}`, angle: ANGLE, width: W, height: H, ...opts });
 
 try {
 	// --- cold ------------------------------------------------------------------
@@ -136,6 +145,48 @@ try {
 			}
 		}
 		table('cold load: ms per step (median; steps under 0.5 ms left out)', ['step', 'ms'], steps);
+		const ms = med(runs.map(r => r.milestones.complete));
+		console.log(`  load objective (${LOAD_BUDGET_MS} ms to the complete view), cold: ${f0(ms)} ms, ${verdict(ms)}`);
+	}
+
+	// --- return ----------------------------------------------------------------
+	if (ONLY.includes('return')) {
+		const configs = [
+			{ name: 'revalidate everything (as deployed)', cache: 'no-cache', latencyMs: 0 },
+			{ name: `revalidate everything, ${LATENCY} ms per request`, cache: 'no-cache', latencyMs: LATENCY },
+			{ name: 'immutable files', cache: 'immutable', latencyMs: 0 },
+			{ name: `immutable files, ${LATENCY} ms per request`, cache: 'immutable', latencyMs: LATENCY },
+		];
+		const res = {};
+		for (const cfg of configs) {
+			const srv = await startServer({ cache: cfg.cache, latencyMs: cfg.latencyMs });
+			const runs = [];
+			try {
+				for (let i = 0; i < RUNS; i++) {
+					const profile = `/tmp/telescope-return-${process.pid}-${Math.random().toString(36).slice(2)}`;
+					const visit = async () => {
+						const d = await openPage({ port: srv.port, path: `${HOST}?seed=${SEED}&fit=${FIT}`, angle: ANGLE, width: W, height: H, profile });
+						try { return await waitLoaded(d); } finally { await d.quit(); }
+					};
+					await visit();
+					await srv.stats(true);
+					const r = await visit();
+					runs.push({ ...r, milestones: milestones(r.timeline, 0), net: await srv.stats() });
+					rmSync(profile, { recursive: true, force: true });
+				}
+			} finally { srv.stop(); }
+			res[cfg.name] = runs;
+		}
+		result.return = res;
+		const keys = ['hostReady', 'assets', 'generated', 'terrainFrame', 'scansDone', 'complete'];
+		table(`return visit, same browser profile: median ms since navigation (${RUNS} runs each); requests the server saw`,
+			['cache policy', ...keys, 'requests', '304s', 'KB sent'],
+			Object.entries(res).map(([name, runs]) => [name, ...keys.map(k => f0(med(runs.map(r => r.milestones[k])))),
+				f0(med(runs.map(r => r.net.requests))), f0(med(runs.map(r => r.net.notModified))), f0(med(runs.map(r => r.net.bytes)) / 1024)]));
+		for (const [name, runs] of Object.entries(res)) {
+			const ms = med(runs.map(r => r.milestones.complete));
+			console.log(`  load objective (${LOAD_BUDGET_MS} ms to the complete view), ${name}: ${f0(ms)} ms, ${verdict(ms)}`);
+		}
 	}
 
 	// Everything else shares one warm page.
@@ -174,6 +225,8 @@ try {
 					}
 				}
 				table('new seed on a warm page: ms per step (median)', ['step', 'ms'], steps);
+				const ms = med(runs.map(r => r.milestones.complete));
+				console.log(`  load objective (${LOAD_BUDGET_MS} ms to the complete view), new seed: ${f0(ms)} ms, ${verdict(ms)}`);
 				await load({ seed: SEED, fit: FIT });
 			}
 
