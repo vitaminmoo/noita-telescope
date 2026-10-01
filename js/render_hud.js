@@ -51,8 +51,9 @@ const statSources = new Map();   // name -> () => string, one line (or lines) un
 let nextId = 1;
 let on = false;
 let tracing = false;         // items are traced with the HUD off (frame_slo.js)
-let missSource = null;       // (n) => [{ line, record }], newest first: the frames that missed the budget
+let missSource = null;       // (n) => { load, frames }: the load and the frames that missed their budgets
 let shownMisses = [];        // what the Missed frames section is showing, for the click-to-copy
+let missLoadEl = null;       // the missed page load's line, above the missed frames
 let copiedUntil = 0;
 let root = null, barsCanvas = null, stripCanvas = null, headEl = null, totalEl = null, queueEl = null, cachesEl = null, missEl = null;
 let timer = 0;
@@ -88,8 +89,10 @@ export const renderHud = {
 		if (!tracing && !on) { active.clear(); finished.length = 0; }
 	},
 
-	/** The frame log's entries for the Missed frames section, newest first:
-	 *  (n) => [{ line, record }], the short line shown and the full record. */
+	/** The frame log's entries for the Missed frames section:
+	 *  (n) => { load, frames }, each a { line, record } (the text shown and the
+	 *  full record) -- the page's first load if it missed the load budget, or
+	 *  null, and the last n frames that missed theirs, newest first. */
 	setMissSource(fn) { missSource = fn; },
 
 	/** Count of async render work in flight, including work posted before the HUD was on. */
@@ -232,17 +235,20 @@ function buildDom(container) {
 	queueEl = section('Queue');
 	missEl = section('Missed frames');
 	cachesEl = section('Caches');
+	// A page load that ran over its budget sits right above the missed frames.
+	missLoadEl = document.createElement('div');
+	Object.assign(missLoadEl.style, { color: INK_OVER, whiteSpace: 'pre', overflow: 'hidden', display: 'none' });
 	// The one part of the HUD that takes clicks: it copies what it shows.
-	for (const el of [missEl.h, missEl.pre]) {
+	for (const el of [missEl.h, missLoadEl, missEl.pre]) {
 		Object.assign(el.style, { pointerEvents: 'auto', cursor: 'copy' });
-		el.title = 'Click to copy these missed frames: one line each, then the full records as JSON lines';
+		el.title = 'Click to copy what is shown here: one line each, then the full records as JSON lines';
 		el.addEventListener('click', copyMisses);
 	}
 	// The HUD is anchored bottom-right, so the fixed-height parts (the graphs
 	// and the cache lines) go last: they stay put while the queue and the
 	// missed frames above them grow and shrink.
 	Object.assign(legend.style, { marginTop: '6px', borderTop: `1px solid ${GRID}`, paddingTop: '4px' });
-	root.append(headEl, queueEl.h, queueEl.pre, missEl.h, missEl.pre,
+	root.append(headEl, queueEl.h, queueEl.pre, missEl.h, missLoadEl, missEl.pre,
 		legend, barsCanvas, totalEl, stripCanvas, cachesEl.h, cachesEl.pre);
 	container.appendChild(root);
 }
@@ -453,18 +459,26 @@ function renderCaches() {
 // the main thread spent the interval on and what was queued (frame_slo.js). The
 // full records go to the console and the frame log; a click copies the ones shown.
 function renderMisses() {
-	shownMisses = missSource ? missSource(MISS_ROWS) : [];
-	if (!missSource) { missEl.pre.textContent = '(frame log off)'; return; }
+	if (!missSource) {
+		shownMisses = [];
+		missLoadEl.style.display = 'none';
+		missEl.pre.textContent = '(frame log off)';
+		return;
+	}
+	const { load, frames } = missSource(MISS_ROWS);
+	shownMisses = load ? [load, ...frames] : frames;
 	missEl.h.textContent = now() < copiedUntil
 		? `Missed frames — copied ${shownMisses.length} to the clipboard`
 		: 'Missed frames — over 60 fps; ms over, what ran, what was queued (click to copy)';
 	const w = Math.max(40, Math.floor((root.clientWidth - 20) / 6.7));
-	missEl.pre.textContent = shownMisses.length
-		? shownMisses.map(({ line }) => (line.length > w ? line.slice(0, w - 1) + '…' : line)).join('\n') : '(none yet)';
+	const fit = (line) => (line.length > w ? line.slice(0, w - 1) + '…' : line);
+	missLoadEl.style.display = load ? 'block' : 'none';
+	if (load) missLoadEl.textContent = fit(`load  ${load.line}`);
+	missEl.pre.textContent = frames.length ? frames.map(({ line }) => fit(line)).join('\n') : '(none yet)';
 }
 
-// The missed frames on show, as text: their one-line summaries, then each full
-// record as a line of JSON -- what the frame log holds for them.
+// The missed load and frames on show, as text: their one-line summaries, then
+// each full record as a line of JSON -- what the frame log holds for them.
 function copyMisses() {
 	if (!shownMisses.length) return;
 	const text = shownMisses.map((m) => m.line).join('\n') + '\n\n'

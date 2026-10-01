@@ -62,6 +62,7 @@ let interval = newInterval();
 const states = new Map();      // name -> () => value
 const records = [];            // every record (session, miss, loaf), oldest first
 const missed = [];             // { line, record } for the HUD, newest first
+let pageLoadMiss = null;       // { line, record }: the page's first load, if it ran over its budget
 let outbox = [];
 let flushTimer = 0;
 let sinkOk = true;
@@ -267,7 +268,7 @@ export const frameSlo = {
 				state: snapshotState(),
 			});
 			watchLongFrames();
-			renderHud.setMissSource((n) => missed.slice(0, n));
+			renderHud.setMissSource((n) => ({ load: pageLoadMiss, frames: missed.slice(0, n) }));
 			rafId = requestAnimationFrame(onFrame);
 		} else {
 			cancelAnimationFrame(rafId);
@@ -341,7 +342,14 @@ export const frameSlo = {
 		};
 		emit(rec);
 		const detail = steps ? '  ' + Object.entries(steps).map(([k, v]) => `${k} ${Math.round(v)}`).join(', ') : '';
-		console.info(`[load] ${name}: ${rec.ms} ms, ${rec.ok ? 'within' : `${rec.overMs} ms over`} the ${LOAD_BUDGET_MS} ms budget${detail}`);
+		const line = `${name}: ${rec.ms} ms, ${rec.ok ? 'within' : `${rec.overMs} ms over`} the ${LOAD_BUDGET_MS} ms budget${detail}`;
+		console.info(`[load] ${line}`);
+		// The first load a page reports is the one a visitor waited for; the HUD
+		// shows it next to the missed frames when it missed.
+		if (!this.firstLoadSeen) {
+			this.firstLoadSeen = true;
+			if (!rec.ok) pageLoadMiss = { line, record: rec };
+		}
 		return rec;
 	},
 

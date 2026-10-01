@@ -4632,7 +4632,8 @@ export const app = {
 		// (The idle checks above add ~150 ms of waiting to it.)
 		if (!this.pageLoadReported) {
 			this.pageLoadReported = true;
-			frameSlo.load('page load', performance.now(), { waitedForArt: t0, settle: performance.now() - t0 });
+			// t0 is when settling began: everything before it is modules, assets and generation.
+			frameSlo.load('page load', performance.now(), { untilGenerated: t0, settleView: performance.now() - t0 });
 		}
 		// Rehearse zooming once in steps of sqrt(2) each way (doubling skipped the
 		// narrower zoom bands of some layers): the first frame past
