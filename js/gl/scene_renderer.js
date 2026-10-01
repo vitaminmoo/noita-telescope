@@ -109,6 +109,7 @@ function compile(gl, type, src) {
 }
 
 const cellKey = (cx, cy) => (cx + 0x100000) * 0x200000 + (cy + 0x100000);
+const NOT_SHOWN = -1;
 
 export class GLSceneRenderer {
     constructor() {
@@ -118,6 +119,8 @@ export class GLSceneRenderer {
         this.vao = null;
         this.failed = null;
         this.lost = false;
+        /** Scenes drawn coarser than they had just been shown (see query). */
+        this.detailDrops = 0;
         this.resetResidency();
     }
 
@@ -170,7 +173,7 @@ export class GLSceneRenderer {
 
     /** For the render HUD's bakes line. */
     stats() {
-        return { pages: this.pages.length, bytes: this.bytes, slots: this.slots.size };
+        return { pages: this.pages.length, bytes: this.bytes, slots: this.slots.size, detailDrops: this.detailDrops };
     }
 
     // --- atlas pages ------------------------------------------------------
@@ -267,7 +270,7 @@ export class GLSceneRenderer {
             mask = this.upload(m, key);
             // No room for the mask: draw the scene without its air rather than not at all.
         }
-        slot = { page: img.page, x: img.x, y: img.y, w: bmp.width, h: bmp.height, mask };
+        slot = { page: img.page, x: img.x, y: img.y, w: bmp.width, h: bmp.height, mask, level };
         this.slots.set(key, slot);
         return slot;
     }
@@ -314,6 +317,8 @@ export class GLSceneRenderer {
         }
         s = {
             relOffX, relOffY, grid, stamp: new Uint32Array(list.length), stampN: 0,
+            // The mip level each scene was last drawn from (NOT_SHOWN: never).
+            shownLevel: new Int8Array(list.length).fill(NOT_SHOWN),
             buffer: null, colorGroups: [], airGroups: [],
             queryKey: null, version: -1, residency: -1, queriedAt: 0, incomplete: false, frame: this.frame,
         };
@@ -381,16 +386,34 @@ export class GLSceneRenderer {
                         } else {
                             warmPixelScene(scene, level);
                         }
-                        // Nothing at this level yet: any level already resident, nearest first.
+                        // Nothing at this level yet: whatever of this scene is already
+                        // resident, nearest level first, finer before coarser. Each
+                        // level is searched by ITS OWN keys -- a textured level's
+                        // instance build is keyed by that level -- so zooming in keeps
+                        // the textured build that was on screen until the next one
+                        // lands, instead of dropping to the flat one from further out.
                         if (!slot) {
-                            const keys = pixelSceneCacheKeys(scene, level);
                             for (let dl = 0; !slot && dl <= PIXEL_SCENE_MAX_MIP; dl++) {
-                                slot = (dl > 0 && this.residentSlot(keys, level - dl))
-                                    || this.residentSlot(keys.slice(dl === 0 ? 1 : 0), level + dl) || null;
+                                if (dl > 0 && level - dl >= 0) {
+                                    slot = this.residentSlot(pixelSceneCacheKeys(scene, level - dl), level - dl);
+                                }
+                                if (!slot && level + dl <= PIXEL_SCENE_MAX_MIP) {
+                                    const keys = pixelSceneCacheKeys(scene, level + dl);
+                                    slot = this.residentSlot(dl === 0 ? keys.slice(1) : keys, level + dl);
+                                }
                             }
                         }
                     }
                     if (!slot) continue;
+                    // A scene drawn coarser than both what is asked for and what it
+                    // was last drawn at has visibly lost detail: counted, for the
+                    // frame log and the flicker check.
+                    const shown = s.shownLevel[i];
+                    if (shown !== NOT_SHOWN && slot.level > level && slot.level > shown) {
+                        this.detailDrops++;
+                        frameSlo.count('sceneDetailDrops');
+                    }
+                    s.shownLevel[i] = slot.level;
                     hitI.push(i);
                     hitSlot.push(slot);
                 }

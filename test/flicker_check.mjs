@@ -13,7 +13,16 @@
 //   systemd-run --user --quiet --collect --pipe --wait --slice=claude-limit.slice \
 //     -p MemoryMax=10G --working-directory=$PWD \
 //     /usr/bin/node test/flicker_check.mjs [--seed=N] [--view=overview|mid|close]
-//       [--reseed] [--jump] [--host=view|app] [--png=DIR] [--w=960 --h=540] [--angle=vulkan]
+//       [--x=N --y=N --zoom=Z] [--reseed] [--jump] [--levels] [--host=view|app]
+//       [--png=DIR] [--w=960 --h=540] [--angle=vulkan]
+//
+// --levels checks the other way a scene can flash, which a pixel comparison
+// cannot see because both states are "the scene": losing detail. The camera
+// holds still at --view while the scene detail level is stepped through every
+// mip level and back, without waiting for builds in between, and the scene
+// pass counts every scene it draws coarser than both the level asked for and
+// the level it had just shown it at -- a textured scene dropping to its flat
+// stand-in while the next build is made. There should be none.
 //
 // --host=view (default) is the minimal terrain view host; --host=app is
 // telescope's own page, where the first load is hidden behind the loading
@@ -34,12 +43,14 @@ const flag = (n, d) => { const a = argv.find(s => s.startsWith(`--${n}=`)); retu
 const SEED = Number(flag('seed', '786433191'));
 const W = Number(flag('w', '960')), H = Number(flag('h', '540'));
 const ANGLE = flag('angle', 'vulkan');
-const VIEW = flag('view', 'overview');
+const VIEW = flag('view', flag('x', null) !== null ? 'custom' : 'overview');
 const PNG_DIR = flag('png', null);
 const RESEED = argv.includes('--reseed');
 const JUMP = argv.includes('--jump');
+const LEVELS = argv.includes('--levels');
 const HOST = flag('host', 'view');
 if (HOST === 'app' && !RESEED && !JUMP) { console.error('--host=app needs --reseed or --jump'); process.exit(1); }
+if (LEVELS && HOST !== 'view') { console.error('--levels needs --host=view'); process.exit(1); }
 /** A change that reverts within this many frames is a flash. */
 const MAX_FLASH_FRAMES = Number(flag('frames', '6'));
 const MAX_FRAMES = 420;
@@ -50,6 +61,8 @@ const VIEWS = {
 	mid: { x: 600, y: 2600, zoom: 0.25 },
 	close: { x: 600, y: 2600, zoom: 1 },
 };
+// --x= --y= --zoom= name a view of their own (world coordinates of the centre).
+if (flag('x', null) !== null) VIEWS[VIEW] = { x: Number(flag('x', '0')), y: Number(flag('y', '0')), zoom: Number(flag('zoom', '0.25')) };
 if (!(VIEW in VIEWS)) { console.error(`unknown --view=${VIEW}`); process.exit(1); }
 
 const server = await startServer();
@@ -133,6 +146,43 @@ try {
 			scenes: () => Object.values(app.pixelScenesByPW).filter(Boolean).flat(),
 		};
 	})())`;
+	if (LEVELS) {
+		// Detail zooms that land in mip levels 3, 2, 1, 0 and back out to 4.
+		const steps = [0.1, 0.2, 0.4, 1, 0.4, 0.2, 0.1, 0.05, 0.1, 0.2];
+		const out = await d.evalIn(`(async () => {
+			const h = window.terrainHost;
+			const view = ${JSON.stringify(VIEWS[VIEW] ?? VIEWS.mid)};
+			h.setView(view);
+			h.ops.detailZoom = ${steps[0]};
+			await h.load({ seed: ${SEED}, fit: 0 });
+			await h.settle();
+			const g = await import('/js/pixel_scene_generation.js');
+			const rows = [];
+			for (const z of ${JSON.stringify(steps.slice(1))}) {
+				const before = h.view.scenes.detailDrops;
+				h.ops.detailZoom = z;
+				// The frames right after the step are the ones that can flash;
+				// then let the builds land before the next step.
+				let frames = 0;
+				for (; frames < 400; frames++) {
+					const r = h.draw();
+					await new Promise(res => setTimeout(res, 16));
+					if (r && r.complete) break;
+				}
+				rows.push({ z, level: g.pixelSceneMipLevel(z), frames, drops: h.view.scenes.detailDrops - before });
+			}
+			return { rows, zoom: h.cam.z };
+		})()`);
+		console.log(`view host, ${VIEWS[VIEW] ? VIEW : 'mid'} view at zoom ${out.zoom}, ${W}x${H}: scene detail stepped through the mip levels`);
+		console.log('  detail zoom  level  frames to settle  scenes drawn coarser than just shown');
+		for (const r of out.rows) console.log(`  ${String(r.z).padStart(11)}  ${String(r.level).padStart(5)}  ${String(r.frames).padStart(16)}  ${String(r.drops).padStart(6)}`);
+		const total = out.rows.reduce((s, r) => s + r.drops, 0);
+		console.log(total ? `${total} detail drops: scenes flashed to a coarser stand-in` : 'no scene lost detail');
+		if (d.errors.length) console.log('page errors:', d.errors.slice(0, 3));
+		d.close();
+		server.stop();
+		process.exit(total ? 1 : 0);
+	}
 	const result = await d.evalIn(`(async () => {
 		const host = ${HOST === 'app' ? APP_HOST : VIEW_HOST};
 		const view = ${JSON.stringify(VIEWS[VIEW])};
